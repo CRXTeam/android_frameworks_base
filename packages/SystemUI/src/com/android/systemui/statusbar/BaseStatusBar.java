@@ -142,6 +142,8 @@ public abstract class BaseStatusBar extends SystemUI implements
 
     protected int mCurrentUserId = 0;
 
+    protected FrameLayout mStatusBarContainer;
+
     protected int mLayoutDirection = -1; // invalid
     private Locale mLocale;
     protected boolean mUseHeadsUp = false;
@@ -302,6 +304,8 @@ public abstract class BaseStatusBar extends SystemUI implements
 
         mLocale = mContext.getResources().getConfiguration().locale;
         mLayoutDirection = TextUtils.getLayoutDirectionFromLocale(mLocale);
+
+        mStatusBarContainer = new FrameLayout(mContext);
 
         // Connect in to the status bar manager service
         StatusBarIconList iconList = new StatusBarIconList();
