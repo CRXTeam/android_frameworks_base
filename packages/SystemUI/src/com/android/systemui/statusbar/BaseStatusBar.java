@@ -183,8 +183,6 @@ public abstract class BaseStatusBar extends SystemUI implements
 
     protected int mImmersiveModeStyle;
 
-    private RecentController mRecents;
-
     public Ticker getTicker() {
         return mTicker;
     }
@@ -224,7 +222,6 @@ public abstract class BaseStatusBar extends SystemUI implements
             mSlimRecentsEnabled = Settings.System.getIntForUser(
                     mContext.getContentResolver(), Settings.System.RECENTS_USE_SLIM,
                     0, UserHandle.USER_CURRENT) == 1;
-            update();
         }
     };
 
@@ -718,7 +715,6 @@ public abstract class BaseStatusBar extends SystemUI implements
                     mSlimRecents.toggleRecents(mDisplay, mLayoutDirection, getStatusBarView());
                 } else {
                     mRecents.toggleRecents(mDisplay, mLayoutDirection, getStatusBarView(),
-                            mExpandedDesktopStyle);
                 }
             }
         }
