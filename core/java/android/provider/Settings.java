@@ -5239,9 +5239,15 @@ public final class Settings {
 
         /**
          * Default theme to use.  If empty, use holo.
-         * @hide
+		 * @hide
          */
         public static final String DEFAULT_THEME_PACKAGE = "default_theme_package";
+
+        /**
+		 * Whether newly installed apps should run with privacy guard by default
+         * @hide
+         */
+        public static final String PRIVACY_GUARD_DEFAULT = "privacy_guard_default";
 
         /**
          * A '|' delimited list of theme components to apply from the default theme on first boot.
@@ -5350,6 +5356,7 @@ public final class Settings {
             UI_NIGHT_MODE,
             SLEEP_TIMEOUT,
             ADVANCED_REBOOT
+            PRIVACY_GUARD_DEFAULT
         };
 
         /**

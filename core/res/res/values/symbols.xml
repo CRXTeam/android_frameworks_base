@@ -2196,4 +2196,11 @@
 
   <!-- Array of default activities with custom power management -->
   <java-symbol type="array" name="config_auto_perf_activities" />
+
+  <!-- Privacy Guard -->
+  <java-symbol type="drawable" name="stat_notify_privacy_guard" />
+  <java-symbol type="string" name="privacy_guard_notification" />
+  <java-symbol type="string" name="privacy_guard_notification_detail" />
+  <java-symbol type="string" name="privacy_guard_dialog_title" />
+  <java-symbol type="string" name="privacy_guard_dialog_summary" />
 </resources>
