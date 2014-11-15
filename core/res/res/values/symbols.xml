@@ -2182,4 +2182,12 @@
   <java-symbol type="integer" name="config_proximityCheckTimeout" />
 
   <java-symbol type="bool" name="config_fetch_apn_from_omh_card" />
+
+  <!-- Privacy Guard -->
+  <java-symbol type="drawable" name="stat_notify_privacy_guard" />
+  <java-symbol type="string" name="privacy_guard_notification" />
+  <java-symbol type="string" name="privacy_guard_notification_detail" />
+  <java-symbol type="string" name="privacy_guard_dialog_title" />
+  <java-symbol type="string" name="privacy_guard_dialog_summary" />
+
 </resources>
