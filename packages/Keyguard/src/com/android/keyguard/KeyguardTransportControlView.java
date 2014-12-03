@@ -32,7 +32,6 @@ import android.media.RemoteControlClient;
 import android.media.RemoteController;
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.os.SystemClock;
 import android.text.TextUtils;
 import android.text.format.DateFormat;
 import android.transition.ChangeBounds;
@@ -61,7 +60,7 @@ import java.util.TimeZone;
 public class KeyguardTransportControlView extends FrameLayout {
 
     private static final int RESET_TO_METADATA_DELAY = 5000;
-    protected static final boolean DEBUG = false;
+    protected static final boolean DEBUG = KeyguardConstants.DEBUG;
     protected static final String TAG = "TransportControlView";
 
     private static final boolean ANIMATE_TRANSITIONS = true;
@@ -139,6 +138,18 @@ public class KeyguardTransportControlView extends FrameLayout {
         public void onClientMetadataUpdate(RemoteController.MetadataEditor metadataEditor) {
             updateMetadata(metadataEditor);
         }
+
+        @Override
+        public void onClientFolderInfoBrowsedPlayer(String stringUri) { }
+
+        @Override
+        public void onClientUpdateNowPlayingEntries(long[] playList) { }
+
+        @Override
+        public void onClientNowPlayingContentChange() { }
+
+        @Override
+        public void onClientPlayItemResponse(boolean success) { }
     };
 
     private class UpdateSeekBarRunnable implements  Runnable {
@@ -317,9 +328,6 @@ public class KeyguardTransportControlView extends FrameLayout {
         if (DEBUG) Log.v(TAG, (enabled ? "Enable" : "Disable") + " transport text marquee");
         if (mTrackTitle != null) mTrackTitle.setSelected(enabled);
         if (mTrackArtistAlbum != null) mTrackTitle.setSelected(enabled);
-        if (enabled && mTrackTitle != null && mTrackArtistAlbum != null) {
-            setTrackTitle();
-        }
     }
 
     @Override
@@ -479,8 +487,26 @@ public class KeyguardTransportControlView extends FrameLayout {
             Log.e(TAG, "Couldn't get remote control client package icon", e);
         }
         setBadgeIcon(badgeIcon);
+        mTrackTitle.setText(!TextUtils.isEmpty(mMetadata.trackTitle)
+                ? mMetadata.trackTitle : null);
 
-        setTrackTitle();
+        final StringBuilder sb = new StringBuilder();
+        if (!TextUtils.isEmpty(mMetadata.artist)) {
+            if (sb.length() != 0) {
+                sb.append(" - ");
+            }
+            sb.append(mMetadata.artist);
+        }
+        if (!TextUtils.isEmpty(mMetadata.albumTitle)) {
+            if (sb.length() != 0) {
+                sb.append(" - ");
+            }
+            sb.append(mMetadata.albumTitle);
+        }
+
+        final String trackArtistAlbum = sb.toString();
+        mTrackArtistAlbum.setText(!TextUtils.isEmpty(trackArtistAlbum) ?
+                trackArtistAlbum : null);
 
         if (mMetadata.duration >= 0) {
             setSeekBarsEnabled(true);
@@ -514,28 +540,6 @@ public class KeyguardTransportControlView extends FrameLayout {
                 | RemoteControlClient.FLAG_KEY_MEDIA_STOP);
 
         updatePlayPauseState(mCurrentPlayState);
-    }
-
-    private void setTrackTitle() {
-        mTrackTitle.setText(!TextUtils.isEmpty(mMetadata.trackTitle)
-                ? mMetadata.trackTitle : null);
-        final StringBuilder sb = new StringBuilder();
-        if (!TextUtils.isEmpty(mMetadata.artist)) {
-            if (sb.length() != 0) {
-                sb.append(" - ");
-            }
-            sb.append(mMetadata.artist);
-        }
-        if (!TextUtils.isEmpty(mMetadata.albumTitle)) {
-            if (sb.length() != 0) {
-                sb.append(" - ");
-            }
-            sb.append(mMetadata.albumTitle);
-        }
-
-        final String trackArtistAlbum = sb.toString();
-        mTrackArtistAlbum.setText(!TextUtils.isEmpty(trackArtistAlbum) ?
-                trackArtistAlbum : null);
     }
 
     void updateSeekDisplay() {

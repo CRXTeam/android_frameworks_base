@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2007-2008 The Android Open Source Project
- * This code has been modified. Portions copyright (C) 2013, ParanoidAndroid Project.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -20,7 +19,6 @@ package android.inputmethodservice;
 import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
 import static android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
 
-import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.Dialog;
 import android.content.Context;
@@ -41,7 +39,7 @@ import android.text.method.MovementMethod;
 import android.util.Log;
 import android.util.PrintWriterPrinter;
 import android.util.Printer;
-import android.view.IWindowManager;
+import android.view.Gravity;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -54,6 +52,7 @@ import android.view.WindowManager;
 import android.view.WindowManager.BadTokenException;
 import android.view.animation.AnimationUtils;
 import android.view.inputmethod.CompletionInfo;
+import android.view.inputmethod.CursorAnchorInfo;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.ExtractedText;
 import android.view.inputmethod.ExtractedTextRequest;
@@ -251,20 +250,6 @@ public class InputMethodService extends AbstractInputMethodService {
      * The IME is visible.
      */
     public static final int IME_VISIBLE = 0x2;
-
-    int mVolumeKeyCursorControl = 0;
-    /**
-     * @hide
-     */
-    public static final int VOLUME_CURSOR_OFF = 0;
-    /**
-     * @hide
-     */
-    public static final int VOLUME_CURSOR_ON = 1;
-    /**
-     * @hide
-     */
-    public static final int VOLUME_CURSOR_ON_REVERSE = 2;
 
     InputMethodManager mImm;
     
@@ -550,6 +535,17 @@ public class InputMethodService extends AbstractInputMethodService {
         public void toggleSoftInput(int showFlags, int hideFlags) {
             InputMethodService.this.onToggleSoftInput(showFlags, hideFlags);
         }
+
+        /**
+         * Call {@link InputMethodService#onUpdateCursorAnchorInfo
+         * InputMethodService.onUpdateCursorAnchorInfo()}.
+         */
+        public void updateCursorAnchorInfo(CursorAnchorInfo info) {
+            if (!isEnabled()) {
+                return;
+            }
+            InputMethodService.this.onUpdateCursorAnchorInfo(info);
+        }
     }
     
     /**
@@ -643,10 +639,13 @@ public class InputMethodService extends AbstractInputMethodService {
      * You can call this to try to enable hardware accelerated drawing for
      * your IME. This must be set before {@link #onCreate}, so you
      * will typically call it in your constructor.  It is not always possible
-     * to use hardware acclerated drawing in an IME (for example on low-end
+     * to use hardware accelerated drawing in an IME (for example on low-end
      * devices that do not have the resources to support this), so the call
      * returns true if it succeeds otherwise false if you will need to draw
      * in software.  You must be able to handle either case.
+     *
+     * @deprecated Starting in API 21, hardware acceleration is always enabled
+     *             on capable devices.
      */
     public boolean enableHardwareAcceleration() {
         if (mWindow != null) {
@@ -664,13 +663,15 @@ public class InputMethodService extends AbstractInputMethodService {
                 getApplicationInfo().targetSdkVersion,
                 android.R.style.Theme_InputMethod,
                 android.R.style.Theme_Holo_InputMethod,
+                android.R.style.Theme_DeviceDefault_InputMethod,
                 android.R.style.Theme_DeviceDefault_InputMethod);
         super.setTheme(mTheme);
         super.onCreate();
         mImm = (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
         mInflater = (LayoutInflater)getSystemService(
                 Context.LAYOUT_INFLATER_SERVICE);
-        mWindow = new SoftInputWindow(this, mTheme, mDispatcherState);
+        mWindow = new SoftInputWindow(this, "InputMethod", mTheme, null, null, mDispatcherState,
+                WindowManager.LayoutParams.TYPE_INPUT_METHOD, Gravity.BOTTOM, false);
         if (mHardwareAccelerated) {
             mWindow.getWindow().addFlags(WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED);
         }
@@ -896,7 +897,7 @@ public class InputMethodService extends AbstractInputMethodService {
      * is currently running in fullscreen mode.
      */
     public void updateFullscreenMode() {
-        boolean isFullscreen = mShowInputRequested && (onEvaluateFullscreenMode() || onEvaluateSplitView());
+        boolean isFullscreen = mShowInputRequested && onEvaluateFullscreenMode();
         boolean changed = mLastShowInputRequested != mShowInputRequested;
         if (mIsFullscreen != isFullscreen || !mFullscreenApplied) {
             changed = true;
@@ -991,25 +992,6 @@ public class InputMethodService extends AbstractInputMethodService {
             return false;
         }
         return true;
-    }
-
-    /**
-     * Splitview stuff - FIXME: This needs a proper doc entry
-     * @hide
-     */
-    public boolean onEvaluateSplitView() {
-        if (mCandidatesFrame.getChildCount() > 0) {
-            Context candidateContext = mCandidatesFrame.getChildAt(0).getContext();
-            if (candidateContext instanceof Activity) {
-                return ((Activity) candidateContext).isSplitView();
-            } else {
-                Log.e("XPLOD", "NOT ACTIVITY");
-                return false;
-            }
-        } else {
-            Log.e("XPLOD", "NO CHILD");
-            return false;
-        }
     }
 
     /**
@@ -1731,8 +1713,21 @@ public class InputMethodService extends AbstractInputMethodService {
      * Called when the application has reported a new location of its text
      * cursor.  This is only called if explicitly requested by the input method.
      * The default implementation does nothing.
+     * @deprecated Use {#link onUpdateCursorAnchorInfo(CursorAnchorInfo)} instead.
      */
+    @Deprecated
     public void onUpdateCursor(Rect newCursor) {
+        // Intentionally empty
+    }
+
+    /**
+     * Called when the application has reported a new location of its text insertion point and
+     * characters in the composition string.  This is only called if explicitly requested by the
+     * input method. The default implementation does nothing.
+     * @param cursorAnchorInfo The positional information of the text insertion point and the
+     * composition string.
+     */
+    public void onUpdateCursorAnchorInfo(CursorAnchorInfo cursorAnchorInfo) {
         // Intentionally empty
     }
 
@@ -1809,26 +1804,6 @@ public class InputMethodService extends AbstractInputMethodService {
             }
             return false;
         }
-        if (event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP) {
-            mVolumeKeyCursorControl = Settings.System.getInt(getContentResolver(),
-                    Settings.System.VOLUME_KEY_CURSOR_CONTROL, 0);
-            if (isInputViewShown() && (mVolumeKeyCursorControl != VOLUME_CURSOR_OFF)) {
-                sendDownUpKeyEvents((mVolumeKeyCursorControl == VOLUME_CURSOR_ON_REVERSE)
-                        ? KeyEvent.KEYCODE_DPAD_RIGHT : KeyEvent.KEYCODE_DPAD_LEFT);
-                return true;
-            }
-            return false;
-        }
-        if (event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_DOWN) {
-            mVolumeKeyCursorControl = Settings.System.getInt(getContentResolver(),
-                    Settings.System.VOLUME_KEY_CURSOR_CONTROL, 0);
-            if (isInputViewShown() && (mVolumeKeyCursorControl != VOLUME_CURSOR_OFF)) {
-                sendDownUpKeyEvents((mVolumeKeyCursorControl == VOLUME_CURSOR_ON_REVERSE)
-                        ? KeyEvent.KEYCODE_DPAD_LEFT : KeyEvent.KEYCODE_DPAD_RIGHT);
-                return true;
-            }
-            return false;
-        }
         return doMovementKey(keyCode, event, MOVEMENT_DOWN);
     }
 
@@ -1874,15 +1849,6 @@ public class InputMethodService extends AbstractInputMethodService {
                 && !event.isCanceled()) {
             return handleBack(true);
         }
-        if (event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP
-                || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-           mVolumeKeyCursorControl = Settings.System.getInt(getContentResolver(),
-                   Settings.System.VOLUME_KEY_CURSOR_CONTROL, 0);
-           if (isInputViewShown() && (mVolumeKeyCursorControl != VOLUME_CURSOR_OFF)) {
-               return true;
-           }
-           return false;
-       }
         
         return doMovementKey(keyCode, event, MOVEMENT_UP);
     }
@@ -2384,6 +2350,21 @@ public class InputMethodService extends AbstractInputMethodService {
                 + newSubtype.getLocale() + "," + newSubtype.getExtraValue();
             Log.v(TAG, "--- " + output);
         }
+    }
+
+    /**
+     * @return The recommended height of the input method window.
+     * An IME author can get the last input method's height as the recommended height
+     * by calling this in
+     * {@link android.inputmethodservice.InputMethodService#onStartInputView(EditorInfo, boolean)}.
+     * If you don't need to use a predefined fixed height, you can avoid the window-resizing of IME
+     * switching by using this value as a visible inset height. It's efficient for the smooth
+     * transition between different IMEs. However, note that this may return 0 (or possibly
+     * unexpectedly low height). You should thus avoid relying on the return value of this method
+     * all the time. Please make sure to use a reasonable height for the IME.
+     */
+    public int getInputMethodWindowRecommendedHeight() {
+        return mImm.getInputMethodWindowVisibleHeight();
     }
 
     /**

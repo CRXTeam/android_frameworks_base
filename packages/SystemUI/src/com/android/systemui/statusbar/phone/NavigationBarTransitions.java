@@ -19,17 +19,10 @@ package com.android.systemui.statusbar.phone;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.content.Context;
-import android.database.ContentObserver;
-import android.graphics.PorterDuff;
-import android.net.Uri;
-import android.os.Handler;
 import android.os.ServiceManager;
-import android.os.UserHandle;
-import android.provider.Settings;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.animation.AccelerateInterpolator;
-import android.widget.ImageView;
 
 import com.android.internal.statusbar.IStatusBarService;
 import com.android.systemui.R;
@@ -37,7 +30,6 @@ import com.android.systemui.statusbar.policy.KeyButtonView;
 
 public final class NavigationBarTransitions extends BarTransitions {
 
-    private static final float KEYGUARD_QUIESCENT_ALPHA = 0.5f;
     private static final int CONTENT_FADE_DURATION = 200;
 
     private final NavigationBarView mView;
@@ -46,10 +38,9 @@ public final class NavigationBarTransitions extends BarTransitions {
     private boolean mLightsOut;
     private boolean mVertical;
     private int mRequestedMode;
-    private boolean mStickyTransparent;
 
     public NavigationBarTransitions(NavigationBarView view) {
-        super(view, new NavigationBarBackgroundDrawable(view.getContext()));
+        super(view, R.drawable.nav_background);
         mView = view;
         mBarService = IStatusBarService.Stub.asInterface(
                 ServiceManager.getService(Context.STATUS_BAR_SERVICE));
@@ -69,11 +60,9 @@ public final class NavigationBarTransitions extends BarTransitions {
     @Override
     public void transitionTo(int mode, boolean animate) {
         mRequestedMode = mode;
-        if (mVertical && mode == MODE_TRANSLUCENT) {
+        if (mVertical && (mode == MODE_TRANSLUCENT || mode == MODE_TRANSPARENT)) {
             // translucent mode not allowed when vertical
             mode = MODE_OPAQUE;
-        } else if (mStickyTransparent) {
-            mode = MODE_TRANSPARENT;
         }
         super.transitionTo(mode, animate);
     }
@@ -90,9 +79,7 @@ public final class NavigationBarTransitions extends BarTransitions {
         setKeyButtonViewQuiescentAlpha(mView.getHomeButton(), alpha, animate);
         setKeyButtonViewQuiescentAlpha(mView.getRecentsButton(), alpha, animate);
         setKeyButtonViewQuiescentAlpha(mView.getMenuButton(), alpha, animate);
-
-        setKeyButtonViewQuiescentAlpha(mView.getSearchLight(), KEYGUARD_QUIESCENT_ALPHA, animate);
-        setKeyButtonViewQuiescentAlpha(mView.getCameraButton(), KEYGUARD_QUIESCENT_ALPHA, animate);
+        setKeyButtonViewQuiescentAlpha(mView.getImeSwitchButton(), alpha, animate);
 
         applyBackButtonQuiescentAlpha(mode, animate);
 
@@ -107,24 +94,12 @@ public final class NavigationBarTransitions extends BarTransitions {
 
     public void applyBackButtonQuiescentAlpha(int mode, boolean animate) {
         float backAlpha = 0;
-        backAlpha = maxVisibleQuiescentAlpha(backAlpha, mView.getSearchLight());
-        backAlpha = maxVisibleQuiescentAlpha(backAlpha, mView.getCameraButton());
         backAlpha = maxVisibleQuiescentAlpha(backAlpha, mView.getHomeButton());
         backAlpha = maxVisibleQuiescentAlpha(backAlpha, mView.getRecentsButton());
         backAlpha = maxVisibleQuiescentAlpha(backAlpha, mView.getMenuButton());
+        backAlpha = maxVisibleQuiescentAlpha(backAlpha, mView.getImeSwitchButton());
         if (backAlpha > 0) {
             setKeyButtonViewQuiescentAlpha(mView.getBackButton(), backAlpha, animate);
-        }
-    }
-
-    public void applyTransparent(boolean sticky) {
-        if (sticky != mStickyTransparent) {
-            mStickyTransparent = sticky;
-            if (!mStickyTransparent) {
-                transitionTo(mRequestedMode, false);
-            } else {
-                transitionTo(MODE_TRANSPARENT, false);
-            }
         }
     }
 
@@ -133,19 +108,6 @@ public final class NavigationBarTransitions extends BarTransitions {
             return Math.max(max, ((KeyButtonView)v).getQuiescentAlpha());
         }
         return max;
-    }
-
-    @Override
-    public void setContentVisible(boolean visible) {
-        final float alpha = visible ? 1 : 0;
-        fadeContent(mView.getCameraButton(), alpha);
-        fadeContent(mView.getSearchLight(), alpha);
-    }
-
-    private void fadeContent(View v, float alpha) {
-        if (v != null) {
-            v.animate().alpha(alpha).setDuration(CONTENT_FADE_DURATION);
-        }
     }
 
     private void setKeyButtonViewQuiescentAlpha(View button, float alpha, boolean animate) {
@@ -216,87 +178,4 @@ public final class NavigationBarTransitions extends BarTransitions {
             return false;
         }
     };
-
-    protected static class NavigationBarBackgroundDrawable
-            extends BarTransitions.BarBackgroundDrawable {
-        private final Context mContext;
-
-        private int mOverrideColor = 0;
-        private int mOverrideGradientAlpha = 0;
-
-        public NavigationBarBackgroundDrawable(final Context context) {
-            super(context,
-                    R.color.navigation_bar_background_opaque,
-                    R.color.navigation_bar_background_semi_transparent,
-                    R.drawable.nav_background);
-
-            mContext = context;
-
-            final GradientObserver obs = new GradientObserver(this, new Handler());
-            (mContext.getContentResolver()).registerContentObserver(
-                    GradientObserver.DYNAMIC_SYSTEM_BARS_GRADIENT_URI,
-                    false, obs, UserHandle.USER_ALL);
-
-            mOverrideGradientAlpha = Settings.System.getInt(mContext.getContentResolver(),
-                    Settings.System.DYNAMIC_SYSTEM_BARS_GRADIENT_STATE, 0) == 1 ?
-                            0xff : 0;
-
-            BarBackgroundUpdater.addListener(new BarBackgroundUpdater.UpdateListener(this) {
-
-                @Override
-                public Animator onUpdateNavigationBarColor(final int previousColor, final int color) {
-                    mOverrideColor = color;
-                    return generateAnimator();
-                }
-
-            });
-            BarBackgroundUpdater.init(context);
-        }
-
-        @Override
-        protected int getColorOpaque() {
-            return mOverrideColor == 0 ? super.getColorOpaque() : mOverrideColor;
-        }
-
-        @Override
-        protected int getColorSemiTransparent() {
-            return mOverrideColor == 0 ? super.getColorSemiTransparent() :
-                    (mOverrideColor & 0x00ffffff | 0x7f000000);
-        }
-
-        @Override
-        protected int getGradientAlphaOpaque() {
-            return mOverrideGradientAlpha;
-        }
-
-        @Override
-        protected int getGradientAlphaSemiTransparent() {
-            return mOverrideGradientAlpha & 0x7f;
-        }
-
-        public void setOverrideGradientAlpha(final int alpha) {
-            mOverrideGradientAlpha = alpha;
-            generateAnimator().start();
-        }
-    }
-
-    private static final class GradientObserver extends ContentObserver {
-        private static final Uri DYNAMIC_SYSTEM_BARS_GRADIENT_URI = Settings.System.getUriFor(
-                Settings.System.DYNAMIC_SYSTEM_BARS_GRADIENT_STATE);
-
-        private final NavigationBarBackgroundDrawable mDrawable;
-
-        private GradientObserver(final NavigationBarBackgroundDrawable drawable,
-                final Handler handler) {
-            super(handler);
-            mDrawable = drawable;
-        }
-
-        @Override
-        public void onChange(final boolean selfChange) {
-            mDrawable.setOverrideGradientAlpha(Settings.System.getInt(
-                    mDrawable.mContext.getContentResolver(),
-                    Settings.System.DYNAMIC_SYSTEM_BARS_GRADIENT_STATE, 0) == 1 ? 0xff : 0);
-        }
-    }
 }

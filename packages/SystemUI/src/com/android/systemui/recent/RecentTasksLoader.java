@@ -17,25 +17,29 @@
 package com.android.systemui.recent;
 
 import android.app.ActivityManager;
+import android.app.AppGlobals;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
+import android.content.pm.IPackageManager;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
-import android.graphics.Canvas;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.AsyncTask;
 import android.os.Handler;
 import android.os.Process;
+import android.os.RemoteException;
 import android.os.UserHandle;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 
 import com.android.systemui.R;
+import com.android.systemui.recents.misc.SystemServicesProxy;
 import com.android.systemui.statusbar.phone.PhoneStatusBar;
 
 import java.util.ArrayList;
@@ -62,8 +66,8 @@ public class RecentTasksLoader implements View.OnTouchListener {
     private Handler mHandler;
 
     private int mIconDpi;
-    private Bitmap mDefaultThumbnailBackground;
-    private Bitmap mDefaultIconBackground;
+    private ColorDrawableWithDimensions mDefaultThumbnailBackground;
+    private ColorDrawableWithDimensions mDefaultIconBackground;
     private int mNumTasksInFirstScreenful = Integer.MAX_VALUE;
 
     private boolean mFirstScreenful;
@@ -100,7 +104,7 @@ public class RecentTasksLoader implements View.OnTouchListener {
         // Render default icon (just a blank image)
         int defaultIconSize = res.getDimensionPixelSize(com.android.internal.R.dimen.app_icon_size);
         int iconSize = (int) (defaultIconSize * mIconDpi / res.getDisplayMetrics().densityDpi);
-        mDefaultIconBackground = Bitmap.createBitmap(iconSize, iconSize, Bitmap.Config.ARGB_8888);
+        mDefaultIconBackground = new ColorDrawableWithDimensions(0x00000000, iconSize, iconSize);
 
         // Render the default thumbnail background
         int thumbnailWidth =
@@ -110,9 +114,7 @@ public class RecentTasksLoader implements View.OnTouchListener {
         int color = res.getColor(R.drawable.status_bar_recents_app_thumbnail_background);
 
         mDefaultThumbnailBackground =
-                Bitmap.createBitmap(thumbnailWidth, thumbnailHeight, Bitmap.Config.ARGB_8888);
-        Canvas c = new Canvas(mDefaultThumbnailBackground);
-        c.drawColor(color);
+                new ColorDrawableWithDimensions(color, thumbnailWidth, thumbnailHeight);
     }
 
     public void setRecentsPanel(RecentsPanelView newRecentsPanel, RecentsPanelView caller) {
@@ -125,11 +127,11 @@ public class RecentTasksLoader implements View.OnTouchListener {
         }
     }
 
-    public Bitmap getDefaultThumbnail() {
+    public Drawable getDefaultThumbnail() {
         return mDefaultThumbnailBackground;
     }
 
-    public Bitmap getDefaultIcon() {
+    public Drawable getDefaultIcon() {
         return mDefaultIconBackground;
     }
 
@@ -158,15 +160,20 @@ public class RecentTasksLoader implements View.OnTouchListener {
 
     // Create an TaskDescription, returning null if the title or icon is null
     TaskDescription createTaskDescription(int taskId, int persistentTaskId, Intent baseIntent,
-            ComponentName origActivity, CharSequence description) {
+            ComponentName origActivity, CharSequence description, int userId) {
         Intent intent = new Intent(baseIntent);
         if (origActivity != null) {
             intent.setComponent(origActivity);
         }
         final PackageManager pm = mContext.getPackageManager();
+        final IPackageManager ipm = AppGlobals.getPackageManager();
         intent.setFlags((intent.getFlags()&~Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
                 | Intent.FLAG_ACTIVITY_NEW_TASK);
-        final ResolveInfo resolveInfo = pm.resolveActivity(intent, 0);
+        ResolveInfo resolveInfo = null;
+        try {
+            resolveInfo = ipm.resolveIntent(intent, null, 0, userId);
+        } catch (RemoteException re) {
+        }
         if (resolveInfo != null) {
             final ActivityInfo info = resolveInfo.activityInfo;
             final String title = info.loadLabel(pm).toString();
@@ -177,7 +184,7 @@ public class RecentTasksLoader implements View.OnTouchListener {
 
                 TaskDescription item = new TaskDescription(taskId,
                         persistentTaskId, resolveInfo, baseIntent, info.packageName,
-                        description);
+                        description, userId);
                 item.setLabel(title);
 
                 return item;
@@ -192,14 +199,17 @@ public class RecentTasksLoader implements View.OnTouchListener {
         final ActivityManager am = (ActivityManager)
                 mContext.getSystemService(Context.ACTIVITY_SERVICE);
         final PackageManager pm = mContext.getPackageManager();
-        Bitmap thumbnail = am.getTaskTopThumbnail(td.persistentTaskId);
+        final Bitmap thumbnail = SystemServicesProxy.getThumbnail(am, td.persistentTaskId);
         Drawable icon = getFullResIcon(td.resolveInfo, pm);
-
+        if (td.userId != UserHandle.myUserId()) {
+            // Need to badge the icon
+            icon = mContext.getPackageManager().getUserBadgedIcon(icon, new UserHandle(td.userId));
+        }
         if (DEBUG) Log.v(TAG, "Loaded bitmap for task "
                 + td + ": " + thumbnail);
         synchronized (td) {
             if (thumbnail != null) {
-                td.setThumbnail(thumbnail);
+                td.setThumbnail(new BitmapDrawable(mContext.getResources(), thumbnail));
             } else {
                 td.setThumbnail(mDefaultThumbnailBackground);
             }
@@ -349,18 +359,12 @@ public class RecentTasksLoader implements View.OnTouchListener {
     boolean mPreloadingFirstTask;
     boolean mCancelPreloadingFirstTask;
     public TaskDescription getFirstTask() {
-        return getFirstTask(false);
-    }
-    public TaskDescription getFirstTask(boolean skip) {
         while(true) {
             synchronized(mFirstTaskLock) {
-                if (skip) {
-                    mFirstTaskLoaded = false;
-                }
                 if (mFirstTaskLoaded) {
                     return mFirstTask;
                 } else if (!mFirstTaskLoaded && !mPreloadingFirstTask) {
-                    mFirstTask = skip ? findFirstTask() : loadFirstTask();
+                    mFirstTask = loadFirstTask();
                     mFirstTaskLoaded = true;
                     return mFirstTask;
                 }
@@ -375,8 +379,9 @@ public class RecentTasksLoader implements View.OnTouchListener {
     public TaskDescription loadFirstTask() {
         final ActivityManager am = (ActivityManager) mContext.getSystemService(Context.ACTIVITY_SERVICE);
 
-        final List<ActivityManager.RecentTaskInfo> recentTasks = am.getRecentTasksForUser(
-                1, ActivityManager.RECENT_IGNORE_UNAVAILABLE, UserHandle.CURRENT.getIdentifier());
+        final List<ActivityManager.RecentTaskInfo> recentTasks = am.getRecentTasksForUser(1,
+                ActivityManager.RECENT_IGNORE_UNAVAILABLE | ActivityManager.RECENT_INCLUDE_PROFILES,
+                UserHandle.CURRENT.getIdentifier());
         TaskDescription item = null;
         if (recentTasks.size() > 0) {
             ActivityManager.RecentTaskInfo recentInfo = recentTasks.get(0);
@@ -388,7 +393,6 @@ public class RecentTasksLoader implements View.OnTouchListener {
 
             // Don't load the current home activity.
             if (isCurrentHomeActivity(intent.getComponent(), null)) {
-				RecentsActivity.mHomeForeground = true;
                 return null;
             }
 
@@ -399,48 +403,10 @@ public class RecentTasksLoader implements View.OnTouchListener {
 
             item = createTaskDescription(recentInfo.id,
                     recentInfo.persistentId, recentInfo.baseIntent,
-                    recentInfo.origActivity, recentInfo.description);
+                    recentInfo.origActivity, recentInfo.description,
+                    recentInfo.userId);
             if (item != null) {
                 loadThumbnailAndIcon(item);
-            }
-            return item;
-        }
-        return null;
-    }
-
-    public TaskDescription findFirstTask() {
-        final ActivityManager am = (ActivityManager) mContext.getSystemService(Context.ACTIVITY_SERVICE);
-
-        final List<ActivityManager.RecentTaskInfo> recentTasks = am.getRecentTasksForUser(
-                MAX_TASKS, ActivityManager.RECENT_IGNORE_UNAVAILABLE, UserHandle.CURRENT.getIdentifier());
-        TaskDescription item = null;
-        int i = -1;
-        for (ActivityManager.RecentTaskInfo recentInfo : recentTasks) {
-            i++;
-            Intent intent = new Intent(recentInfo.baseIntent);
-            if (recentInfo.origActivity != null) {
-                intent.setComponent(recentInfo.origActivity);
-            }
-
-            // Don't load the current home activity
-            if (isCurrentHomeActivity(intent.getComponent(), null)) {
-                continue;
-            }
-
-            // Don't load ourselves
-            if (intent.getComponent().getPackageName().equals(mContext.getPackageName())) {
-                continue;
-            }
-
-            item = createTaskDescription(recentInfo.id,
-                    recentInfo.persistentId, recentInfo.baseIntent,
-                    recentInfo.origActivity, recentInfo.description);
-            if (item != null) {
-                loadThumbnailAndIcon(item);
-            }
-            // don't load the first activity
-            if (i == 0) {
-                continue;
             }
             return item;
         }
@@ -488,15 +454,12 @@ public class RecentTasksLoader implements View.OnTouchListener {
 
                 final List<ActivityManager.RecentTaskInfo> recentTasks =
                         am.getRecentTasks(MAX_TASKS, ActivityManager.RECENT_IGNORE_UNAVAILABLE
-                                | ActivityManager.RECENT_WITH_EXCLUDED
-                                | ActivityManager.RECENT_DO_NOT_COUNT_EXCLUDED);
+                        | ActivityManager.RECENT_INCLUDE_PROFILES);
                 int numTasks = recentTasks.size();
                 ActivityInfo homeInfo = new Intent(Intent.ACTION_MAIN)
                         .addCategory(Intent.CATEGORY_HOME).resolveActivityInfo(pm, 0);
 
                 boolean firstScreenful = true;
-                boolean loadOneExcluded = true;
-
                 ArrayList<TaskDescription> tasks = new ArrayList<TaskDescription>();
 
                 // skip the first task - assume it's either the home screen or the current activity.
@@ -514,7 +477,6 @@ public class RecentTasksLoader implements View.OnTouchListener {
 
                     // Don't load the current home activity.
                     if (isCurrentHomeActivity(intent.getComponent(), homeInfo)) {
-                        loadOneExcluded = false;
                         continue;
                     }
 
@@ -523,16 +485,10 @@ public class RecentTasksLoader implements View.OnTouchListener {
                         continue;
                     }
 
-                    if (!loadOneExcluded && (recentInfo.baseIntent.getFlags()
-                            & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS) != 0) {
-                        continue;
-                    }
-
-                    loadOneExcluded = false;
-
                     TaskDescription item = createTaskDescription(recentInfo.id,
                             recentInfo.persistentId, recentInfo.baseIntent,
-                            recentInfo.origActivity, recentInfo.description);
+                            recentInfo.origActivity, recentInfo.description,
+                            recentInfo.userId);
 
                     if (item != null) {
                         while (true) {

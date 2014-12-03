@@ -16,10 +16,7 @@
 
 package com.android.systemui.statusbar.phone;
 
-import android.animation.Animator;
-import android.animation.AnimatorSet;
-import android.animation.ArgbEvaluator;
-import android.animation.ValueAnimator;
+import android.animation.TimeInterpolator;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.content.res.Resources;
@@ -30,7 +27,6 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.SystemClock;
-import android.os.Handler;
 import android.util.Log;
 import android.view.View;
 import android.view.animation.LinearInterpolator;
@@ -48,12 +44,11 @@ public class BarTransitions {
     public static final int MODE_TRANSLUCENT = 2;
     public static final int MODE_LIGHTS_OUT = 3;
     public static final int MODE_TRANSPARENT = 4;
+    public static final int MODE_WARNING = 5;
 
     public static final int LIGHTS_IN_DURATION = 250;
     public static final int LIGHTS_OUT_DURATION = 750;
     public static final int BACKGROUND_DURATION = 200;
-
-    private static int mDSBDuration;
 
     private final String mTag;
     private final View mView;
@@ -61,17 +56,13 @@ public class BarTransitions {
 
     private int mMode;
 
-    public BarTransitions(View view, BarBackgroundDrawable barBackground) {
+    public BarTransitions(View view, int gradientResourceId) {
         mTag = "BarTransitions." + view.getClass().getSimpleName();
         mView = view;
-        mBarBackground = barBackground;
+        mBarBackground = new BarBackgroundDrawable(mView.getContext(), gradientResourceId);
         if (HIGH_END) {
             mView.setBackground(mBarBackground);
         }
-    }
-
-    public void updateResources(Resources res) {
-        mBarBackground.updateResources(res);
     }
 
     public int getMode() {
@@ -80,7 +71,8 @@ public class BarTransitions {
 
     public void transitionTo(int mode, boolean animate) {
         // low-end devices do not support translucent modes, fallback to opaque
-        if (!HIGH_END && (mode == MODE_SEMI_TRANSPARENT || mode == MODE_TRANSLUCENT)) {
+        if (!HIGH_END && (mode == MODE_SEMI_TRANSPARENT || mode == MODE_TRANSLUCENT
+                || mode == MODE_TRANSPARENT)) {
             mode = MODE_OPAQUE;
         }
         if (mMode == mode) return;
@@ -100,7 +92,7 @@ public class BarTransitions {
     protected void applyModeBackground(int oldMode, int newMode, boolean animate) {
         if (DEBUG) Log.d(mTag, String.format("applyModeBackground oldMode=%s newMode=%s animate=%s",
                 modeToString(oldMode), modeToString(newMode), animate));
-        mBarBackground.applyMode(newMode, animate);
+        mBarBackground.applyModeBackground(oldMode, newMode, animate);
     }
 
     public static String modeToString(int mode) {
@@ -109,347 +101,136 @@ public class BarTransitions {
         if (mode == MODE_TRANSLUCENT) return "MODE_TRANSLUCENT";
         if (mode == MODE_LIGHTS_OUT) return "MODE_LIGHTS_OUT";
         if (mode == MODE_TRANSPARENT) return "MODE_TRANSPARENT";
-        if (DEBUG && mode == -1) return "-1";
+        if (mode == MODE_WARNING) return "MODE_WARNING";
         throw new IllegalArgumentException("Unknown mode " + mode);
     }
 
     public void finishAnimations() {
-        mBarBackground.finishAnimating();
+        mBarBackground.finishAnimation();
     }
 
-    public void setContentVisible(boolean visible) {
-        // for subclasses
-    }
+    private static class BarBackgroundDrawable extends Drawable {
+        private final int mOpaque;
+        private final int mSemiTransparent;
+        private final int mTransparent;
+        private final int mWarning;
+        private final Drawable mGradient;
+        private final TimeInterpolator mInterpolator;
 
-    public void applyTransparent(boolean sticky) {
-        // for subclasses
-    }
+        private int mMode = -1;
+        private boolean mAnimating;
+        private long mStartTime;
+        private long mEndTime;
 
-    protected static class BarBackgroundDrawable extends Drawable
-            implements Animator.AnimatorListener, ValueAnimator.AnimatorUpdateListener {
-        private final int mOpaqueColorResId;
-        private final int mSemiTransparentColorResId;
-        private final int mGradientResId;
+        private int mGradientAlpha;
+        private int mColor;
 
-        private final Handler mHandler;
-        private final Runnable mInvalidateSelf = new Runnable() {
+        private int mGradientAlphaStart;
+        private int mColorStart;
 
-            @Override
-            public void run() {
-                invalidateSelf();
-            }
-
-        };
-
-        private int mOpaque = 0;
-        private int mSemiTransparent = 0;
-        private Drawable mGradient = null;
-
-        private int mCurrentMode = -1;
-        private int mCurrentColor = 0;
-        private Animator mColorAnimator = null;
-        private int mCurrentGradientAlpha = 0;
-        private Animator mGradientAlphaAnimator = null;
-
-        public BarBackgroundDrawable(final Context context, final int opaqueColorResId,
-                final int semiTransparentColorResId, final int gradientResId) {
-            mHandler = new Handler();
-
-            mOpaqueColorResId = opaqueColorResId;
-            mSemiTransparentColorResId = semiTransparentColorResId;
-            mGradientResId = gradientResId;
-
+        public BarBackgroundDrawable(Context context, int gradientResourceId) {
             final Resources res = context.getResources();
-            mDSBDuration = res.getInteger(R.integer.dsb_transition_duration);
-            updateResources(res);
-        }
-
-        @Override
-        public final void draw(final Canvas canvas) {
-            final int currentColor = mCurrentColor;
-            if (Color.alpha(currentColor) > 0) {
-                canvas.drawColor(currentColor);
+            if (DEBUG_COLORS) {
+                mOpaque = 0xff0000ff;
+                mSemiTransparent = 0x7f0000ff;
+                mTransparent = 0x2f0000ff;
+                mWarning = 0xffff0000;
+            } else {
+                mOpaque = res.getColor(R.color.system_bar_background_opaque);
+                mSemiTransparent = res.getColor(R.color.system_bar_background_semi_transparent);
+                mTransparent = res.getColor(R.color.system_bar_background_transparent);
+                mWarning = res.getColor(com.android.internal.R.color.battery_saver_mode_color);
             }
-
-            final int currentGradientAlpha = mCurrentGradientAlpha;
-            if (currentGradientAlpha > 0) {
-                mGradient.setAlpha(currentGradientAlpha);
-                mGradient.draw(canvas);
-            }
+            mGradient = res.getDrawable(gradientResourceId);
+            mInterpolator = new LinearInterpolator();
         }
 
         @Override
-        public final int getOpacity() {
-            return PixelFormat.TRANSLUCENT;
-        }
-
-        @Override
-        public final void setAlpha(final int alpha) {
+        public void setAlpha(int alpha) {
             // noop
         }
 
         @Override
-        public final void setColorFilter(final ColorFilter cf) {
+        public void setColorFilter(ColorFilter cf) {
             // noop
         }
 
         @Override
-        public final void onAnimationCancel(final Animator animation) {
-            // offload to the animation ending handler as both are the same for our needs
-            onAnimationEnd(animation);
-        }
-
-        @Override
-        public final void onAnimationEnd(final Animator animation) {
-            mHandler.post(new Runnable() {
-
-                @Override
-                public void run() {
-                    if (animation.equals(mColorAnimator)) {
-                        mColorAnimator = null; // abandon the bugger
-                        setCurrentColor(getTargetColor()); // force the good value
-                    } else if (animation.equals(mGradientAlphaAnimator)) {
-                        mGradientAlphaAnimator = null; // abandon the bugger
-                        setCurrentGradientAlpha(getTargetGradientAlpha()); // force the good value
-                    } else {
-                        // some poor zombie animation stopped
-                        return;
-                    }
-
-                    // ensure the good value is shown to the user
-                    mHandler.removeCallbacks(mInvalidateSelf);
-                    mHandler.post(mInvalidateSelf);
-                }
-
-            });
-        }
-
-        @Override
-        public final void onAnimationRepeat(final Animator animation) {
-            // noop
-        }
-
-        @Override
-        public final void onAnimationStart(final Animator animation) {
-            // noop
-        }
-
-        @Override
-        public final void onAnimationUpdate(final ValueAnimator animation) {
-            mHandler.post(new Runnable() {
-
-                @Override
-                public void run() {
-                    final Object value = animation.getAnimatedValue();
-
-                    if (animation.equals(mColorAnimator)) {
-                        setCurrentColor((int) (Integer) value);
-                    } else if (animation.equals(mGradientAlphaAnimator)) {
-                        setCurrentGradientAlpha((int) (Integer) value);
-                    } else {
-                        // tell the zombie animation to stop
-                        // TODO animation.cancel();
-                        return;
-                    }
-
-                    mHandler.removeCallbacks(mInvalidateSelf);
-                    mHandler.post(mInvalidateSelf);
-                }
-
-            });
-        }
-
-        @Override
-        protected final void onBoundsChange(final Rect bounds) {
+        protected void onBoundsChange(Rect bounds) {
             super.onBoundsChange(bounds);
             mGradient.setBounds(bounds);
         }
 
-        public final synchronized void updateResources(final Resources res)  {
-            if (DEBUG_COLORS) {
-                mOpaque = 0xff0000ff;
-                mSemiTransparent = 0x7f0000ff;
-            } else {
-                mOpaque = res.getColor(mOpaqueColorResId);
-                mSemiTransparent = res.getColor(mSemiTransparentColorResId);
-            }
-
-            // without holding on to the bounds, they will be reset and the gradient won't be drawn
-            final Rect bounds = mGradient == null ? new Rect() : mGradient.getBounds();
-            mGradient = res.getDrawable(mGradientResId);
-            mGradient.setBounds(bounds);
-
-            setCurrentColor(getTargetColor());
-            setCurrentGradientAlpha(getTargetGradientAlpha());
-
-            mHandler.removeCallbacks(mInvalidateSelf);
-            mHandler.postDelayed(mInvalidateSelf, 50);
-        }
-
-        protected int getColorOpaque() {
-            return mOpaque;
-        }
-
-        protected int getColorSemiTransparent() {
-            return mSemiTransparent;
-        }
-
-        protected int getGradientAlphaOpaque() {
-            return 0;
-        }
-
-        protected int getGradientAlphaSemiTransparent() {
-            return 0;
-        }
-
-        private final int getTargetColor() {
-            return getTargetColor(mCurrentMode);
-        }
-
-        private final int getTargetColor(final int mode) {
-            switch (mode) {
-            case MODE_TRANSPARENT:
-            case MODE_TRANSLUCENT:
-                return 0;
-            case MODE_SEMI_TRANSPARENT:
-                return getColorSemiTransparent();
-            default:
-                return getColorOpaque();
-            }
-        }
-
-        private final int getTargetGradientAlpha() {
-            return getTargetGradientAlpha(mCurrentMode);
-        }
-
-        private final int getTargetGradientAlpha(final int mode) {
-            switch (mode) {
-            case MODE_TRANSPARENT:
-                return 0;
-            case MODE_TRANSLUCENT:
-                return 0xff;
-            case MODE_SEMI_TRANSPARENT:
-                return getGradientAlphaSemiTransparent();
-            default:
-                return getGradientAlphaOpaque();
-            }
-        }
-
-        protected final Animator setColorAnimator(final Animator animation) {
-            if (mColorAnimator != null) {
-                // TODO mColorAnimator.cancel();
-            }
-            mColorAnimator = animation;
-            return animation; // return value for chaining calls
-        }
-
-        protected final Animator setGradientAlphaAnimator(final Animator animation) {
-            if (mGradientAlphaAnimator != null) {
-                // TODO mGradientAlphaAnimator.cancel();
-            }
-            mGradientAlphaAnimator = animation;
-            return animation; // return value for chaining calls
-        }
-
-        protected final void setCurrentColor(final int color) {
-            mCurrentColor = color;
-        }
-
-        protected final void setCurrentGradientAlpha(final int alpha) {
-            mCurrentGradientAlpha = alpha;
-        }
-
-        public final synchronized void applyMode(final int mode, final boolean animate) {
-            mCurrentMode = mode;
-
+        public void applyModeBackground(int oldMode, int newMode, boolean animate) {
+            if (mMode == newMode) return;
+            mMode = newMode;
+            mAnimating = animate;
             if (animate) {
-                mHandler.post(new Runnable() {
+                long now = SystemClock.elapsedRealtime();
+                mStartTime = now;
+                mEndTime = now + BACKGROUND_DURATION;
+                mGradientAlphaStart = mGradientAlpha;
+                mColorStart = mColor;
+            }
+            invalidateSelf();
+        }
 
-                    @Override
-                    public void run() {
-                        final Animator anim = generateAnimator(mode);
-                        if (anim != null) {
-                            anim.start();
-                        }
-                    }
+        @Override
+        public int getOpacity() {
+            return PixelFormat.TRANSLUCENT;
+        }
 
-                });
+        public void finishAnimation() {
+            if (mAnimating) {
+                mAnimating = false;
+                invalidateSelf();
+            }
+        }
+
+        @Override
+        public void draw(Canvas canvas) {
+            int targetGradientAlpha = 0, targetColor = 0;
+            if (mMode == MODE_WARNING) {
+                targetColor = mWarning;
+            } else if (mMode == MODE_TRANSLUCENT) {
+                targetColor = mSemiTransparent;
+            } else if (mMode == MODE_SEMI_TRANSPARENT) {
+                targetColor = mSemiTransparent;
+            } else if (mMode == MODE_TRANSPARENT) {
+                targetColor = mTransparent;
             } else {
-                final int targetColor = getTargetColor(mode);
-                final int targetGradientAlpha = getTargetGradientAlpha(mode);
-
-                if (targetColor != mCurrentColor ||
-                        targetGradientAlpha != mCurrentGradientAlpha) {
-                    setCurrentColor(targetColor);
-                    setCurrentGradientAlpha(targetGradientAlpha);
-
-                    mHandler.removeCallbacks(mInvalidateSelf);
-                    mHandler.postDelayed(mInvalidateSelf, 50);
+                targetColor = mOpaque;
+            }
+            if (!mAnimating) {
+                mColor = targetColor;
+                mGradientAlpha = targetGradientAlpha;
+            } else {
+                final long now = SystemClock.elapsedRealtime();
+                if (now >= mEndTime) {
+                    mAnimating = false;
+                    mColor = targetColor;
+                    mGradientAlpha = targetGradientAlpha;
+                } else {
+                    final float t = (now - mStartTime) / (float)(mEndTime - mStartTime);
+                    final float v = Math.max(0, Math.min(mInterpolator.getInterpolation(t), 1));
+                    mGradientAlpha = (int)(v * targetGradientAlpha + mGradientAlphaStart * (1 - v));
+                    mColor = Color.argb(
+                          (int)(v * Color.alpha(targetColor) + Color.alpha(mColorStart) * (1 - v)),
+                          (int)(v * Color.red(targetColor) + Color.red(mColorStart) * (1 - v)),
+                          (int)(v * Color.green(targetColor) + Color.green(mColorStart) * (1 - v)),
+                          (int)(v * Color.blue(targetColor) + Color.blue(mColorStart) * (1 - v)));
                 }
             }
-        }
-
-        public final void finishAnimating() {
-            mHandler.post(new Runnable() {
-
-                @Override
-                public void run() {
-                    setColorAnimator(null);
-                    setGradientAlphaAnimator(null);
-
-                    final int targetColor = getTargetColor();
-                    final int targetGradientAlpha = getTargetGradientAlpha();
-
-                    if (targetColor != mCurrentColor ||
-                            targetGradientAlpha != mCurrentGradientAlpha) {
-                        setCurrentColor(targetColor);
-                        setCurrentGradientAlpha(targetGradientAlpha);
-
-                        mHandler.removeCallbacks(mInvalidateSelf);
-                        mHandler.postDelayed(mInvalidateSelf, 50);
-                    }
-                }
-
-            });
-        }
-
-        protected final Animator generateAnimator() {
-            return generateAnimator(mCurrentMode);
-        }
-
-        protected final Animator generateAnimator(final int targetMode) {
-            final int targetColor = getTargetColor(targetMode);
-            final int targetGradientAlpha = getTargetGradientAlpha(targetMode);
-
-            if (targetColor == mCurrentColor && targetGradientAlpha == mCurrentGradientAlpha) {
-                // no values are changing - nothing to do
-                return null;
+            if (mGradientAlpha > 0) {
+                mGradient.setAlpha(mGradientAlpha);
+                mGradient.draw(canvas);
             }
-
-            final ValueAnimator colorAnimator = ValueAnimator.ofObject(new ArgbEvaluator(),
-                    mCurrentColor, targetColor).setDuration(mDSBDuration);
-            final ValueAnimator gradientAlphaAnimator = ValueAnimator.ofInt(
-                    mCurrentGradientAlpha, targetGradientAlpha).setDuration(mDSBDuration);
-
-            colorAnimator.addUpdateListener(this);
-            gradientAlphaAnimator.addUpdateListener(this);
-
-            if (targetColor == mCurrentColor || colorAnimator == null) {
-                // color value is not changing - only gradient alpha is changing
-                return setGradientAlphaAnimator(gradientAlphaAnimator);
+            if (Color.alpha(mColor) > 0) {
+                canvas.drawColor(mColor);
             }
-
-            if (targetGradientAlpha == mCurrentGradientAlpha || gradientAlphaAnimator == null) {
-                // gradient alpha is not changing - only color value is changing
-                return setColorAnimator(colorAnimator);
+            if (mAnimating) {
+                invalidateSelf();  // keep going
             }
-
-            // both values are changing - play them together
-            final AnimatorSet set = new AnimatorSet().setDuration(mDSBDuration);
-            set.playTogether(setColorAnimator(colorAnimator),
-                    setGradientAlphaAnimator(gradientAlphaAnimator));
-            set.addListener(this);
-            return set;
         }
     }
 }

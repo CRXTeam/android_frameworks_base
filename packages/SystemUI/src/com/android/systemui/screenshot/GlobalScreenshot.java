@@ -57,10 +57,10 @@ import android.view.animation.Interpolator;
 import android.widget.ImageView;
 
 import com.android.systemui.R;
-import com.android.systemui.screenshot.DeleteScreenshot;
 
 import java.io.File;
 import java.io.OutputStream;
+import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
@@ -74,6 +74,8 @@ class SaveImageInBackgroundData {
     Runnable finisher;
     int iconSize;
     int result;
+    int previewWidth;
+    int previewheight;
 
     void clearImage() {
         image = null;
@@ -98,7 +100,7 @@ class SaveImageInBackgroundTask extends AsyncTask<SaveImageInBackgroundData, Voi
 
     private final int mNotificationId;
     private final NotificationManager mNotificationManager;
-    private final Notification.Builder mNotificationBuilder;
+    private final Notification.Builder mNotificationBuilder, mPublicNotificationBuilder;
     private final File mScreenshotDir;
     private final String mImageFileName;
     private final String mImageFilePath;
@@ -131,17 +133,19 @@ class SaveImageInBackgroundTask extends AsyncTask<SaveImageInBackgroundData, Voi
         mImageWidth = data.image.getWidth();
         mImageHeight = data.image.getHeight();
         int iconSize = data.iconSize;
+        int previewWidth = data.previewWidth;
+        int previewHeight = data.previewheight;
 
         final int shortSide = mImageWidth < mImageHeight ? mImageWidth : mImageHeight;
-        Bitmap preview = Bitmap.createBitmap(shortSide, shortSide, data.image.getConfig());
+        Bitmap preview = Bitmap.createBitmap(previewWidth, previewHeight, data.image.getConfig());
         Canvas c = new Canvas(preview);
         Paint paint = new Paint();
         ColorMatrix desat = new ColorMatrix();
         desat.setSaturation(0.25f);
         paint.setColorFilter(new ColorMatrixColorFilter(desat));
         Matrix matrix = new Matrix();
-        matrix.postTranslate((shortSide - mImageWidth) / 2,
-                            (shortSide - mImageHeight) / 2);
+        matrix.postTranslate((previewWidth - mImageWidth) / 2,
+                            (previewHeight - mImageHeight) / 2);
         c.drawBitmap(data.image, matrix, paint);
         c.drawColor(0x40FFFFFF);
         c.setBitmap(null);
@@ -152,17 +156,33 @@ class SaveImageInBackgroundTask extends AsyncTask<SaveImageInBackgroundData, Voi
         mTickerAddSpace = !mTickerAddSpace;
         mNotificationId = nId;
         mNotificationManager = nManager;
+        final long now = System.currentTimeMillis();
+
         mNotificationBuilder = new Notification.Builder(context)
             .setTicker(r.getString(R.string.screenshot_saving_ticker)
                     + (mTickerAddSpace ? " " : ""))
             .setContentTitle(r.getString(R.string.screenshot_saving_title))
             .setContentText(r.getString(R.string.screenshot_saving_text))
             .setSmallIcon(R.drawable.stat_notify_image)
-            .setWhen(System.currentTimeMillis());
+            .setWhen(now)
+            .setColor(r.getColor(com.android.internal.R.color.system_notification_accent_color));
 
         mNotificationStyle = new Notification.BigPictureStyle()
             .bigPicture(preview);
         mNotificationBuilder.setStyle(mNotificationStyle);
+
+        // For "public" situations we want to show all the same info but
+        // omit the actual screenshot image.
+        mPublicNotificationBuilder = new Notification.Builder(context)
+                .setContentTitle(r.getString(R.string.screenshot_saving_title))
+                .setContentText(r.getString(R.string.screenshot_saving_text))
+                .setSmallIcon(R.drawable.stat_notify_image)
+                .setCategory(Notification.CATEGORY_PROGRESS)
+                .setWhen(now)
+                .setColor(r.getColor(
+                        com.android.internal.R.color.system_notification_accent_color));
+
+        mNotificationBuilder.setPublicVersion(mPublicNotificationBuilder.build());
 
         Notification n = mNotificationBuilder.build();
         n.flags |= Notification.FLAG_NO_CLEAR;
@@ -215,8 +235,7 @@ class SaveImageInBackgroundTask extends AsyncTask<SaveImageInBackgroundData, Voi
             values.put(MediaStore.Images.ImageColumns.HEIGHT, mImageHeight);
             Uri uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
 
-            String subjectDate = new SimpleDateFormat("hh:mma, MMM dd, yyyy")
-                .format(new Date(mImageTime));
+            String subjectDate = DateFormat.getDateTimeInstance().format(new Date(mImageTime));
             String subject = String.format(SCREENSHOT_SHARE_SUBJECT_TEMPLATE, subjectDate);
             Intent sharingIntent = new Intent(Intent.ACTION_SEND);
             sharingIntent.setType("image/png");
@@ -230,23 +249,12 @@ class SaveImageInBackgroundTask extends AsyncTask<SaveImageInBackgroundData, Voi
             mNotificationBuilder.addAction(R.drawable.ic_menu_share,
                      r.getString(com.android.internal.R.string.share),
                      PendingIntent.getActivity(context, 0, chooserIntent,
-                     PendingIntent.FLAG_CANCEL_CURRENT));
-
-            // ScreenShot QuickDelete starts here
-            Intent deleteIntent = new Intent();
-            deleteIntent.setClass(context, DeleteScreenshot.class);
-            deleteIntent.putExtra(DeleteScreenshot.SCREENSHOT_URI, uri.toString());
-
-            mNotificationBuilder.addAction(R.drawable.ic_menu_delete,
-                     r.getString(R.string.screenshot_delete_action),
-                     PendingIntent.getBroadcast(context, 0, deleteIntent,
-                     PendingIntent.FLAG_CANCEL_CURRENT));
+                             PendingIntent.FLAG_CANCEL_CURRENT));
 
             OutputStream out = resolver.openOutputStream(uri);
             image.compress(Bitmap.CompressFormat.PNG, 100, out);
             out.flush();
             out.close();
-            // Ends Here
 
             // update file size in the database
             values.clear();
@@ -292,12 +300,28 @@ class SaveImageInBackgroundTask extends AsyncTask<SaveImageInBackgroundData, Voi
             launchIntent.setDataAndType(params.imageUri, "image/png");
             launchIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
+            final long now = System.currentTimeMillis();
+
             mNotificationBuilder
                 .setContentTitle(r.getString(R.string.screenshot_saved_title))
                 .setContentText(r.getString(R.string.screenshot_saved_text))
                 .setContentIntent(PendingIntent.getActivity(params.context, 0, launchIntent, 0))
-                .setWhen(System.currentTimeMillis())
-                .setAutoCancel(true);
+                .setWhen(now)
+                .setAutoCancel(true)
+                .setColor(r.getColor(
+                        com.android.internal.R.color.system_notification_accent_color));;
+
+            // Update the text in the public version as well
+            mPublicNotificationBuilder
+                .setContentTitle(r.getString(R.string.screenshot_saved_title))
+                .setContentText(r.getString(R.string.screenshot_saved_text))
+                .setContentIntent(PendingIntent.getActivity(params.context, 0, launchIntent, 0))
+                .setWhen(now)
+                .setAutoCancel(true)
+                .setColor(r.getColor(
+                        com.android.internal.R.color.system_notification_accent_color));
+
+            mNotificationBuilder.setPublicVersion(mPublicNotificationBuilder.build());
 
             Notification n = mNotificationBuilder.build();
             n.flags &= ~Notification.FLAG_NO_CLEAR;
@@ -317,7 +341,7 @@ class SaveImageInBackgroundTask extends AsyncTask<SaveImageInBackgroundData, Voi
 class GlobalScreenshot {
     private static final String TAG = "GlobalScreenshot";
 
-    public static final int SCREENSHOT_NOTIFICATION_ID = 789;
+    private static final int SCREENSHOT_NOTIFICATION_ID = 789;
     private static final int SCREENSHOT_FLASH_TO_PEAK_DURATION = 130;
     private static final int SCREENSHOT_DROP_IN_DURATION = 430;
     private static final int SCREENSHOT_DROP_OUT_DELAY = 500;
@@ -330,6 +354,8 @@ class GlobalScreenshot {
     private static final float SCREENSHOT_DROP_OUT_MIN_SCALE = SCREENSHOT_SCALE * 0.45f;
     private static final float SCREENSHOT_FAST_DROP_OUT_MIN_SCALE = SCREENSHOT_SCALE * 0.6f;
     private static final float SCREENSHOT_DROP_OUT_MIN_SCALE_OFFSET = 0f;
+    private final int mPreviewWidth;
+    private final int mPreviewHeight;
 
     private Context mContext;
     private WindowManager mWindowManager;
@@ -354,8 +380,6 @@ class GlobalScreenshot {
     private AsyncTask<SaveImageInBackgroundData, Void, SaveImageInBackgroundData> mSaveInBgTask;
 
     private MediaActionSound mCameraSound;
-
-    private final int mSfHwRotation;
 
 
     /**
@@ -407,12 +431,22 @@ class GlobalScreenshot {
         mBgPadding = (float) r.getDimensionPixelSize(R.dimen.global_screenshot_bg_padding);
         mBgPaddingScale = mBgPadding /  mDisplayMetrics.widthPixels;
 
+        // determine the optimal preview size
+        int panelWidth = 0;
+        try {
+            panelWidth = r.getDimensionPixelSize(R.dimen.notification_panel_width);
+        } catch (Resources.NotFoundException e) {
+        }
+        if (panelWidth <= 0) {
+            // includes notification_panel_width==match_parent (-1)
+            panelWidth = mDisplayMetrics.widthPixels;
+        }
+        mPreviewWidth = panelWidth;
+        mPreviewHeight = r.getDimensionPixelSize(R.dimen.notification_max_height);
+
         // Setup the Camera shutter sound
         mCameraSound = new MediaActionSound();
         mCameraSound.load(MediaActionSound.SHUTTER_CLICK);
-
-        // Load hardware rotation from prop
-        mSfHwRotation = android.os.SystemProperties.getInt("ro.sf.hwrotation",0) / 90;
     }
 
     /**
@@ -424,6 +458,8 @@ class GlobalScreenshot {
         data.image = mScreenBitmap;
         data.iconSize = mNotificationIconSize;
         data.finisher = finisher;
+        data.previewWidth = mPreviewWidth;
+        data.previewheight = mPreviewHeight;
         if (mSaveInBgTask != null) {
             mSaveInBgTask.cancel(false);
         }
@@ -454,10 +490,7 @@ class GlobalScreenshot {
         // only in the natural orientation of the device :!)
         mDisplay.getRealMetrics(mDisplayMetrics);
         float[] dims = {mDisplayMetrics.widthPixels, mDisplayMetrics.heightPixels};
-        int rot = mDisplay.getRotation();
-        // Allow for abnormal hardware orientation
-        rot = (rot + mSfHwRotation) % 4;
-        float degrees = getDegreesForRotation(rot);
+        float degrees = getDegreesForRotation(mDisplay.getRotation());
         boolean requiresRotation = (degrees > 0);
         if (requiresRotation) {
             // Get the dimensions of the device in its native orientation
@@ -476,23 +509,20 @@ class GlobalScreenshot {
             return;
         }
 
-        Bitmap ss = Bitmap.createBitmap(mDisplayMetrics.widthPixels,
-                mDisplayMetrics.heightPixels, Bitmap.Config.ARGB_8888);
-        Canvas c = new Canvas(ss);
-
         if (requiresRotation) {
             // Rotate the screenshot to the current orientation
+            Bitmap ss = Bitmap.createBitmap(mDisplayMetrics.widthPixels,
+                    mDisplayMetrics.heightPixels, Bitmap.Config.ARGB_8888);
+            Canvas c = new Canvas(ss);
             c.translate(ss.getWidth() / 2, ss.getHeight() / 2);
             c.rotate(degrees);
             c.translate(-dims[0] / 2, -dims[1] / 2);
+            c.drawBitmap(mScreenBitmap, 0, 0, null);
+            c.setBitmap(null);
+            // Recycle the previous bitmap
+            mScreenBitmap.recycle();
+            mScreenBitmap = ss;
         }
-
-        c.drawBitmap(mScreenBitmap, 0, 0, null);
-        c.setBitmap(null);
-
-        // Recycle the previous bitmap
-        mScreenBitmap.recycle();
-        mScreenBitmap = ss;
 
         // Optimizations
         mScreenBitmap.setHasAlpha(false);
@@ -692,7 +722,11 @@ class GlobalScreenshot {
             .setContentText(r.getString(R.string.screenshot_failed_text))
             .setSmallIcon(R.drawable.stat_notify_image_error)
             .setWhen(System.currentTimeMillis())
-            .setAutoCancel(true);
+            .setVisibility(Notification.VISIBILITY_PUBLIC) // ok to show outside lockscreen
+            .setCategory(Notification.CATEGORY_ERROR)
+            .setAutoCancel(true)
+            .setColor(context.getResources().getColor(
+                        com.android.internal.R.color.system_notification_accent_color));
         Notification n =
             new Notification.BigTextStyle(b)
                 .bigText(r.getString(R.string.screenshot_failed_text))

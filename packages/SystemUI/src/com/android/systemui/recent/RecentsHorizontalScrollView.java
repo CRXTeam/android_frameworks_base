@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2011 The Android Open Source Project
- * This code has been modified. Portions copyright (C) 2013, ParanoidAndroid Project.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,19 +21,15 @@ import android.content.Context;
 import android.content.res.Configuration;
 import android.database.DataSetObserver;
 import android.graphics.Canvas;
-import android.os.Handler;
-import android.provider.Settings;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
 import android.util.FloatMath;
 import android.util.Log;
-import android.util.SettingConfirmationHelper;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewTreeObserver;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
-import android.view.WindowManager;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 
@@ -58,26 +53,16 @@ public class RecentsHorizontalScrollView extends HorizontalScrollView
     private HashSet<View> mRecycledViews;
     private int mNumItemsInOneScreenful;
     private Runnable mOnScrollListener;
-    private Handler mHandler;
-
-    // control clear all animation overload on quick double tap
-    private boolean mAnimationDone = true;
-
-    private boolean mConfirmationDialogAnswered = true;
-    private boolean mDismissAfterConfirmation = false;
 
     public RecentsHorizontalScrollView(Context context, AttributeSet attrs) {
         super(context, attrs, 0);
-        float densityScale = getResources().getDisplayMetrics().density;
-        float pagingTouchSlop = ViewConfiguration.get(mContext).getScaledPagingTouchSlop();
-        mSwipeHelper = new SwipeHelper(SwipeHelper.Y, this, densityScale, pagingTouchSlop);
+        mSwipeHelper = new SwipeHelper(SwipeHelper.Y, this, context);
         mFadedEdgeDrawHelper = FadedEdgeDrawHelper.create(context, attrs, this, false);
         mRecycledViews = new HashSet<View>();
-        mHandler = new Handler();
     }
 
     public void setMinSwipeAlpha(float minAlpha) {
-        mSwipeHelper.setMinAlpha(minAlpha);
+        mSwipeHelper.setMinSwipeProgress(minAlpha);
     }
 
     private int scrollPositionOfMostRecent() {
@@ -111,7 +96,6 @@ public class RecentsHorizontalScrollView extends HorizontalScrollView
         setLayoutTransition(null);
 
         mLinearLayout.removeAllViews();
-
         Iterator<View> recycledViews = mRecycledViews.iterator();
         for (int i = 0; i < mAdapter.getCount(); i++) {
             View old = null;
@@ -191,60 +175,6 @@ public class RecentsHorizontalScrollView extends HorizontalScrollView
         dismissChild(view);
     }
 
-    @Override
-    public void swipeAllViewsInLayout() {
-        smoothScrollTo(0, 0);
-        Thread clearAll = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                int count = mLinearLayout.getChildCount();
-                if (!RecentsActivity.mHomeForeground) {
-                    count--;
-				}
-				View[] refView = new View[count];
-                for (int i = 0; i < count; i++) {
-                    refView[i] = mLinearLayout.getChildAt(i);
-                }
-                for (int i = 0; i < count; i++) {
-                    final View child = refView[i];
-                    mHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                        	int[] lo = new int[2];
-                        	child.getLocationOnScreen(lo);
-                        	int posX = lo[0];
-                        	int halfWidth = (int) (child.getWidth() * 0.5f);
-                        	int screenWith = ((WindowManager) mContext.getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay().getWidth();
-                        	int halfScreenWidth = (int) (screenWith * 0.5f);
-                        	final int scroll = posX + halfWidth - halfScreenWidth;
-                        	smoothScrollBy(scroll, 0);
-                            dismissChild(child);
-                        }
-                    });
-                    try {
-                        Thread.sleep(150);
-                    } catch (InterruptedException e) {
-                    }
-                }
-                // we're done dismissing childs here, reset
-                mAnimationDone = true;
-            }
-        });
-
-        if (mAnimationDone) {
-            mAnimationDone = false;
-            clearAll.start();
-        }
-    }
-
-    public boolean isConfirmationDialogAnswered() {
-        return mConfirmationDialogAnswered;
-    }
-
-    public void setDismissAfterConfirmation(boolean dismiss) {
-        mDismissAfterConfirmation = dismiss;
-    }
-
     public boolean onInterceptTouchEvent(MotionEvent ev) {
         if (DEBUG) Log.v(TAG, "onInterceptTouchEvent()");
         return mSwipeHelper.onInterceptTouchEvent(ev) ||
@@ -257,74 +187,51 @@ public class RecentsHorizontalScrollView extends HorizontalScrollView
             super.onTouchEvent(ev);
     }
 
-    public boolean canChildBeDismissed(int gestureDirection, View v) {
+    public boolean canChildBeDismissed(View v) {
         return true;
+    }
+
+    @Override
+    public boolean isAntiFalsingNeeded() {
+        return false;
+    }
+
+    @Override
+    public float getFalsingThresholdFactor() {
+        return 1.0f;
     }
 
     public void dismissChild(View v) {
         mSwipeHelper.dismissChild(v, 0);
     }
 
-    public void onChildDismissed(int direction, View v) {
-        if (Settings.System.getInt(getContext().getContentResolver(), Settings.System.RECENTS_SWIPE_FLOATING, 0) == 1
-                && direction == SwipeHelper.DOWN) {
-            mCallback.handleFloat(v);
-        } else {
-            addToRecycledViews(v);
-            mLinearLayout.removeView(v);
-            if (mCallback != null) {
-              mCallback.handleSwipe(v);
-            }
-            // Restore the alpha/translation parameters to what they were before swiping
-            // (for when these items are recycled)
-            View contentView = getChildContentView(v);
-            contentView.setAlpha(1f);
-            contentView.setTranslationY(0);
-        }
-    }
-
-    public void onChildTriggered(View v) {
+    public void onChildDismissed(View v) {
+        addToRecycledViews(v);
+        mLinearLayout.removeView(v);
+        mCallback.handleSwipe(v);
+        // Restore the alpha/translation parameters to what they were before swiping
+        // (for when these items are recycled)
+        View contentView = getChildContentView(v);
+        contentView.setAlpha(1f);
+        contentView.setTranslationY(0);
     }
 
     public void onBeginDrag(View v) {
         // We do this so the underlying ScrollView knows that it won't get
         // the chance to intercept events anymore
         requestDisallowInterceptTouchEvent(true);
-
-        final Context context = getContext();
-        int swipeStatus = Settings.System.getInt(context.getContentResolver(),
-                Settings.System.RECENTS_SWIPE_FLOATING, 0);
-
-        if (swipeStatus == 0 || swipeStatus == 3) {
-            mConfirmationDialogAnswered = false;
-            mDismissAfterConfirmation = false;
-
-            SettingConfirmationHelper.showConfirmationDialogForSetting(
-                context,
-                context.getString(R.string.recents_swipe_floating_title),
-                context.getString(R.string.recents_swipe_floating_message_landscape),
-                context.getResources().getDrawable(R.drawable.recents_swipe_floating_landscape),
-                Settings.System.RECENTS_SWIPE_FLOATING,
-                new SettingConfirmationHelper.OnSelectListener() {
-                    @Override
-                    public void onSelect(boolean enabled) {
-                        if (enabled){
-                            mSwipeHelper.setTriggerEnabled(true);
-                            mSwipeHelper.setTriggerDirection(SwipeHelper.DOWN);
-                        }
-                        // Dialog finished, recents can safely be dismissed later
-                        mConfirmationDialogAnswered = true;
-                        if (mDismissAfterConfirmation) {
-                            // Recents is already empty, so dismiss right after
-                            // this dialog
-                            mCallback.dismiss();
-                        }
-                    }
-                });
-        }
     }
 
     public void onDragCancelled(View v) {
+    }
+
+    @Override
+    public void onChildSnappedBack(View animView) {
+    }
+
+    @Override
+    public boolean updateSwipeProgress(View animView, boolean dismissable, float swipeProgress) {
+        return false;
     }
 
     public View getChildAtPosition(MotionEvent ev) {
@@ -345,23 +252,13 @@ public class RecentsHorizontalScrollView extends HorizontalScrollView
     }
 
     @Override
-    public boolean isConstrainSwipeEnabled() {
-        return true;
-    }
-
-    @Override
-    public boolean isFadeoutEnabled(int gestureDirection) {
-        return true;
-    }
-
-    @Override
     public void drawFadedEdges(Canvas canvas, int left, int right, int top, int bottom) {
         if (mFadedEdgeDrawHelper != null) {
 
             mFadedEdgeDrawHelper.drawCallback(canvas,
-                    left, right, top, bottom, mScrollX, mScrollY,
+                    left, right, top, bottom, getScrollX(), getScrollY(),
                     0, 0,
-                    getLeftFadingEdgeStrength(), getRightFadingEdgeStrength(), mPaddingTop);
+                    getLeftFadingEdgeStrength(), getRightFadingEdgeStrength(), getPaddingTop());
         }
     }
 
@@ -400,7 +297,7 @@ public class RecentsHorizontalScrollView extends HorizontalScrollView
         super.onFinishInflate();
         setScrollbarFadingEnabled(true);
         mLinearLayout = (LinearLayout) findViewById(R.id.recents_linear_layout);
-        final int leftPadding = mContext.getResources()
+        final int leftPadding = getContext().getResources()
             .getDimensionPixelOffset(R.dimen.status_bar_recents_thumbnail_left_margin);
         setOverScrollEffectPadding(leftPadding, 0);
     }
@@ -417,7 +314,7 @@ public class RecentsHorizontalScrollView extends HorizontalScrollView
         super.onConfigurationChanged(newConfig);
         float densityScale = getResources().getDisplayMetrics().density;
         mSwipeHelper.setDensityScale(densityScale);
-        float pagingTouchSlop = ViewConfiguration.get(mContext).getScaledPagingTouchSlop();
+        float pagingTouchSlop = ViewConfiguration.get(getContext()).getScaledPagingTouchSlop();
         mSwipeHelper.setPagingTouchSlop(pagingTouchSlop);
     }
 

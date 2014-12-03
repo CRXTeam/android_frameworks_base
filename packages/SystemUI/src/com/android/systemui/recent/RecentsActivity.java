@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2012 The Android Open Source Project
- * This code has been modified. Portions copyright (C) 2013, ParanoidAndroid Project.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,28 +19,19 @@ package com.android.systemui.recent;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.WallpaperManager;
-import android.app.StatusBarManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.pm.ActivityInfo;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.graphics.Color;
-import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
 import android.os.UserHandle;
-import android.provider.Settings;
-import android.util.SettingConfirmationHelper;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
-import android.view.WindowManager.LayoutParams;
 
 import com.android.systemui.R;
 import com.android.systemui.statusbar.StatusBarPanel;
-import com.android.systemui.statusbar.phone.NavigationBarView;
 
-import java.util.ArrayList;
 import java.util.List;
 
 public class RecentsActivity extends Activity {
@@ -49,32 +39,27 @@ public class RecentsActivity extends Activity {
     public static final String PRELOAD_INTENT = "com.android.systemui.recent.action.PRELOAD";
     public static final String CANCEL_PRELOAD_INTENT = "com.android.systemui.recent.CANCEL_PRELOAD";
     public static final String CLOSE_RECENTS_INTENT = "com.android.systemui.recent.action.CLOSE";
-    public static final String CLEAR_RECENTS_INTENT = "com.android.systemui.recent.action.CLEAR";
     public static final String WINDOW_ANIMATION_START_INTENT = "com.android.systemui.recent.action.WINDOW_ANIMATION_START";
     public static final String PRELOAD_PERMISSION = "com.android.systemui.recent.permission.PRELOAD";
     public static final String WAITING_FOR_WINDOW_ANIMATION_PARAM = "com.android.systemui.recent.WAITING_FOR_WINDOW_ANIMATION";
     private static final String WAS_SHOWING = "was_showing";
 
-    private static List<NavigationCallback> mNavigationCallbacks;
-    private static RecentsPanelView mRecentsPanel;
-    private static boolean mShowing;
+    private RecentsPanelView mRecentsPanel;
     private IntentFilter mIntentFilter;
+    private boolean mShowing;
     private boolean mForeground;
 
-	public static boolean mHomeForeground = false;
-	
     private BroadcastReceiver mIntentReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            String action = intent.getAction();
-            if (CLOSE_RECENTS_INTENT.equals(action)) {
+            if (CLOSE_RECENTS_INTENT.equals(intent.getAction())) {
                 if (mRecentsPanel != null && mRecentsPanel.isShowing()) {
                     if (mShowing && !mForeground) {
                         // Captures the case right before we transition to another activity
                         mRecentsPanel.show(false);
                     }
                 }
-            } else if (WINDOW_ANIMATION_START_INTENT.equals(action)) {
+            } else if (WINDOW_ANIMATION_START_INTENT.equals(intent.getAction())) {
                 if (mRecentsPanel != null) {
                     mRecentsPanel.onWindowAnimationStart();
                 }
@@ -107,10 +92,6 @@ public class RecentsActivity extends Activity {
                 R.anim.recents_return_to_launcher_enter,
                 R.anim.recents_return_to_launcher_exit);
         mForeground = false;
-		mHomeForeground = false;
-        if (mRecentsPanel != null) {
-            mRecentsPanel.dismissContextMenuIfAny();
-        }
         super.onPause();
     }
 
@@ -124,42 +105,26 @@ public class RecentsActivity extends Activity {
     }
 
     private void updateWallpaperVisibility(boolean visible) {
+        int wpflags = visible ? WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER : 0;
+        int curflags = getWindow().getAttributes().flags
+                & WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER;
+        if (wpflags != curflags) {
+            getWindow().setFlags(wpflags, WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
+        }
     }
 
     public static boolean forceOpaqueBackground(Context context) {
-        return WallpaperManager.getInstance(context).getWallpaperInfo() != null
-                && !ActivityManager.isHighEndGfx();
-    }
-
-    public void setRecentHints(boolean show) {
-        if (mNavigationCallbacks == null || mNavigationCallbacks.isEmpty()) return;
-        for(NavigationCallback callback : mNavigationCallbacks) {
-            // Check if we need to enable alternate drawable for recent apps key
-            if(callback == null) return; // Multiuser is not allowed
-            int navigationHints = callback.getNavigationIconHints();
-            callback.setNavigationIconHints(NavigationBarView.NAVBAR_RECENTS_HINT,
-                    show ? (navigationHints | StatusBarManager.NAVIGATION_HINT_RECENT_ALT)
-                         : (navigationHints & ~StatusBarManager.NAVIGATION_HINT_RECENT_ALT), true);
-        }
+        return WallpaperManager.getInstance(context).getWallpaperInfo() != null;
     }
 
     @Override
     public void onStart() {
-        // Hide wallpaper if it's not a static image and device is low-end
+        // Hide wallpaper if it's not a static image
         if (forceOpaqueBackground(this)) {
             updateWallpaperVisibility(false);
         } else {
             updateWallpaperVisibility(true);
         }
-
-        SettingConfirmationHelper.showConfirmationDialogForSetting(
-            this,
-            this.getString(R.string.navbar_recents_clear_all_title),
-            this.getString(R.string.navbar_recents_clear_all_message),
-            this.getResources().getDrawable(R.drawable.navbar_recents_clear_all),
-            Settings.System.NAVBAR_RECENTS_CLEAR_ALL,
-            null);
-
         mShowing = true;
         if (mRecentsPanel != null) {
             // Call and refresh the recent tasks list in case we didn't preload tasks
@@ -174,16 +139,6 @@ public class RecentsActivity extends Activity {
     public void onResume() {
         mForeground = true;
         super.onResume();
-		
-		Bundle extras = getIntent().getExtras();
-        if (extras != null) {
-            int portrait = extras.getInt("Portrait");
-            if (portrait == 1) {
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-            } else if (portrait == 2){
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
-            }
-        }
     }
 
     @Override
@@ -209,7 +164,8 @@ public class RecentsActivity extends Activity {
             final List<ActivityManager.RecentTaskInfo> recentTasks =
                     am.getRecentTasks(2,
                             ActivityManager.RECENT_WITH_EXCLUDED |
-                            ActivityManager.RECENT_IGNORE_UNAVAILABLE);
+                            ActivityManager.RECENT_IGNORE_UNAVAILABLE |
+                            ActivityManager.RECENT_INCLUDE_PROFILES);
             if (recentTasks.size() > 1 &&
                     mRecentsPanel.simulateClick(recentTasks.get(1).persistentId)) {
                 // recents panel will take care of calling show(false) through simulateClick
@@ -220,17 +176,10 @@ public class RecentsActivity extends Activity {
         finish();
     }
 
-    public void dismissAndDoNothing() {
-        if (mRecentsPanel != null) {
-            mRecentsPanel.show(false);
-        }
-        finish();
-    }
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION
-                        | WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
+        getWindow().addPrivateFlags(
+                WindowManager.LayoutParams.PRIVATE_FLAG_INHERIT_TRANSLUCENT_DECOR);
         setContentView(R.layout.status_bar_recent_panel);
         mRecentsPanel = (RecentsPanelView) findViewById(R.id.recents_root);
         mRecentsPanel.setOnTouchListener(new TouchOutsideListener(mRecentsPanel));
@@ -242,7 +191,6 @@ public class RecentsActivity extends Activity {
         recentTasksLoader.setRecentsPanel(mRecentsPanel, mRecentsPanel);
         mRecentsPanel.setMinSwipeAlpha(
                 getResources().getInteger(R.integer.config_recent_item_min_alpha) / 100f);
-        mRecentsPanel.setColor();
 
         if (savedInstanceState == null ||
                 savedInstanceState.getBoolean(WAS_SHOWING)) {
@@ -270,14 +218,12 @@ public class RecentsActivity extends Activity {
     @Override
     protected void onNewIntent(Intent intent) {
         handleIntent(intent, true);
-		setIntent(intent);
     }
 
     private void handleIntent(Intent intent, boolean checkWaitingForAnimationParam) {
         super.onNewIntent(intent);
 
-        String action = intent.getAction();
-        if (TOGGLE_RECENTS_INTENT.equals(action)) {
+        if (TOGGLE_RECENTS_INTENT.equals(intent.getAction())) {
             if (mRecentsPanel != null) {
                 if (mRecentsPanel.isShowing()) {
                     dismissAndGoBack();
@@ -289,17 +235,6 @@ public class RecentsActivity extends Activity {
                             recentTasksLoader.isFirstScreenful(), waitingForWindowAnimation);
                 }
             }
-        } else if (CLEAR_RECENTS_INTENT.equals(action)) {
-            if (mRecentsPanel != null) {
-                if (mRecentsPanel.isShowing()) {
-                        if(Settings.System.getInt(this.getContentResolver(),
-                            Settings.System.NAVBAR_RECENTS_CLEAR_ALL, 0) != 2) {
-                                mRecentsPanel.clearRecentViewList();
-                        } else {
-                            dismissAndGoBack();
-                        }
-                }
-            }
         }
     }
 
@@ -307,17 +242,7 @@ public class RecentsActivity extends Activity {
         return mForeground;
     }
 
-    public static void addNavigationCallback(NavigationCallback callback) {
-        if(mNavigationCallbacks == null)
-                mNavigationCallbacks= new ArrayList<NavigationCallback>();
-        mNavigationCallbacks.add(callback);
-    }
-
-    public static int getTasks() {
-        return mRecentsPanel.getTasks();
-    }
-
-    public static boolean isActivityShowing() {
-        return mShowing;
+    boolean isActivityShowing() {
+         return mShowing;
     }
 }
