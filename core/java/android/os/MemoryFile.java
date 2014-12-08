@@ -18,6 +18,7 @@ package android.os;
 
 import android.util.Log;
 
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -27,7 +28,7 @@ import java.io.OutputStream;
  * MemoryFile is a wrapper for the Linux ashmem driver.
  * MemoryFiles are backed by shared memory, which can be optionally
  * set to be purgeable.
- * Purgeable files may have their contents reclaimed by the kernel 
+ * Purgeable files may have their contents reclaimed by the kernel
  * in low memory conditions (only if allowPurging is set to true).
  * After a file is purged, attempts to read or write the file will
  * cause an IOException to be thrown.
@@ -35,53 +36,102 @@ import java.io.OutputStream;
 public class MemoryFile
 {
     private static String TAG = "MemoryFile";
- 
-    // returns fd
-    private native int native_open(String name, int length);
-    // returns memory address for ashmem region
-    private native int native_mmap(int fd, int length);
-    private native void native_close(int fd);
-    private native int native_read(int fd, int address, byte[] buffer, 
-            int srcOffset, int destOffset, int count, boolean isUnpinned);
-    private native void native_write(int fd, int address, byte[] buffer, 
-            int srcOffset, int destOffset, int count, boolean isUnpinned);
-    private native void native_pin(int fd, boolean pin);
 
-    private int mFD;        // ashmem file descriptor
-    private int mAddress;   // address of ashmem memory
+    // mmap(2) protection flags from <sys/mman.h>
+    private static final int PROT_READ = 0x1;
+    private static final int PROT_WRITE = 0x2;
+
+    private static native FileDescriptor native_open(String name, int length) throws IOException;
+    // returns memory address for ashmem region
+    private static native long native_mmap(FileDescriptor fd, int length, int mode)
+            throws IOException;
+    private static native void native_munmap(long addr, int length) throws IOException;
+    private static native void native_close(FileDescriptor fd);
+    private static native int native_read(FileDescriptor fd, long address, byte[] buffer,
+            int srcOffset, int destOffset, int count, boolean isUnpinned) throws IOException;
+    private static native void native_write(FileDescriptor fd, long address, byte[] buffer,
+            int srcOffset, int destOffset, int count, boolean isUnpinned) throws IOException;
+    private static native void native_pin(FileDescriptor fd, boolean pin) throws IOException;
+    private static native int native_get_size(FileDescriptor fd) throws IOException;
+
+    private FileDescriptor mFD;        // ashmem file descriptor
+    private long mAddress;   // address of ashmem memory
     private int mLength;    // total length of our ashmem region
     private boolean mAllowPurging = false;  // true if our ashmem region is unpinned
 
     /**
-     * MemoryFile constructor.
+     * Allocates a new ashmem region. The region is initially not purgable.
      *
      * @param name optional name for the file (can be null).
-     * @param length of the memory file in bytes.
+     * @param length of the memory file in bytes, must be non-negative.
+     * @throws IOException if the memory file could not be created.
      */
-    public MemoryFile(String name, int length) {
+    public MemoryFile(String name, int length) throws IOException {
         mLength = length;
-        mFD = native_open(name, length);
-        mAddress = native_mmap(mFD, length);
+        if (length >= 0) {
+            mFD = native_open(name, length);
+        } else {
+            throw new IOException("Invalid length: " + length);
+        }
+
+        if (length > 0) {
+            mAddress = native_mmap(mFD, length, PROT_READ | PROT_WRITE);
+        } else {
+            mAddress = 0;
+        }
     }
 
     /**
-     * Closes and releases all resources for the memory file.
+     * Closes the memory file. If there are no other open references to the memory
+     * file, it will be deleted.
      */
     public void close() {
-        if (mFD > 0) {
+        deactivate();
+        if (!isClosed()) {
             native_close(mFD);
-            mFD = 0;
         }
+    }
+
+    /**
+     * Unmaps the memory file from the process's memory space, but does not close it.
+     * After this method has been called, read and write operations through this object
+     * will fail, but {@link #getFileDescriptor()} will still return a valid file descriptor.
+     *
+     * @hide
+     */
+    void deactivate() {
+        if (!isDeactivated()) {
+            try {
+                native_munmap(mAddress, mLength);
+                mAddress = 0;
+            } catch (IOException ex) {
+                Log.e(TAG, ex.toString());
+            }
+        }
+    }
+
+    /**
+     * Checks whether the memory file has been deactivated.
+     */
+    private boolean isDeactivated() {
+        return mAddress == 0;
+    }
+
+    /**
+     * Checks whether the memory file has been closed.
+     */
+    private boolean isClosed() {
+        return !mFD.valid();
     }
 
     @Override
     protected void finalize() {
-        if (mFD > 0) {
+        if (!isClosed()) {
             Log.e(TAG, "MemoryFile.finalize() called while ashmem still open");
             close();
         }
     }
-   
+
     /**
      * Returns the length of the memory file.
      *
@@ -131,7 +181,6 @@ public class MemoryFile
      @return OutputStream
      */
      public OutputStream getOutputStream() {
-
         return new MemoryOutputStream();
     }
 
@@ -144,9 +193,13 @@ public class MemoryFile
      * @param destOffset offset into the byte array buffer to read into.
      * @param count number of bytes to read.
      * @return number of bytes read.
+     * @throws IOException if the memory file has been purged or deactivated.
      */
-    public int readBytes(byte[] buffer, int srcOffset, int destOffset, int count) 
+    public int readBytes(byte[] buffer, int srcOffset, int destOffset, int count)
             throws IOException {
+        if (isDeactivated()) {
+            throw new IOException("Can't read from deactivated memory file.");
+        }
         if (destOffset < 0 || destOffset > buffer.length || count < 0
                 || count > buffer.length - destOffset
                 || srcOffset < 0 || srcOffset > mLength
@@ -164,9 +217,13 @@ public class MemoryFile
      * @param srcOffset offset into the byte array buffer to write from.
      * @param destOffset offset  into the memory file to write to.
      * @param count number of bytes to write.
+     * @throws IOException if the memory file has been purged or deactivated.
      */
     public void writeBytes(byte[] buffer, int srcOffset, int destOffset, int count)
             throws IOException {
+        if (isDeactivated()) {
+            throw new IOException("Can't write to deactivated memory file.");
+        }
         if (srcOffset < 0 || srcOffset > buffer.length || count < 0
                 || count > buffer.length - srcOffset
                 || destOffset < 0 || destOffset > mLength
@@ -174,6 +231,31 @@ public class MemoryFile
             throw new IndexOutOfBoundsException();
         }
         native_write(mFD, mAddress, buffer, srcOffset, destOffset, count, mAllowPurging);
+    }
+
+    /**
+     * Gets a FileDescriptor for the memory file.
+     *
+     * The returned file descriptor is not duplicated.
+     *
+     * @throws IOException If the memory file has been closed.
+     *
+     * @hide
+     */
+    public FileDescriptor getFileDescriptor() throws IOException {
+        return mFD;
+    }
+
+    /**
+     * Returns the size of the memory file that the file descriptor refers to,
+     * or -1 if the file descriptor does not refer to a memory file.
+     *
+     * @throws IOException If <code>fd</code> is not a valid file descriptor.
+     *
+     * @hide
+     */
+    public static int getSize(FileDescriptor fd) throws IOException {
+        return native_get_size(fd);
     }
 
     private class MemoryInputStream extends InputStream {
@@ -212,13 +294,22 @@ public class MemoryFile
             }
             int result = read(mSingleByte, 0, 1);
             if (result != 1) {
-                throw new IOException("read() failed");
+                return -1;
             }
             return mSingleByte[0];
         }
 
         @Override
         public int read(byte buffer[], int offset, int count) throws IOException {
+            if (offset < 0 || count < 0 || offset + count > buffer.length) {
+                // readBytes() also does this check, but we need to do it before
+                // changing count.
+                throw new IndexOutOfBoundsException();
+            }
+            count = Math.min(count, available());
+            if (count < 1) {
+                return -1;
+            }
             int result = readBytes(buffer, mOffset, offset, count);
             if (result > 0) {
                 mOffset += result;
@@ -244,6 +335,7 @@ public class MemoryFile
         @Override
         public void write(byte buffer[], int offset, int count) throws IOException {
             writeBytes(buffer, offset, mOffset, count);
+            mOffset += count;
         }
 
         @Override

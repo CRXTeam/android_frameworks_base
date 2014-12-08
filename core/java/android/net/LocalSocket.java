@@ -16,6 +16,7 @@
 
 package android.net;
 
+import java.io.Closeable;
 import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,29 +27,60 @@ import java.net.SocketOptions;
  * Creates a (non-server) socket in the UNIX-domain namespace. The interface
  * here is not entirely unlike that of java.net.Socket
  */
-public class LocalSocket {
+public class LocalSocket implements Closeable {
 
     private LocalSocketImpl impl;
     private volatile boolean implCreated;
     private LocalSocketAddress localAddress;
     private boolean isBound;
     private boolean isConnected;
+    private final int sockType;
+
+    /** unknown socket type (used for constructor with existing file descriptor) */
+    /* package */ static final int SOCKET_UNKNOWN = 0;
+    /** Datagram socket type */
+    public static final int SOCKET_DGRAM = 1;
+    /** Stream socket type */
+    public static final int SOCKET_STREAM = 2;
+    /** Sequential packet socket type */
+    public static final int SOCKET_SEQPACKET = 3;
 
     /**
      * Creates a AF_LOCAL/UNIX domain stream socket.
      */
     public LocalSocket() {
-        this(new LocalSocketImpl());
+        this(SOCKET_STREAM);
+    }
+
+    /**
+     * Creates a AF_LOCAL/UNIX domain stream socket with given socket type
+     *
+     * @param sockType either {@link #SOCKET_DGRAM}, {@link #SOCKET_STREAM}
+     * or {@link #SOCKET_SEQPACKET}
+     */
+    public LocalSocket(int sockType) {
+        this(new LocalSocketImpl(), sockType);
         isBound = false;
         isConnected = false;
+    }
+
+    /**
+     * Creates a AF_LOCAL/UNIX domain stream socket with FileDescriptor.
+     * @hide
+     */
+    public LocalSocket(FileDescriptor fd) throws IOException {
+        this(new LocalSocketImpl(fd), SOCKET_UNKNOWN);
+        isBound = true;
+        isConnected = true;
     }
 
     /**
      * for use with AndroidServerSocket
      * @param impl a SocketImpl
      */
-    /*package*/ LocalSocket(LocalSocketImpl impl) {
+    /*package*/ LocalSocket(LocalSocketImpl impl, int sockType) {
         this.impl = impl;
+        this.sockType = sockType;
         this.isConnected = false;
         this.isBound = false;
     }
@@ -70,8 +102,11 @@ public class LocalSocket {
         if (!implCreated) {
             synchronized (this) {
                 if (!implCreated) {
-                    implCreated = true;
-                    impl.create(true);
+                    try {
+                        impl.create(sockType);
+                    } finally {
+                        implCreated = true;
+                    }
                 }
             }
         }
@@ -151,10 +186,24 @@ public class LocalSocket {
     }
 
     /**
+     * Set the flag to close the fd whcih was opened
+     * externally
+     *
+     * @return none
+     * @throws IOException if socket has been closed
+     * @hide
+     */
+    public void closeExternalFd() throws IOException {
+        implCreateIfNeeded();
+        impl.closeExternalFd();
+    }
+
+    /**
      * Closes the socket.
      *
      * @throws IOException
      */
+    @Override
     public void close() throws IOException {
         implCreateIfNeeded();
         impl.close();

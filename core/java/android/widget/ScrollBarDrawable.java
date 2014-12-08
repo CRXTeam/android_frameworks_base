@@ -111,7 +111,9 @@ public class ScrollBarDrawable extends Drawable {
         }
 
         Rect r = getBounds();
-
+        if (canvas.quickReject(r.left, r.top, r.right, r.bottom, Canvas.EdgeType.AA)) {
+            return;
+        }
         if (drawTrack) {
             drawTrack(canvas, r, vertical);
         }
@@ -149,10 +151,12 @@ public class ScrollBarDrawable extends Drawable {
         } else {
             track = mHorizontalTrack;
         }
-        if (mChanged) {
-            track.setBounds(bounds);
+        if (track != null) {
+            if (mChanged) {
+                track.setBounds(bounds);
+            }
+            track.draw(canvas);
         }
-        track.draw(canvas);
     }
 
     protected void drawThumb(Canvas canvas, Rect bounds, int offset, int length, boolean vertical) {
@@ -169,13 +173,17 @@ public class ScrollBarDrawable extends Drawable {
         }
 
         if (vertical) {
-            final Drawable thumb = mVerticalThumb;
-            if (changed) thumb.setBounds(thumbRect);
-            thumb.draw(canvas);
+            if (mVerticalThumb != null) {
+                final Drawable thumb = mVerticalThumb;
+                if (changed) thumb.setBounds(thumbRect);
+                thumb.draw(canvas);
+            }
         } else {
-            final Drawable thumb = mHorizontalThumb;
-            if (changed) thumb.setBounds(thumbRect);
-            thumb.draw(canvas);
+            if (mHorizontalThumb != null) {
+                final Drawable thumb = mHorizontalThumb;
+                if (changed) thumb.setBounds(thumbRect);
+                thumb.draw(canvas);
+            }
         }
     }
 
@@ -201,11 +209,11 @@ public class ScrollBarDrawable extends Drawable {
 
     public int getSize(boolean vertical) {
         if (vertical) {
-            return (mVerticalTrack != null ?
-                    mVerticalTrack : mVerticalThumb).getIntrinsicWidth();
+            return mVerticalTrack != null ? mVerticalTrack.getIntrinsicWidth() :
+                    mVerticalThumb != null ? mVerticalThumb.getIntrinsicWidth() : 0;
         } else {
-            return (mHorizontalTrack != null ?
-                    mHorizontalTrack : mHorizontalThumb).getIntrinsicHeight();
+            return mHorizontalTrack != null ? mHorizontalTrack.getIntrinsicHeight() :
+                    mHorizontalThumb != null ? mHorizontalThumb.getIntrinsicHeight() : 0;
         }
     }
 
@@ -214,11 +222,21 @@ public class ScrollBarDrawable extends Drawable {
         if (mVerticalTrack != null) {
             mVerticalTrack.setAlpha(alpha);
         }
-        mVerticalThumb.setAlpha(alpha);
+        if (mVerticalThumb != null) {
+            mVerticalThumb.setAlpha(alpha);
+        }
         if (mHorizontalTrack != null) {
             mHorizontalTrack.setAlpha(alpha);
         }
-        mHorizontalThumb.setAlpha(alpha);
+        if (mHorizontalThumb != null) {
+            mHorizontalThumb.setAlpha(alpha);
+        }
+    }
+
+    @Override
+    public int getAlpha() {
+        // All elements should have same alpha, just return one of them
+        return mVerticalThumb.getAlpha();
     }
 
     @Override
@@ -226,11 +244,15 @@ public class ScrollBarDrawable extends Drawable {
         if (mVerticalTrack != null) {
             mVerticalTrack.setColorFilter(cf);
         }
-        mVerticalThumb.setColorFilter(cf);
+        if (mVerticalThumb != null) {
+            mVerticalThumb.setColorFilter(cf);
+        }
         if (mHorizontalTrack != null) {
             mHorizontalTrack.setColorFilter(cf);
         }
-        mHorizontalThumb.setColorFilter(cf);
+        if (mHorizontalThumb != null) {
+            mHorizontalThumb.setColorFilter(cf);
+        }
     }
 
     @Override

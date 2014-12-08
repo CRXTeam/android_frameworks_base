@@ -23,18 +23,23 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
+import android.hardware.input.InputManager;
 import android.os.Bundle;
-import android.os.RemoteException;
 import android.os.Debug;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.MessageQueue;
+import android.os.PerformanceCollector;
+import android.os.PersistableBundle;
 import android.os.Process;
-import android.os.SystemClock;
+import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.SystemClock;
+import android.os.UserHandle;
 import android.util.AndroidRuntimeException;
-import android.util.Config;
 import android.util.Log;
 import android.view.IWindowManager;
+import android.view.InputDevice;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -45,7 +50,6 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-
 /**
  * Base class for implementing application instrumentation code.  When running
  * with instrumentation turned on, this class will be instantiated for you
@@ -55,6 +59,7 @@ import java.util.List;
  * &lt;instrumentation&gt; tag.
  */
 public class Instrumentation {
+
     /**
      * If included in the status or final bundle sent to an IInstrumentationWatcher, this key 
      * identifies the class that is writing the report.  This can be used to provide more structured
@@ -69,7 +74,7 @@ public class Instrumentation {
      * instrumentation can also be launched, and results collected, by an automated system.
      */
     public static final String REPORT_KEY_STREAMRESULT = "stream";
-    
+
     private static final String TAG = "Instrumentation";
     
     private final Object mSync = new Object();
@@ -82,11 +87,11 @@ public class Instrumentation {
     private List<ActivityWaiter> mWaitingActivities;
     private List<ActivityMonitor> mActivityMonitors;
     private IInstrumentationWatcher mWatcher;
-    private long mPreCpuTime;
-    private long mStart;
+    private IUiAutomationConnection mUiAutomationConnection;
     private boolean mAutomaticPerformanceSnapshots = false;
-    private Bundle mPrePerfMetrics = new Bundle();
+    private PerformanceCollector mPerformanceCollector;
     private Bundle mPerfMetrics = new Bundle();
+    private UiAutomation mUiAutomation;
 
     public Instrumentation() {
     }
@@ -183,101 +188,33 @@ public class Instrumentation {
             endPerformanceSnapshot();
         }
         if (mPerfMetrics != null) {
+            if (results == null) {
+                results = new Bundle();
+            }
             results.putAll(mPerfMetrics);
+        }
+        if (mUiAutomation != null) {
+            mUiAutomation.disconnect();
+            mUiAutomation = null;
         }
         mThread.finishInstrumentation(resultCode, results);
     }
     
     public void setAutomaticPerformanceSnapshots() {
         mAutomaticPerformanceSnapshots = true;
+        mPerformanceCollector = new PerformanceCollector();
     }
 
     public void startPerformanceSnapshot() {
-        mStart = 0;
         if (!isProfiling()) {
-            // Add initial binder counts
-            Bundle binderCounts = getBinderCounts();
-            for (String key: binderCounts.keySet()) {
-                addPerfMetricLong("pre_" + key, binderCounts.getLong(key));
-            }
-
-            // Force a GC and zero out the performance counters.  Do this
-            // before reading initial CPU/wall-clock times so we don't include
-            // the cost of this setup in our final metrics.
-            startAllocCounting();
-
-            // Record CPU time up to this point, and start timing.  Note:  this
-            // must happen at the end of this method, otherwise the timing will
-            // include noise.
-            mStart = SystemClock.uptimeMillis();
-            mPreCpuTime = Process.getElapsedCpuTime();
+            mPerformanceCollector.beginSnapshot(null);
         }
     }
     
     public void endPerformanceSnapshot() {
         if (!isProfiling()) {
-            // Stop the timing. This must be done first before any other counting is stopped.
-            long cpuTime = Process.getElapsedCpuTime();
-            long duration = SystemClock.uptimeMillis();
-            
-            stopAllocCounting();
-            
-            long nativeMax = Debug.getNativeHeapSize() / 1024;
-            long nativeAllocated = Debug.getNativeHeapAllocatedSize() / 1024;
-            long nativeFree = Debug.getNativeHeapFreeSize() / 1024;
-
-            Debug.MemoryInfo memInfo = new Debug.MemoryInfo();
-            Debug.getMemoryInfo(memInfo);
-
-            Runtime runtime = Runtime.getRuntime();
-
-            long dalvikMax = runtime.totalMemory() / 1024;
-            long dalvikFree = runtime.freeMemory() / 1024;
-            long dalvikAllocated = dalvikMax - dalvikFree;
-            
-            // Add final binder counts
-            Bundle binderCounts = getBinderCounts();
-            for (String key: binderCounts.keySet()) {
-                addPerfMetricLong(key, binderCounts.getLong(key));
-            }
-            
-            // Add alloc counts
-            Bundle allocCounts = getAllocCounts();
-            for (String key: allocCounts.keySet()) {
-                addPerfMetricLong(key, allocCounts.getLong(key));
-            }
-            
-            addPerfMetricLong("execution_time", duration - mStart);
-            addPerfMetricLong("pre_cpu_time", mPreCpuTime);
-            addPerfMetricLong("cpu_time", cpuTime - mPreCpuTime);
-
-            addPerfMetricLong("native_size", nativeMax);
-            addPerfMetricLong("native_allocated", nativeAllocated);
-            addPerfMetricLong("native_free", nativeFree);
-            addPerfMetricInt("native_pss", memInfo.nativePss);
-            addPerfMetricInt("native_private_dirty", memInfo.nativePrivateDirty);
-            addPerfMetricInt("native_shared_dirty", memInfo.nativeSharedDirty);
-            
-            addPerfMetricLong("java_size", dalvikMax);
-            addPerfMetricLong("java_allocated", dalvikAllocated);
-            addPerfMetricLong("java_free", dalvikFree);
-            addPerfMetricInt("java_pss", memInfo.dalvikPss);
-            addPerfMetricInt("java_private_dirty", memInfo.dalvikPrivateDirty);
-            addPerfMetricInt("java_shared_dirty", memInfo.dalvikSharedDirty);
-            
-            addPerfMetricInt("other_pss", memInfo.otherPss);
-            addPerfMetricInt("other_private_dirty", memInfo.otherPrivateDirty);
-            addPerfMetricInt("other_shared_dirty", memInfo.otherSharedDirty);
-            
+            mPerfMetrics = mPerformanceCollector.endSnapshot();
         }
-    }
-    
-    private void addPerfMetricLong(String key, long value) {
-        mPerfMetrics.putLong("performance." + key, value);
-    }
-    
-    private void addPerfMetricInt(String key, int value) {
-        mPerfMetrics.putInt("performance." + key, value);
     }
     
     /**
@@ -445,13 +382,13 @@ public class Instrumentation {
             if (ai == null) {
                 throw new RuntimeException("Unable to resolve activity for: " + intent);
             }
-            if (!ai.applicationInfo.processName.equals(
-                    getTargetContext().getPackageName())) {
+            String myProc = mThread.getProcessName();
+            if (!ai.processName.equals(myProc)) {
                 // todo: if this intent is ambiguous, look here to see if
                 // there is a single match that is in our package.
-                throw new RuntimeException("Intent resolved to different package "
-                                           + ai.applicationInfo.packageName + ": "
-                                           + intent);
+                throw new RuntimeException("Intent in process "
+                        + myProc + " resolved to different process "
+                        + ai.processName + ": " + intent);
             }
     
             intent.setComponent(new ComponentName(
@@ -612,9 +549,11 @@ public class Instrumentation {
          */
         public final Activity waitForActivityWithTimeout(long timeOut) {
             synchronized (this) {
-                try {
-                    wait(timeOut);
-                } catch (InterruptedException e) {
+                if (mLastActivity == null) {
+                    try {
+                        wait(timeOut);
+                    } catch (InterruptedException e) {
+                    }
                 }
                 if (mLastActivity == null) {
                     return null;
@@ -907,18 +846,22 @@ public class Instrumentation {
         if (text == null) {
             return;
         }
-        KeyCharacterMap keyCharacterMap = 
-            KeyCharacterMap.load(KeyCharacterMap.BUILT_IN_KEYBOARD);
-        
+        KeyCharacterMap keyCharacterMap = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD);
+
         KeyEvent[] events = keyCharacterMap.getEvents(text.toCharArray());
-        
+
         if (events != null) {
             for (int i = 0; i < events.length; i++) {
-                sendKeySync(events[i]);
+                // We have to change the time of an event before injecting it because
+                // all KeyEvents returned by KeyCharacterMap.getEvents() have the same
+                // time stamp and the system rejects too old events. Hence, it is
+                // possible for an event to become stale before it is injected if it
+                // takes too long to inject the preceding ones.
+                sendKeySync(KeyEvent.changeTimeRepeat(events[i], SystemClock.uptimeMillis(), 0));
             }
-        }        
+        }
     }
-    
+
     /**
      * Send a key event to the currently focused window/view and wait for it to
      * be processed.  Finished at some point after the recipient has returned
@@ -930,11 +873,30 @@ public class Instrumentation {
      */
     public void sendKeySync(KeyEvent event) {
         validateNotAppThread();
-        try {
-            (IWindowManager.Stub.asInterface(ServiceManager.getService("window")))
-                .injectKeyEvent(event, true);
-        } catch (RemoteException e) {
+
+        long downTime = event.getDownTime();
+        long eventTime = event.getEventTime();
+        int action = event.getAction();
+        int code = event.getKeyCode();
+        int repeatCount = event.getRepeatCount();
+        int metaState = event.getMetaState();
+        int deviceId = event.getDeviceId();
+        int scancode = event.getScanCode();
+        int source = event.getSource();
+        int flags = event.getFlags();
+        if (source == InputDevice.SOURCE_UNKNOWN) {
+            source = InputDevice.SOURCE_KEYBOARD;
         }
+        if (eventTime == 0) {
+            eventTime = SystemClock.uptimeMillis();
+        }
+        if (downTime == 0) {
+            downTime = eventTime;
+        }
+        KeyEvent newEvent = new KeyEvent(downTime, eventTime, action, code, repeatCount, metaState,
+                deviceId, scancode, flags | KeyEvent.FLAG_FROM_SYSTEM, source);
+        InputManager.getInstance().injectInputEvent(newEvent,
+                InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH);
     }
     
     /**
@@ -973,11 +935,11 @@ public class Instrumentation {
      */
     public void sendPointerSync(MotionEvent event) {
         validateNotAppThread();
-        try {
-            (IWindowManager.Stub.asInterface(ServiceManager.getService("window")))
-                .injectPointerEvent(event, true);
-        } catch (RemoteException e) {
+        if ((event.getSource() & InputDevice.SOURCE_CLASS_POINTER) == 0) {
+            event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
         }
+        InputManager.getInstance().injectInputEvent(event,
+                InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH);
     }
 
     /**
@@ -993,11 +955,11 @@ public class Instrumentation {
      */
     public void sendTrackballEventSync(MotionEvent event) {
         validateNotAppThread();
-        try {
-            (IWindowManager.Stub.asInterface(ServiceManager.getService("window")))
-                .injectTrackballEvent(event, true);
-        } catch (RemoteException e) {
+        if ((event.getSource() & InputDevice.SOURCE_CLASS_TRACKBALL) == 0) {
+            event.setSource(InputDevice.SOURCE_TRACKBALL);
         }
+        InputManager.getInstance().injectInputEvent(event,
+                InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH);
     }
 
     /**
@@ -1037,7 +999,12 @@ public class Instrumentation {
     /**
      * Perform calling of the application's {@link Application#onCreate}
      * method.  The default implementation simply calls through to that method.
-     * 
+     *
+     * <p>Note: This method will be called immediately after {@link #onCreate(Bundle)}.
+     * Often instrumentation tests start their test thread in onCreate(); you
+     * need to be careful of races between these.  (Well between it and
+     * everything else, but let's start here.)
+     *
      * @param app The application being created.
      */
     public void callApplicationOnCreate(Application app) {
@@ -1072,8 +1039,10 @@ public class Instrumentation {
             IllegalAccessException {
         Activity activity = (Activity)clazz.newInstance();
         ActivityThread aThread = null;
-        activity.attach(context, aThread, this, token, application, intent, info, title,
-                parent, id, lastNonConfigurationInstance, new Configuration());
+        activity.attach(context, aThread, this, token, 0, application, intent,
+                info, title, parent, id,
+                (Activity.NonConfigurationInstances)lastNonConfigurationInstance,
+                new Configuration(), null);
         return activity;
     }
 
@@ -1096,15 +1065,7 @@ public class Instrumentation {
         return (Activity)cl.loadClass(className).newInstance();
     }
 
-    /**
-     * Perform calling of an activity's {@link Activity#onCreate}
-     * method.  The default implementation simply calls through to that method.
-     * 
-     * @param activity The activity being created.
-     * @param icicle The previously frozen state (or null) to pass through to
-     *               onCreate().
-     */
-    public void callActivityOnCreate(Activity activity, Bundle icicle) {
+    private void prePerformCreate(Activity activity) {
         if (mWaitingActivities != null) {
             synchronized (mSync) {
                 final int N = mWaitingActivities.size();
@@ -1118,9 +1079,9 @@ public class Instrumentation {
                 }
             }
         }
-        
-        activity.onCreate(icicle);
-        
+    }
+
+    private void postPerformCreate(Activity activity) {
         if (mActivityMonitors != null) {
             synchronized (mSync) {
                 final int N = mActivityMonitors.size();
@@ -1131,23 +1092,52 @@ public class Instrumentation {
             }
         }
     }
+
+    /**
+     * Perform calling of an activity's {@link Activity#onCreate}
+     * method.  The default implementation simply calls through to that method.
+     *
+     * @param activity The activity being created.
+     * @param icicle The previously frozen state (or null) to pass through to onCreate().
+     */
+    public void callActivityOnCreate(Activity activity, Bundle icicle) {
+        prePerformCreate(activity);
+        activity.performCreate(icicle);
+        postPerformCreate(activity);
+    }
+
+    /**
+     * Perform calling of an activity's {@link Activity#onCreate}
+     * method.  The default implementation simply calls through to that method.
+     *  @param activity The activity being created.
+     * @param icicle The previously frozen state (or null) to pass through to
+     * @param persistentState The previously persisted state (or null)
+     */
+    public void callActivityOnCreate(Activity activity, Bundle icicle,
+            PersistableBundle persistentState) {
+        prePerformCreate(activity);
+        activity.performCreate(icicle, persistentState);
+        postPerformCreate(activity);
+    }
     
     public void callActivityOnDestroy(Activity activity) {
-      if (mWaitingActivities != null) {
-          synchronized (mSync) {
-              final int N = mWaitingActivities.size();
-              for (int i=0; i<N; i++) {
-                  final ActivityWaiter aw = mWaitingActivities.get(i);
-                  final Intent intent = aw.intent;
-                  if (intent.filterEquals(activity.getIntent())) {
-                      aw.activity = activity;
-                      mMessageQueue.addIdleHandler(new ActivityGoing(aw));
-                  }
-              }
-          }
-      }
+      // TODO: the following block causes intermittent hangs when using startActivity
+      // temporarily comment out until root cause is fixed (bug 2630683)
+//      if (mWaitingActivities != null) {
+//          synchronized (mSync) {
+//              final int N = mWaitingActivities.size();
+//              for (int i=0; i<N; i++) {
+//                  final ActivityWaiter aw = mWaitingActivities.get(i);
+//                  final Intent intent = aw.intent;
+//                  if (intent.filterEquals(activity.getIntent())) {
+//                      aw.activity = activity;
+//                      mMessageQueue.addIdleHandler(new ActivityGoing(aw));
+//                  }
+//              }
+//          }
+//      }
       
-      activity.onDestroy();
+      activity.performDestroy();
       
       if (mActivityMonitors != null) {
           synchronized (mSync) {
@@ -1163,7 +1153,7 @@ public class Instrumentation {
     /**
      * Perform calling of an activity's {@link Activity#onRestoreInstanceState}
      * method.  The default implementation simply calls through to that method.
-     * 
+     *
      * @param activity The activity being restored.
      * @param savedInstanceState The previously saved state being restored.
      */
@@ -1172,15 +1162,41 @@ public class Instrumentation {
     }
 
     /**
+     * Perform calling of an activity's {@link Activity#onRestoreInstanceState}
+     * method.  The default implementation simply calls through to that method.
+     *
+     * @param activity The activity being restored.
+     * @param savedInstanceState The previously saved state being restored.
+     * @param persistentState The previously persisted state (or null)
+     */
+    public void callActivityOnRestoreInstanceState(Activity activity, Bundle savedInstanceState,
+            PersistableBundle persistentState) {
+        activity.performRestoreInstanceState(savedInstanceState, persistentState);
+    }
+
+    /**
      * Perform calling of an activity's {@link Activity#onPostCreate} method.
      * The default implementation simply calls through to that method.
-     * 
+     *
      * @param activity The activity being created.
      * @param icicle The previously frozen state (or null) to pass through to
      *               onPostCreate().
      */
     public void callActivityOnPostCreate(Activity activity, Bundle icicle) {
         activity.onPostCreate(icicle);
+    }
+
+    /**
+     * Perform calling of an activity's {@link Activity#onPostCreate} method.
+     * The default implementation simply calls through to that method.
+     *
+     * @param activity The activity being created.
+     * @param icicle The previously frozen state (or null) to pass through to
+     *               onPostCreate().
+     */
+    public void callActivityOnPostCreate(Activity activity, Bundle icicle,
+            PersistableBundle persistentState) {
+        activity.onPostCreate(icicle, persistentState);
     }
 
     /**
@@ -1221,6 +1237,7 @@ public class Instrumentation {
      * @param activity The activity being resumed.
      */
     public void callActivityOnResume(Activity activity) {
+        activity.mResumed = true;
         activity.onResume();
         
         if (mActivityMonitors != null) {
@@ -1245,14 +1262,26 @@ public class Instrumentation {
     }
 
     /**
-     * Perform calling of an activity's {@link Activity#onPause} method.  The
-     * default implementation simply calls through to that method.
-     * 
+     * Perform calling of an activity's {@link Activity#onSaveInstanceState}
+     * method.  The default implementation simply calls through to that method.
+     *
      * @param activity The activity being saved.
      * @param outState The bundle to pass to the call.
      */
     public void callActivityOnSaveInstanceState(Activity activity, Bundle outState) {
         activity.performSaveInstanceState(outState);
+    }
+
+    /**
+     * Perform calling of an activity's {@link Activity#onSaveInstanceState}
+     * method.  The default implementation simply calls through to that method.
+     *  @param activity The activity being saved.
+     * @param outState The bundle to pass to the call.
+     * @param outPersistentState The persistent bundle to pass to the call.
+     */
+    public void callActivityOnSaveInstanceState(Activity activity, Bundle outState,
+            PersistableBundle outPersistentState) {
+        activity.performSaveInstanceState(outState, outPersistentState);
     }
 
     /**
@@ -1262,7 +1291,17 @@ public class Instrumentation {
      * @param activity The activity being paused.
      */
     public void callActivityOnPause(Activity activity) {
-        activity.onPause();
+        activity.performPause();
+    }
+    
+    /**
+     * Perform calling of an activity's {@link Activity#onUserLeaveHint} method.
+     * The default implementation simply calls through to that method.
+     * 
+     * @param activity The activity being notified that the user has navigated away
+     */
+    public void callActivityOnUserLeaving(Activity activity) {
+        activity.performUserLeaving();
     }
     
     /*
@@ -1392,13 +1431,131 @@ public class Instrumentation {
      * if there was no Activity found to run the given Intent.
      * 
      * @param who The Context from which the activity is being started.
-     * @param whoThread The main thread of the Context from which the activity
-     *                  is being started.
+     * @param contextThread The main thread of the Context from which the activity
+     *                      is being started.
      * @param token Internal token identifying to the system who is starting 
      *              the activity; may be null.
-     * @param target Which activity is perform the start (and thus receiving 
+     * @param target Which activity is performing the start (and thus receiving 
      *               any result); may be null if this call is not being made
      *               from an activity.
+     * @param intent The actual Intent to start.
+     * @param requestCode Identifier for this request's result; less than zero 
+     *                    if the caller is not expecting a result.
+     * @param options Addition options.
+     * 
+     * @return To force the return of a particular result, return an 
+     *         ActivityResult object containing the desired data; otherwise
+     *         return null.  The default implementation always returns null.
+     *  
+     * @throws android.content.ActivityNotFoundException
+     * 
+     * @see Activity#startActivity(Intent)
+     * @see Activity#startActivityForResult(Intent, int)
+     * @see Activity#startActivityFromChild
+     * 
+     * {@hide}
+     */
+    public ActivityResult execStartActivity(
+            Context who, IBinder contextThread, IBinder token, Activity target,
+            Intent intent, int requestCode, Bundle options) {
+        IApplicationThread whoThread = (IApplicationThread) contextThread;
+        if (mActivityMonitors != null) {
+            synchronized (mSync) {
+                final int N = mActivityMonitors.size();
+                for (int i=0; i<N; i++) {
+                    final ActivityMonitor am = mActivityMonitors.get(i);
+                    if (am.match(who, null, intent)) {
+                        am.mHits++;
+                        if (am.isBlocking()) {
+                            return requestCode >= 0 ? am.getResult() : null;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        try {
+            intent.migrateExtraStreamToClipData();
+            intent.prepareToLeaveProcess();
+            int result = ActivityManagerNative.getDefault()
+                .startActivity(whoThread, who.getBasePackageName(), intent,
+                        intent.resolveTypeIfNeeded(who.getContentResolver()),
+                        token, target != null ? target.mEmbeddedID : null,
+                        requestCode, 0, null, options);
+            checkStartActivityResult(result, intent);
+        } catch (RemoteException e) {
+        }
+        return null;
+    }
+
+    /**
+     * Like {@link #execStartActivity(Context, IBinder, IBinder, Activity, Intent, int, Bundle)},
+     * but accepts an array of activities to be started.  Note that active
+     * {@link ActivityMonitor} objects only match against the first activity in
+     * the array.
+     *
+     * {@hide}
+     */
+    public void execStartActivities(Context who, IBinder contextThread,
+            IBinder token, Activity target, Intent[] intents, Bundle options) {
+        execStartActivitiesAsUser(who, contextThread, token, target, intents, options,
+                UserHandle.myUserId());
+    }
+
+    /**
+     * Like {@link #execStartActivity(Context, IBinder, IBinder, Activity, Intent, int, Bundle)},
+     * but accepts an array of activities to be started.  Note that active
+     * {@link ActivityMonitor} objects only match against the first activity in
+     * the array.
+     *
+     * {@hide}
+     */
+    public void execStartActivitiesAsUser(Context who, IBinder contextThread,
+            IBinder token, Activity target, Intent[] intents, Bundle options,
+            int userId) {
+        IApplicationThread whoThread = (IApplicationThread) contextThread;
+        if (mActivityMonitors != null) {
+            synchronized (mSync) {
+                final int N = mActivityMonitors.size();
+                for (int i=0; i<N; i++) {
+                    final ActivityMonitor am = mActivityMonitors.get(i);
+                    if (am.match(who, null, intents[0])) {
+                        am.mHits++;
+                        if (am.isBlocking()) {
+                            return;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        try {
+            String[] resolvedTypes = new String[intents.length];
+            for (int i=0; i<intents.length; i++) {
+                intents[i].migrateExtraStreamToClipData();
+                intents[i].prepareToLeaveProcess();
+                resolvedTypes[i] = intents[i].resolveTypeIfNeeded(who.getContentResolver());
+            }
+            int result = ActivityManagerNative.getDefault()
+                .startActivities(whoThread, who.getBasePackageName(), intents, resolvedTypes,
+                        token, options, userId);
+            checkStartActivityResult(result, intents[0]);
+        } catch (RemoteException e) {
+        }
+    }
+
+    /**
+     * Like {@link #execStartActivity(android.content.Context, android.os.IBinder,
+     * android.os.IBinder, Fragment, android.content.Intent, int, android.os.Bundle)},
+     * but for calls from a {#link Fragment}.
+     * 
+     * @param who The Context from which the activity is being started.
+     * @param contextThread The main thread of the Context from which the activity
+     *                      is being started.
+     * @param token Internal token identifying to the system who is starting 
+     *              the activity; may be null.
+     * @param target Which fragment is performing the start (and thus receiving 
+     *               any result).
      * @param intent The actual Intent to start.
      * @param requestCode Identifier for this request's result; less than zero 
      *                    if the caller is not expecting a result.
@@ -1416,8 +1573,9 @@ public class Instrumentation {
      * {@hide}
      */
     public ActivityResult execStartActivity(
-        Context who, IApplicationThread whoThread, IBinder token, Activity target,
-        Intent intent, int requestCode) {
+        Context who, IBinder contextThread, IBinder token, Fragment target,
+        Intent intent, int requestCode, Bundle options) {
+        IApplicationThread whoThread = (IApplicationThread) contextThread;
         if (mActivityMonitors != null) {
             synchronized (mSync) {
                 final int N = mActivityMonitors.size();
@@ -1434,49 +1592,190 @@ public class Instrumentation {
             }
         }
         try {
+            intent.migrateExtraStreamToClipData();
+            intent.prepareToLeaveProcess();
             int result = ActivityManagerNative.getDefault()
-                .startActivity(whoThread, intent,
+                .startActivity(whoThread, who.getBasePackageName(), intent,
                         intent.resolveTypeIfNeeded(who.getContentResolver()),
-                        null, 0, token, target != null ? target.mEmbeddedID : null,
-                        requestCode, false, false);
+                        token, target != null ? target.mWho : null,
+                        requestCode, 0, null, options);
             checkStartActivityResult(result, intent);
         } catch (RemoteException e) {
         }
         return null;
     }
 
+    /**
+     * Like {@link #execStartActivity(Context, IBinder, IBinder, Activity, Intent, int, Bundle)},
+     * but for starting as a particular user.
+     *
+     * @param who The Context from which the activity is being started.
+     * @param contextThread The main thread of the Context from which the activity
+     *                      is being started.
+     * @param token Internal token identifying to the system who is starting
+     *              the activity; may be null.
+     * @param target Which fragment is performing the start (and thus receiving
+     *               any result).
+     * @param intent The actual Intent to start.
+     * @param requestCode Identifier for this request's result; less than zero
+     *                    if the caller is not expecting a result.
+     *
+     * @return To force the return of a particular result, return an
+     *         ActivityResult object containing the desired data; otherwise
+     *         return null.  The default implementation always returns null.
+     *
+     * @throws android.content.ActivityNotFoundException
+     *
+     * @see Activity#startActivity(Intent)
+     * @see Activity#startActivityForResult(Intent, int)
+     * @see Activity#startActivityFromChild
+     *
+     * {@hide}
+     */
+    public ActivityResult execStartActivity(
+            Context who, IBinder contextThread, IBinder token, Activity target,
+            Intent intent, int requestCode, Bundle options, UserHandle user) {
+        IApplicationThread whoThread = (IApplicationThread) contextThread;
+        if (mActivityMonitors != null) {
+            synchronized (mSync) {
+                final int N = mActivityMonitors.size();
+                for (int i=0; i<N; i++) {
+                    final ActivityMonitor am = mActivityMonitors.get(i);
+                    if (am.match(who, null, intent)) {
+                        am.mHits++;
+                        if (am.isBlocking()) {
+                            return requestCode >= 0 ? am.getResult() : null;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        try {
+            intent.migrateExtraStreamToClipData();
+            intent.prepareToLeaveProcess();
+            int result = ActivityManagerNative.getDefault()
+                .startActivityAsUser(whoThread, who.getBasePackageName(), intent,
+                        intent.resolveTypeIfNeeded(who.getContentResolver()),
+                        token, target != null ? target.mEmbeddedID : null,
+                        requestCode, 0, null, options, user.getIdentifier());
+            checkStartActivityResult(result, intent);
+        } catch (RemoteException e) {
+        }
+        return null;
+    }
+
+    /**
+     * Special version!
+     * @hide
+     */
+    public ActivityResult execStartActivityAsCaller(
+            Context who, IBinder contextThread, IBinder token, Activity target,
+            Intent intent, int requestCode, Bundle options, int userId) {
+        IApplicationThread whoThread = (IApplicationThread) contextThread;
+        if (mActivityMonitors != null) {
+            synchronized (mSync) {
+                final int N = mActivityMonitors.size();
+                for (int i=0; i<N; i++) {
+                    final ActivityMonitor am = mActivityMonitors.get(i);
+                    if (am.match(who, null, intent)) {
+                        am.mHits++;
+                        if (am.isBlocking()) {
+                            return requestCode >= 0 ? am.getResult() : null;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        try {
+            intent.migrateExtraStreamToClipData();
+            intent.prepareToLeaveProcess();
+            int result = ActivityManagerNative.getDefault()
+                .startActivityAsCaller(whoThread, who.getBasePackageName(), intent,
+                        intent.resolveTypeIfNeeded(who.getContentResolver()),
+                        token, target != null ? target.mEmbeddedID : null,
+                        requestCode, 0, null, options, userId);
+            checkStartActivityResult(result, intent);
+        } catch (RemoteException e) {
+        }
+        return null;
+    }
+
+    /**
+     * Special version!
+     * @hide
+     */
+    public void execStartActivityFromAppTask(
+            Context who, IBinder contextThread, IAppTask appTask,
+            Intent intent, Bundle options) {
+        IApplicationThread whoThread = (IApplicationThread) contextThread;
+        if (mActivityMonitors != null) {
+            synchronized (mSync) {
+                final int N = mActivityMonitors.size();
+                for (int i=0; i<N; i++) {
+                    final ActivityMonitor am = mActivityMonitors.get(i);
+                    if (am.match(who, null, intent)) {
+                        am.mHits++;
+                        if (am.isBlocking()) {
+                            return;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        try {
+            intent.migrateExtraStreamToClipData();
+            intent.prepareToLeaveProcess();
+            int result = appTask.startActivity(whoThread.asBinder(), who.getBasePackageName(),
+                    intent, intent.resolveTypeIfNeeded(who.getContentResolver()), options);
+            checkStartActivityResult(result, intent);
+        } catch (RemoteException e) {
+        }
+        return;
+    }
+
     /*package*/ final void init(ActivityThread thread,
             Context instrContext, Context appContext, ComponentName component, 
-            IInstrumentationWatcher watcher) {
+            IInstrumentationWatcher watcher, IUiAutomationConnection uiAutomationConnection) {
         mThread = thread;
         mMessageQueue = mThread.getLooper().myQueue();
         mInstrContext = instrContext;
         mAppContext = appContext;
         mComponent = component;
         mWatcher = watcher;
+        mUiAutomationConnection = uiAutomationConnection;
     }
 
-    /*package*/ static void checkStartActivityResult(int res, Intent intent) {
-        if (res >= IActivityManager.START_SUCCESS) {
+    /** @hide */
+    public static void checkStartActivityResult(int res, Object intent) {
+        if (res >= ActivityManager.START_SUCCESS) {
             return;
         }
         
         switch (res) {
-            case IActivityManager.START_INTENT_NOT_RESOLVED:
-            case IActivityManager.START_CLASS_NOT_FOUND:
-                if (intent.getComponent() != null)
+            case ActivityManager.START_INTENT_NOT_RESOLVED:
+            case ActivityManager.START_CLASS_NOT_FOUND:
+                if (intent instanceof Intent && ((Intent)intent).getComponent() != null)
                     throw new ActivityNotFoundException(
                             "Unable to find explicit activity class "
-                            + intent.getComponent().toShortString()
+                            + ((Intent)intent).getComponent().toShortString()
                             + "; have you declared this activity in your AndroidManifest.xml?");
                 throw new ActivityNotFoundException(
                         "No Activity found to handle " + intent);
-            case IActivityManager.START_PERMISSION_DENIED:
+            case ActivityManager.START_PERMISSION_DENIED:
                 throw new SecurityException("Not allowed to start activity "
                         + intent);
-            case IActivityManager.START_FORWARD_AND_REQUEST_CONFLICT:
+            case ActivityManager.START_FORWARD_AND_REQUEST_CONFLICT:
                 throw new AndroidRuntimeException(
                         "FORWARD_RESULT_FLAG used while also requesting a result");
+            case ActivityManager.START_NOT_ACTIVITY:
+                throw new IllegalArgumentException(
+                        "PendingIntent is not an activity");
+            case ActivityManager.START_NOT_VOICE_COMPATIBLE:
+                throw new SecurityException(
+                        "Starting under voice control not allowed for: " + intent);
             default:
                 throw new AndroidRuntimeException("Unknown error code "
                         + res + " when starting " + intent);
@@ -1484,10 +1783,41 @@ public class Instrumentation {
     }
     
     private final void validateNotAppThread() {
-        if (ActivityThread.currentActivityThread() != null) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
             throw new RuntimeException(
                 "This method can not be called from the main application thread");
         }
+    }
+
+    /**
+     * Gets the {@link UiAutomation} instance.
+     * <p>
+     * <strong>Note:</strong> The APIs exposed via the returned {@link UiAutomation}
+     * work across application boundaries while the APIs exposed by the instrumentation
+     * do not. For example, {@link Instrumentation#sendPointerSync(MotionEvent)} will
+     * not allow you to inject the event in an app different from the instrumentation
+     * target, while {@link UiAutomation#injectInputEvent(android.view.InputEvent, boolean)}
+     * will work regardless of the current application.
+     * </p>
+     * <p>
+     * A typical test case should be using either the {@link UiAutomation} or
+     * {@link Instrumentation} APIs. Using both APIs at the same time is not
+     * a mistake by itself but a client has to be aware of the APIs limitations.
+     * </p>
+     * @return The UI automation instance.
+     *
+     * @see UiAutomation
+     */
+    public UiAutomation getUiAutomation() {
+        if (mUiAutomationConnection != null) {
+            if (mUiAutomation == null) {
+                mUiAutomation = new UiAutomation(getTargetContext().getMainLooper(),
+                        mUiAutomationConnection);
+                mUiAutomation.connect();
+            }
+            return mUiAutomation;
+        }
+        return null;
     }
 
     private final class InstrumentationThread extends Thread {
@@ -1495,7 +1825,6 @@ public class Instrumentation {
             super(name);
         }
         public void run() {
-            IActivityManager am = ActivityManagerNative.getDefault();
             try {
                 Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
             } catch (RuntimeException e) {
@@ -1508,7 +1837,7 @@ public class Instrumentation {
             onStart();
         }
     }
-    
+
     private static final class EmptyRunnable implements Runnable {
         public void run() {
         }

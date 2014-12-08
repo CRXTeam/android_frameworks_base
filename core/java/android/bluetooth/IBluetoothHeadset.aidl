@@ -16,27 +16,45 @@
 
 package android.bluetooth;
 
-import android.bluetooth.IBluetoothHeadsetCallback;
+import android.bluetooth.BluetoothDevice;
 
 /**
- * System private API for Bluetooth Headset service
+ * API for Bluetooth Headset service
  *
  * {@hide}
  */
 interface IBluetoothHeadset {
-    int getState();
+    // Public API
+    boolean connect(in BluetoothDevice device);
+    boolean disconnect(in BluetoothDevice device);
+    List<BluetoothDevice> getConnectedDevices();
+    List<BluetoothDevice> getDevicesMatchingConnectionStates(in int[] states);
+    int getConnectionState(in BluetoothDevice device);
+    boolean setPriority(in BluetoothDevice device, int priority);
+    int getPriority(in BluetoothDevice device);
+    boolean startVoiceRecognition(in BluetoothDevice device);
+    boolean stopVoiceRecognition(in BluetoothDevice device);
+    boolean isAudioConnected(in BluetoothDevice device);
+    boolean sendVendorSpecificResultCode(in BluetoothDevice device,
+                                         in String command,
+                                         in String arg);
 
-    String getHeadsetAddress();
+    // APIs that can be made public in future
+    int getBatteryUsageHint(in BluetoothDevice device);
 
-    // Request that the given headset be connected
-    // Assumes the given headset is already bonded
-    // Will disconnect any currently connected headset
-    // returns false if cannot start a connection (for example, there is
-    // already a pending connect). callback will always be called iff this
-    // returns true
-    boolean connectHeadset(in String address, in IBluetoothHeadsetCallback callback);
+    // Internal functions, not be made public
+    boolean acceptIncomingConnect(in BluetoothDevice device);
+    boolean rejectIncomingConnect(in BluetoothDevice device);
+    int getAudioState(in BluetoothDevice device);
 
-    boolean isConnected(in String address);
-
-    void disconnectHeadset();
+    boolean isAudioOn();
+    boolean connectAudio();
+    boolean disconnectAudio();
+    boolean startScoUsingVirtualVoiceCall(in BluetoothDevice device);
+    boolean stopScoUsingVirtualVoiceCall(in BluetoothDevice device);
+    void phoneStateChanged(int numActive, int numHeld, int callState, String number, int type);
+    void clccResponse(int index, int direction, int status, int mode, boolean mpty,
+                      String number, int type);
+    boolean enableWBS();
+    boolean disableWBS();
 }

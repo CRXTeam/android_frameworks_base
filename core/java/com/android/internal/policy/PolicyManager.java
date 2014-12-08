@@ -17,11 +17,10 @@
 package com.android.internal.policy;
 
 import android.content.Context;
+import android.view.FallbackEventHandler;
 import android.view.LayoutInflater;
 import android.view.Window;
 import android.view.WindowManagerPolicy;
-
-import com.android.internal.policy.IPolicy;
 
 /**
  * {@hide}
@@ -64,5 +63,9 @@ public final class PolicyManager {
 
     public static WindowManagerPolicy makeNewWindowManager() {
         return sPolicy.makeNewWindowManager();
+    }
+
+    public static FallbackEventHandler makeNewFallbackEventHandler(Context context) {
+        return sPolicy.makeNewFallbackEventHandler(context);
     }
 }

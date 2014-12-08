@@ -1,4 +1,7 @@
 /*
+ * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+ * Not a Contribution.
+ *
  * Copyright (C) 2007 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +19,8 @@
 
 package android.net.http;
 
+import com.android.internal.http.HttpDateTime;
+
 import org.apache.http.Header;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpEntityEnclosingRequest;
@@ -24,75 +29,81 @@ import org.apache.http.HttpHost;
 import org.apache.http.HttpRequest;
 import org.apache.http.HttpRequestInterceptor;
 import org.apache.http.HttpResponse;
-import org.apache.http.entity.AbstractHttpEntity;
-import org.apache.http.entity.ByteArrayEntity;
-import org.apache.http.client.CookieStore;
+import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.ResponseHandler;
-import org.apache.http.client.ClientProtocolException;
-import org.apache.http.client.protocol.ClientContext;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.params.HttpClientParams;
+import org.apache.http.client.protocol.ClientContext;
 import org.apache.http.conn.ClientConnectionManager;
 import org.apache.http.conn.scheme.PlainSocketFactory;
 import org.apache.http.conn.scheme.Scheme;
 import org.apache.http.conn.scheme.SchemeRegistry;
-import org.apache.http.conn.ssl.SSLSocketFactory;
+import org.apache.http.entity.AbstractHttpEntity;
+import org.apache.http.entity.ByteArrayEntity;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.impl.client.RequestWrapper;
 import org.apache.http.impl.conn.tsccm.ThreadSafeClientConnManager;
 import org.apache.http.params.BasicHttpParams;
+import org.apache.http.params.CoreProtocolPNames;
 import org.apache.http.params.HttpConnectionParams;
 import org.apache.http.params.HttpParams;
 import org.apache.http.params.HttpProtocolParams;
+import org.apache.http.protocol.BasicHttpContext;
 import org.apache.http.protocol.BasicHttpProcessor;
 import org.apache.http.protocol.HttpContext;
-import org.apache.http.protocol.BasicHttpContext;
 
+import android.app.ActivityThread;
+import android.app.AppOpsManager;
+import android.content.ContentResolver;
+import android.content.Context;
+import android.net.SSLCertificateSocketFactory;
+import android.net.SSLSessionCache;
+import android.os.Binder;
+import android.os.Looper;
+import android.util.Base64;
+import android.util.Log;
+
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
+import java.net.URI;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
-import java.net.URI;
-import java.util.concurrent.atomic.AtomicInteger;
-
-import android.util.Log;
-import android.content.ContentResolver;
-import android.provider.Settings;
-import android.text.TextUtils;
 
 /**
- * Subclass of the Apache {@link DefaultHttpClient} that is configured with
- * reasonable default settings and registered schemes for Android, and
- * also lets the user add {@link HttpRequestInterceptor} classes.
+ * Implementation of the Apache {@link DefaultHttpClient} that is configured with
+ * reasonable default settings and registered schemes for Android.
  * Don't create this directly, use the {@link #newInstance} factory method.
  *
  * <p>This client processes cookies but does not retain them by default.
  * To retain cookies, simply add a cookie store to the HttpContext:</p>
  *
  * <pre>context.setAttribute(ClientContext.COOKIE_STORE, cookieStore);</pre>
- * 
- * {@hide}
  */
 public final class AndroidHttpClient implements HttpClient {
-        
+
     // Gzip of data shorter than this probably won't be worthwhile
     public static long DEFAULT_SYNC_MIN_GZIP_BYTES = 256;
 
+    // Default connection and socket timeout of 60 seconds.  Tweak to taste.
+    private static final int SOCKET_OPERATION_TIMEOUT = 60 * 1000;
+
     private static final String TAG = "AndroidHttpClient";
 
-
-    /** Set if HTTP requests are blocked from being executed on this thread */
-    private static final ThreadLocal<Boolean> sThreadBlocked =
-            new ThreadLocal<Boolean>();
+    private static String[] textContentTypes = new String[] {
+            "text/",
+            "application/xml",
+            "application/json"
+    };
 
     /** Interceptor throws an exception if the executing thread is blocked */
     private static final HttpRequestInterceptor sThreadCheckInterceptor =
             new HttpRequestInterceptor() {
         public void process(HttpRequest request, HttpContext context) {
-            if (sThreadBlocked.get() != null && sThreadBlocked.get()) {
+            // Prevent the HttpRequest from being sent on the main thread
+            if (Looper.myLooper() != null && Looper.myLooper() == Looper.getMainLooper() ) {
                 throw new RuntimeException("This thread forbids HTTP requests");
             }
         }
@@ -100,24 +111,28 @@ public final class AndroidHttpClient implements HttpClient {
 
     /**
      * Create a new HttpClient with reasonable defaults (which you can update).
-     * @param userAgent to report in your HTTP requests.
+     *
+     * @param userAgent to report in your HTTP requests
+     * @param context to use for caching SSL sessions (may be null for no caching)
      * @return AndroidHttpClient for you to use for all your requests.
      */
-    public static AndroidHttpClient newInstance(String userAgent) {
+    public static AndroidHttpClient newInstance(String userAgent, Context context) {
         HttpParams params = new BasicHttpParams();
 
         // Turn off stale checking.  Our connections break all the time anyway,
         // and it's not worth it to pay the penalty of checking every time.
         HttpConnectionParams.setStaleCheckingEnabled(params, false);
 
-        // Default connection and socket timeout of 20 seconds.  Tweak to taste.
-        HttpConnectionParams.setConnectionTimeout(params, 20 * 1000);
-        HttpConnectionParams.setSoTimeout(params, 20 * 1000);
+        HttpConnectionParams.setConnectionTimeout(params, SOCKET_OPERATION_TIMEOUT);
+        HttpConnectionParams.setSoTimeout(params, SOCKET_OPERATION_TIMEOUT);
         HttpConnectionParams.setSocketBufferSize(params, 8192);
 
         // Don't handle redirects -- return them to the caller.  Our code
         // often wants to re-POST after a redirect, which we must do ourselves.
         HttpClientParams.setRedirecting(params, false);
+
+        // Use a session cache for SSL sockets
+        SSLSessionCache sessionCache = context == null ? null : new SSLSessionCache(context);
 
         // Set the specified user agent and register standard protocols.
         HttpProtocolParams.setUserAgent(params, userAgent);
@@ -125,13 +140,24 @@ public final class AndroidHttpClient implements HttpClient {
         schemeRegistry.register(new Scheme("http",
                 PlainSocketFactory.getSocketFactory(), 80));
         schemeRegistry.register(new Scheme("https",
-                SSLSocketFactory.getSocketFactory(), 443));
+                SSLCertificateSocketFactory.getHttpSocketFactory(
+                SOCKET_OPERATION_TIMEOUT, sessionCache), 443));
+
         ClientConnectionManager manager =
                 new ThreadSafeClientConnManager(params, schemeRegistry);
 
         // We use a factory method to modify superclass initialization
         // parameters without the funny call-a-static-method dance.
         return new AndroidHttpClient(manager, params);
+    }
+
+    /**
+     * Create a new HttpClient with reasonable defaults (which you can update).
+     * @param userAgent to report in your HTTP requests.
+     * @return AndroidHttpClient for you to use for all your requests.
+     */
+    public static AndroidHttpClient newInstance(String userAgent) {
+        return newInstance(userAgent, null /* session cache */);
     }
 
     private final HttpClient delegate;
@@ -177,15 +203,6 @@ public final class AndroidHttpClient implements HttpClient {
             Log.e(TAG, "Leak found", mLeakedException);
             mLeakedException = null;
         }
-    }
-
-    /**
-     * Block this thread from executing HTTP requests.
-     * Used to guard against HTTP requests blocking the main application thread.
-     * @param blocked if HTTP requests run on this thread should be denied
-     */
-    public static void setThreadBlocked(boolean blocked) {
-        sThreadBlocked.set(blocked);
     }
 
     /**
@@ -238,46 +255,107 @@ public final class AndroidHttpClient implements HttpClient {
         return delegate.getConnectionManager();
     }
 
+    private boolean isMmsRequest()
+    {
+        if(delegate.getParams() == null ||
+                delegate.getParams().getParameter(CoreProtocolPNames.USER_AGENT) == null) {
+            return false;
+        }
+
+        if(delegate.getParams().getParameter(CoreProtocolPNames.USER_AGENT).toString().contains("Android-Mms"))
+            return true;
+
+        return false;
+    }
+
+    private boolean checkMmsOps()
+    {
+        AppOpsManager appOps = (AppOpsManager) ActivityThread.currentApplication().getSystemService(Context.APP_OPS_SERVICE);
+        int callingUid = Binder.getCallingUid();
+        String callingPackage= ActivityThread.currentPackageName();
+
+        if (appOps.noteOp(AppOpsManager.OP_SEND_MMS, callingUid, callingPackage) !=
+                AppOpsManager.MODE_ALLOWED)
+                return false;
+
+        return true;
+    }
+
+    private String getMethod(HttpUriRequest request) {
+        if(request != null)
+            return request.getMethod();
+        return null;
+    }
+
+    private String getMethod(HttpRequest request) {
+        if(request != null)
+            if(request.getRequestLine() != null)
+                return request.getRequestLine().getMethod();
+        return null;
+    }
+
+    private boolean checkMmsSendPermission(String method) {
+        if(isMmsRequest() && method.equals("POST"))
+            return checkMmsOps();
+        return true;
+    }
+
     public HttpResponse execute(HttpUriRequest request) throws IOException {
+        if(!checkMmsSendPermission(getMethod(request)))
+            throw new IOException("Permission denied");
         return delegate.execute(request);
     }
 
     public HttpResponse execute(HttpUriRequest request, HttpContext context)
             throws IOException {
+        if(!checkMmsSendPermission(getMethod(request)))
+            throw new IOException("Permission denied");
         return delegate.execute(request, context);
     }
 
     public HttpResponse execute(HttpHost target, HttpRequest request)
             throws IOException {
+        if(!checkMmsSendPermission(getMethod(request)))
+            throw new IOException("Permission denied");
         return delegate.execute(target, request);
     }
 
     public HttpResponse execute(HttpHost target, HttpRequest request,
             HttpContext context) throws IOException {
+        if(!checkMmsSendPermission(getMethod(request)))
+            throw new IOException("Permission denied");
         return delegate.execute(target, request, context);
     }
 
-    public <T> T execute(HttpUriRequest request, 
+    public <T> T execute(HttpUriRequest request,
             ResponseHandler<? extends T> responseHandler)
             throws IOException, ClientProtocolException {
+        if(!checkMmsSendPermission(getMethod(request)))
+            throw new IOException("Permission denied");
         return delegate.execute(request, responseHandler);
     }
 
     public <T> T execute(HttpUriRequest request,
             ResponseHandler<? extends T> responseHandler, HttpContext context)
             throws IOException, ClientProtocolException {
+        if(!checkMmsSendPermission(getMethod(request)))
+            throw new IOException("Permission denied");
         return delegate.execute(request, responseHandler, context);
     }
 
     public <T> T execute(HttpHost target, HttpRequest request,
             ResponseHandler<? extends T> responseHandler) throws IOException,
             ClientProtocolException {
+        if(!checkMmsSendPermission(getMethod(request)))
+            throw new IOException("Permission denied");
         return delegate.execute(target, request, responseHandler);
     }
 
     public <T> T execute(HttpHost target, HttpRequest request,
             ResponseHandler<? extends T> responseHandler, HttpContext context)
             throws IOException, ClientProtocolException {
+        if(!checkMmsSendPermission(getMethod(request)))
+            throw new IOException("Permission denied");
         return delegate.execute(target, request, responseHandler, context);
     }
 
@@ -309,19 +387,7 @@ public final class AndroidHttpClient implements HttpClient {
      * Shorter data will not be compressed.
      */
     public static long getMinGzipSize(ContentResolver resolver) {
-        String sMinGzipBytes = Settings.Gservices.getString(resolver,
-                Settings.Gservices.SYNC_MIN_GZIP_BYTES);
-
-        if (!TextUtils.isEmpty(sMinGzipBytes)) {
-            try {
-                return Long.parseLong(sMinGzipBytes);
-            } catch (NumberFormatException nfe) {
-                Log.w(TAG, "Unable to parse " +
-                        Settings.Gservices.SYNC_MIN_GZIP_BYTES + " " +
-                        sMinGzipBytes, nfe);
-            }
-        }
-        return DEFAULT_SYNC_MIN_GZIP_BYTES;
+        return DEFAULT_SYNC_MIN_GZIP_BYTES;  // For now, this is just a constant.
     }
 
     /* cURL logging support. */
@@ -369,7 +435,7 @@ public final class AndroidHttpClient implements HttpClient {
         }
         if (level < Log.VERBOSE || level > Log.ASSERT) {
             throw new IllegalArgumentException("Level is out of range ["
-                + Log.VERBOSE + ".." + Log.ASSERT + "]");    
+                + Log.VERBOSE + ".." + Log.ASSERT + "]");
         }
 
         curlConfiguration = new LoggingConfiguration(name, level);
@@ -392,7 +458,9 @@ public final class AndroidHttpClient implements HttpClient {
             if (configuration != null
                     && configuration.isLoggable()
                     && request instanceof HttpUriRequest) {
-                configuration.println(toCurl((HttpUriRequest) request));
+                // Never print auth token -- we used to check ro.secure=0 to
+                // enable that, but can't do that in unbundled code.
+                configuration.println(toCurl((HttpUriRequest) request, false));
             }
         }
     }
@@ -400,12 +468,22 @@ public final class AndroidHttpClient implements HttpClient {
     /**
      * Generates a cURL command equivalent to the given request.
      */
-    private static String toCurl(HttpUriRequest request) throws IOException {
+    private static String toCurl(HttpUriRequest request, boolean logAuthToken) throws IOException {
         StringBuilder builder = new StringBuilder();
 
         builder.append("curl ");
 
+        // add in the method
+        builder.append("-X ");
+        builder.append(request.getMethod());
+        builder.append(" ");
+
         for (Header header: request.getAllHeaders()) {
+            if (!logAuthToken
+                    && (header.getName().equals("Authorization") ||
+                        header.getName().equals("Cookie"))) {
+                continue;
+            }
             builder.append("--header \"");
             builder.append(header.toString().trim());
             builder.append("\" ");
@@ -435,12 +513,17 @@ public final class AndroidHttpClient implements HttpClient {
                 if (entity.getContentLength() < 1024) {
                     ByteArrayOutputStream stream = new ByteArrayOutputStream();
                     entity.writeTo(stream);
-                    String entityString = stream.toString();
 
-                    // TODO: Check the content type, too.
-                    builder.append(" --data-ascii \"")
-                            .append(entityString)
-                            .append("\"");
+                    if (isBinaryContent(request)) {
+                        String base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP);
+                        builder.insert(0, "echo '" + base64 + "' | base64 -d > /tmp/$$.bin; ");
+                        builder.append(" --data-binary @/tmp/$$.bin");
+                    } else {
+                        String entityString = stream.toString();
+                        builder.append(" --data-ascii \"")
+                                .append(entityString)
+                                .append("\"");
+                    }
                 } else {
                     builder.append(" [TOO MUCH DATA TO INCLUDE]");
                 }
@@ -448,5 +531,47 @@ public final class AndroidHttpClient implements HttpClient {
         }
 
         return builder.toString();
+    }
+
+    private static boolean isBinaryContent(HttpUriRequest request) {
+        Header[] headers;
+        headers = request.getHeaders(Headers.CONTENT_ENCODING);
+        if (headers != null) {
+            for (Header header : headers) {
+                if ("gzip".equalsIgnoreCase(header.getValue())) {
+                    return true;
+                }
+            }
+        }
+
+        headers = request.getHeaders(Headers.CONTENT_TYPE);
+        if (headers != null) {
+            for (Header header : headers) {
+                for (String contentType : textContentTypes) {
+                    if (header.getValue().startsWith(contentType)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Returns the date of the given HTTP date string. This method can identify
+     * and parse the date formats emitted by common HTTP servers, such as
+     * <a href="http://www.ietf.org/rfc/rfc0822.txt">RFC 822</a>,
+     * <a href="http://www.ietf.org/rfc/rfc0850.txt">RFC 850</a>,
+     * <a href="http://www.ietf.org/rfc/rfc1036.txt">RFC 1036</a>,
+     * <a href="http://www.ietf.org/rfc/rfc1123.txt">RFC 1123</a> and
+     * <a href="http://www.opengroup.org/onlinepubs/007908799/xsh/asctime.html">ANSI
+     * C's asctime()</a>.
+     *
+     * @return the number of milliseconds since Jan. 1, 1970, midnight GMT.
+     * @throws IllegalArgumentException if {@code dateString} is not a date or
+     *     of an unsupported format.
+     */
+    public static long parseDate(String dateString) {
+        return HttpDateTime.parse(dateString);
     }
 }

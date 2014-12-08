@@ -18,28 +18,123 @@ package android.text.style;
 
 import android.graphics.Paint;
 import android.graphics.Canvas;
+import android.os.Parcel;
 import android.text.Layout;
+import android.text.ParcelableSpan;
+import android.text.TextUtils;
 
+/**
+ * A paragraph style affecting the leading margin. There can be multiple leading
+ * margin spans on a single paragraph; they will be rendered in order, each
+ * adding its margin to the ones before it. The leading margin is on the right
+ * for lines in a right-to-left paragraph.
+ * <p>
+ * LeadingMarginSpans should be attached from the first character to the last
+ * character of a single paragraph.
+ */
 public interface LeadingMarginSpan
 extends ParagraphStyle
 {
+    /**
+     * Returns the amount by which to adjust the leading margin. Positive values
+     * move away from the leading edge of the paragraph, negative values move
+     * towards it.
+     * 
+     * @param first true if the request is for the first line of a paragraph,
+     * false for subsequent lines
+     * @return the offset for the margin.
+     */
     public int getLeadingMargin(boolean first);
+
+    /**
+     * Renders the leading margin.  This is called before the margin has been
+     * adjusted by the value returned by {@link #getLeadingMargin(boolean)}.
+     * 
+     * @param c the canvas
+     * @param p the paint. The this should be left unchanged on exit.
+     * @param x the current position of the margin
+     * @param dir the base direction of the paragraph; if negative, the margin
+     * is to the right of the text, otherwise it is to the left.
+     * @param top the top of the line
+     * @param baseline the baseline of the line
+     * @param bottom the bottom of the line
+     * @param text the text
+     * @param start the start of the line
+     * @param end the end of the line
+     * @param first true if this is the first line of its paragraph
+     * @param layout the layout containing this line
+     */
     public void drawLeadingMargin(Canvas c, Paint p,
                                   int x, int dir,
                                   int top, int baseline, int bottom,
                                   CharSequence text, int start, int end,
                                   boolean first, Layout layout);
 
-    public static class Standard
-    implements LeadingMarginSpan
-    {
+
+    /**
+     * An extended version of {@link LeadingMarginSpan}, which allows the
+     * implementor to specify the number of lines of the paragraph to which
+     * this object is attached that the "first line of paragraph" margin width
+     * will be applied to.
+     * <p>
+     * There should only be one LeadingMarginSpan2 per paragraph. The leading
+     * margin line count affects all LeadingMarginSpans in the paragraph,
+     * adjusting the number of lines to which the first line margin is applied.
+     * <p>
+     * As with LeadingMarginSpans, LeadingMarginSpan2s should be attached from
+     * the beginning to the end of a paragraph.
+     */
+    public interface LeadingMarginSpan2 extends LeadingMarginSpan, WrapTogetherSpan {
+        /**
+         * Returns the number of lines of the paragraph to which this object is
+         * attached that the "first line" margin will apply to.
+         */
+        public int getLeadingMarginLineCount();
+    };
+
+    /**
+     * The standard implementation of LeadingMarginSpan, which adjusts the
+     * margin but does not do any rendering.
+     */
+    public static class Standard implements LeadingMarginSpan, ParcelableSpan {
+        private final int mFirst, mRest;
+        
+        /**
+         * Constructor taking separate indents for the first and subsequent
+         * lines.
+         * 
+         * @param first the indent for the first line of the paragraph
+         * @param rest the indent for the remaining lines of the paragraph
+         */
         public Standard(int first, int rest) {
             mFirst = first;
             mRest = rest;
         }
 
+        /**
+         * Constructor taking an indent for all lines.
+         * @param every the indent of each line
+         */
         public Standard(int every) {
             this(every, every);
+        }
+
+        public Standard(Parcel src) {
+            mFirst = src.readInt();
+            mRest = src.readInt();
+        }
+        
+        public int getSpanTypeId() {
+            return TextUtils.LEADING_MARGIN_SPAN;
+        }
+        
+        public int describeContents() {
+            return 0;
+        }
+
+        public void writeToParcel(Parcel dest, int flags) {
+            dest.writeInt(mFirst);
+            dest.writeInt(mRest);
         }
 
         public int getLeadingMargin(boolean first) {
@@ -53,7 +148,5 @@ extends ParagraphStyle
                                       boolean first, Layout layout) {
             ;
         }
-
-        private int mFirst, mRest;
     }
 }

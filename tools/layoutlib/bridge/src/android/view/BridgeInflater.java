@@ -16,34 +16,39 @@
 
 package android.view;
 
-import com.android.layoutlib.api.IProjectCallback;
-import com.android.layoutlib.api.IResourceValue;
+import com.android.ide.common.rendering.api.IProjectCallback;
+import com.android.ide.common.rendering.api.LayoutLog;
+import com.android.ide.common.rendering.api.MergeCookie;
+import com.android.ide.common.rendering.api.ResourceReference;
+import com.android.ide.common.rendering.api.ResourceValue;
 import com.android.layoutlib.bridge.Bridge;
-import com.android.layoutlib.bridge.BridgeConstants;
-import com.android.layoutlib.bridge.BridgeContext;
-import com.android.layoutlib.bridge.BridgeXmlBlockParser;
+import com.android.layoutlib.bridge.android.BridgeContext;
+import com.android.layoutlib.bridge.android.BridgeXmlBlockParser;
+import com.android.layoutlib.bridge.impl.ParserFactory;
+import com.android.resources.ResourceType;
+import com.android.util.Pair;
 
-import org.kxml2.io.KXmlParser;
 import org.xmlpull.v1.XmlPullParser;
 
 import android.content.Context;
 import android.util.AttributeSet;
 
 import java.io.File;
-import java.io.FileReader;
 
 /**
- * Custom implementation of {@link LayoutInflater} to handle custom views. 
+ * Custom implementation of {@link LayoutInflater} to handle custom views.
  */
 public final class BridgeInflater extends LayoutInflater {
-    
+
     private final IProjectCallback mProjectCallback;
+    private boolean mIsInMerge = false;
+    private ResourceReference mResourceReference;
 
     /**
      * List of class prefixes which are tried first by default.
      * <p/>
      * This should match the list in com.android.internal.policy.impl.PhoneLayoutInflater.
-     */ 
+     */
     private static final String[] sClassPrefixList = {
         "android.widget.",
         "android.webkit."
@@ -53,10 +58,10 @@ public final class BridgeInflater extends LayoutInflater {
         super(original, newContext);
         mProjectCallback = null;
     }
-    
+
     /**
      * Instantiate a new BridgeInflater with an {@link IProjectCallback} object.
-     * 
+     *
      * @param context The Android application context.
      * @param projectCallback the {@link IProjectCallback} object.
      */
@@ -66,7 +71,6 @@ public final class BridgeInflater extends LayoutInflater {
         mConstructorArgs[0] = context;
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public View onCreateView(String name, AttributeSet attrs) throws ClassNotFoundException {
         View view = null;
@@ -83,7 +87,7 @@ public final class BridgeInflater extends LayoutInflater {
                     // Ignore. We'll try again using the base class below.
                 }
             }
-    
+
             // Next try using the parent loader. This will most likely only work for
             // fully-qualified class names.
             try {
@@ -93,7 +97,7 @@ public final class BridgeInflater extends LayoutInflater {
             } catch (ClassNotFoundException e) {
                 // Ignore. We'll try again using the custom view loader below.
             }
-    
+
             // Finally try again using the custom view loader
             try {
                 if (view == null) {
@@ -110,17 +114,18 @@ public final class BridgeInflater extends LayoutInflater {
             ClassNotFoundException exception = new ClassNotFoundException("onCreateView", e);
             throw exception;
         }
-        
+
         setupViewInContext(view, attrs);
-        
+
         return view;
     }
-    
+
     @Override
-    public View createViewFromTag(String name, AttributeSet attrs) {
+    public View createViewFromTag(View parent, String name, AttributeSet attrs,
+            boolean inheritContext) {
         View view = null;
         try {
-            view = super.createViewFromTag(name, attrs);
+            view = super.createViewFromTag(parent, name, attrs, inheritContext);
         } catch (InflateException e) {
             // try to load the class from using the custom view loader
             try {
@@ -129,7 +134,7 @@ public final class BridgeInflater extends LayoutInflater {
                 // Wrap the real exception in an InflateException so that the calling
                 // method can deal with it.
                 InflateException exception = new InflateException();
-                if (e2.getClass().equals(ClassNotFoundException.class) == false) { 
+                if (e2.getClass().equals(ClassNotFoundException.class) == false) {
                     exception.initCause(e2);
                 } else {
                     exception.initCause(e);
@@ -137,30 +142,33 @@ public final class BridgeInflater extends LayoutInflater {
                 throw exception;
             }
         }
-        
+
         setupViewInContext(view, attrs);
-        
+
         return view;
     }
-    
+
     @Override
     public View inflate(int resource, ViewGroup root) {
         Context context = getContext();
+        while (context instanceof ContextThemeWrapper) {
+            context = ((ContextThemeWrapper) context).getBaseContext();
+        }
         if (context instanceof BridgeContext) {
             BridgeContext bridgeContext = (BridgeContext)context;
-            
-            IResourceValue value = null;
 
-            String[] layoutInfo = Bridge.resolveResourceValue(resource);
+            ResourceValue value = null;
+
+            Pair<ResourceType, String> layoutInfo = Bridge.resolveResourceId(resource);
             if (layoutInfo != null) {
-                value = bridgeContext.getFrameworkResource(BridgeConstants.RES_LAYOUT,
-                        layoutInfo[0]);
+                value = bridgeContext.getRenderResources().getFrameworkResource(
+                        ResourceType.LAYOUT, layoutInfo.getSecond());
             } else {
-                layoutInfo = mProjectCallback.resolveResourceValue(resource);
-                
+                layoutInfo = mProjectCallback.resolveResourceId(resource);
+
                 if (layoutInfo != null) {
-                    value = bridgeContext.getProjectResource(BridgeConstants.RES_LAYOUT,
-                            layoutInfo[0]);
+                    value = bridgeContext.getRenderResources().getProjectResource(
+                            ResourceType.LAYOUT, layoutInfo.getSecond());
                 }
             }
 
@@ -168,24 +176,24 @@ public final class BridgeInflater extends LayoutInflater {
                 File f = new File(value.getValue());
                 if (f.isFile()) {
                     try {
-                        KXmlParser parser = new KXmlParser();
-                        parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true);
-                        parser.setInput(new FileReader(f));
-                        
+                        XmlPullParser parser = ParserFactory.create(f);
+
                         BridgeXmlBlockParser bridgeParser = new BridgeXmlBlockParser(
                                 parser, bridgeContext, false);
-                        
+
                         return inflate(bridgeParser, root);
                     } catch (Exception e) {
-                        bridgeContext.getLogger().error(e);
-                        // return null below.
+                        Bridge.getLog().error(LayoutLog.TAG_RESOURCES_READ,
+                                "Failed to parse file " + f.getAbsolutePath(), e, null /*data*/);
+
+                        return null;
                     }
                 }
             }
         }
         return null;
     }
-    
+
     private View loadCustomView(String name, AttributeSet attrs) throws ClassNotFoundException,
             Exception{
         if (mProjectCallback != null) {
@@ -193,12 +201,12 @@ public final class BridgeInflater extends LayoutInflater {
             if (name.equals("view")) {
                 name = attrs.getAttributeValue(null, "class");
             }
-            
+
             mConstructorArgs[1] = attrs;
 
             Object customView = mProjectCallback.loadView(name, mConstructorSignature,
                     mConstructorArgs);
-            
+
             if (customView instanceof View) {
                 return (View)customView;
             }
@@ -206,23 +214,72 @@ public final class BridgeInflater extends LayoutInflater {
 
         return null;
     }
-    
-    
-    
+
     private void setupViewInContext(View view, AttributeSet attrs) {
-        if (getContext() instanceof BridgeContext) {
-            BridgeContext bc = (BridgeContext) getContext();
-            if (attrs instanceof BridgeXmlBlockParser) {
-                Object viewKey = ((BridgeXmlBlockParser) attrs).getViewKey();
-                if (viewKey != null) {
-                    bc.addViewKey(view, viewKey);
-                }
+        Context context = getContext();
+        while (context instanceof ContextThemeWrapper) {
+            context = ((ContextThemeWrapper) context).getBaseContext();
+        }
+        if (context instanceof BridgeContext) {
+            BridgeContext bc = (BridgeContext) context;
+            // get the view key
+            Object viewKey = getViewKeyFromParser(attrs, bc, mResourceReference, mIsInMerge);
+            if (viewKey != null) {
+                bc.addViewKey(view, viewKey);
             }
         }
+    }
+
+    public void setIsInMerge(boolean isInMerge) {
+        mIsInMerge = isInMerge;
+    }
+
+    public void setResourceReference(ResourceReference reference) {
+        mResourceReference = reference;
     }
 
     @Override
     public LayoutInflater cloneInContext(Context newContext) {
         return new BridgeInflater(this, newContext);
+    }
+
+    /*package*/ static Object getViewKeyFromParser(AttributeSet attrs, BridgeContext bc,
+            ResourceReference resourceReference, boolean isInMerge) {
+
+        if (!(attrs instanceof BridgeXmlBlockParser)) {
+            return null;
+        }
+        BridgeXmlBlockParser parser = ((BridgeXmlBlockParser) attrs);
+
+        // get the view key
+        Object viewKey = parser.getViewCookie();
+
+        if (viewKey == null) {
+            int currentDepth = parser.getDepth();
+
+            // test whether we are in an included file or in a adapter binding view.
+            BridgeXmlBlockParser previousParser = bc.getPreviousParser();
+            if (previousParser != null) {
+                // looks like we are inside an embedded layout.
+                // only apply the cookie of the calling node (<include>) if we are at the
+                // top level of the embedded layout. If there is a merge tag, then
+                // skip it and look for the 2nd level
+                int testDepth = isInMerge ? 2 : 1;
+                if (currentDepth == testDepth) {
+                    viewKey = previousParser.getViewCookie();
+                    // if we are in a merge, wrap the cookie in a MergeCookie.
+                    if (viewKey != null && isInMerge) {
+                        viewKey = new MergeCookie(viewKey);
+                    }
+                }
+            } else if (resourceReference != null && currentDepth == 1) {
+                // else if there's a resource reference, this means we are in an adapter
+                // binding case. Set the resource ref as the view cookie only for the top
+                // level view.
+                viewKey = resourceReference;
+            }
+        }
+
+        return viewKey;
     }
 }

@@ -16,24 +16,23 @@
 
 package android.text.style;
 
-import android.graphics.Paint;
 import android.graphics.MaskFilter;
 import android.text.TextPaint;
 
-public class MaskFilterSpan extends CharacterStyle {
+public class MaskFilterSpan extends CharacterStyle implements UpdateAppearance {
 
-	private MaskFilter mFilter;
+    private MaskFilter mFilter;
 
-	public MaskFilterSpan(MaskFilter filter) {
-		mFilter = filter;
-	}
+    public MaskFilterSpan(MaskFilter filter) {
+        mFilter = filter;
+    }
 
-	public MaskFilter getMaskFilter() {
-		return mFilter;
-	}
+    public MaskFilter getMaskFilter() {
+        return mFilter;
+    }
 
-	@Override
-	public void updateDrawState(TextPaint ds) {
-		ds.setMaskFilter(mFilter);
-	}
+    @Override
+    public void updateDrawState(TextPaint ds) {
+        ds.setMaskFilter(mFilter);
+    }
 }

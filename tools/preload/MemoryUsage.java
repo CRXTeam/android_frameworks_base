@@ -32,7 +32,10 @@ class MemoryUsage implements Serializable {
     private static final long serialVersionUID = 0;
 
     static final MemoryUsage NOT_AVAILABLE = new MemoryUsage();
+    
+    static int errorCount = 0;
 
+    // These values are in 1kB increments (not 4kB like you'd expect).
     final int nativeSharedPages;
     final int javaSharedPages;
     final int otherSharedPages;
@@ -120,15 +123,24 @@ class MemoryUsage implements Serializable {
         return allocSize - freedSize;
     }
 
+    int totalHeap() {
+        return javaHeapSize() + (int) nativeHeapSize;
+    }
+
     int javaPagesInK() {
-        return (javaSharedPages + javaPrivatePages) * 4;
+        return javaSharedPages + javaPrivatePages;
     }
 
     int nativePagesInK() {
-        return (nativeSharedPages + nativePrivatePages) * 4;
+        return nativeSharedPages + nativePrivatePages;
     }
     int otherPagesInK() {
-        return (otherSharedPages + otherPrivatePages) * 4;
+        return otherSharedPages + otherPrivatePages;
+    }
+
+    int totalPages() {
+        return javaSharedPages + javaPrivatePages + nativeSharedPages +
+                nativePrivatePages + otherSharedPages + otherPrivatePages;
     }
 
     /**
@@ -154,7 +166,7 @@ class MemoryUsage implements Serializable {
             + ":/system/framework/loadclass.jar";
 
     private static final String[] GET_DIRTY_PAGES = {
-        "adb", "-e", "shell", "dalvikvm", CLASS_PATH, "LoadClass" };
+        "adb", "shell", "dalvikvm", CLASS_PATH, "LoadClass" };
 
     /**
      * Measures memory usage for the given class.
@@ -236,7 +248,8 @@ class MemoryUsage implements Serializable {
                 String line = in.readLine();
                 if (line == null || !line.startsWith("DECAFBAD,")) {
                     System.err.println("Got bad response for " + className
-                            + ": " + line);
+                            + ": " + line + "; command was " + Arrays.toString(commands));
+                    errorCount += 1;
                     return NOT_AVAILABLE;
                 }
 
@@ -268,5 +281,18 @@ class MemoryUsage implements Serializable {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    /** Measures memory usage information and stores it in the model. */
+    public static void main(String[] args) throws IOException,
+            ClassNotFoundException {
+        Root root = Root.fromFile(args[0]);
+        root.baseline = baseline();
+        for (LoadedClass loadedClass : root.loadedClasses.values()) {
+            if (loadedClass.systemClass) {
+                loadedClass.measureMemoryUsage();
+            }
+        }
+        root.toFile(args[0]);
     }
 }

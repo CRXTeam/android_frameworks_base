@@ -5,9 +5,17 @@
 //
 #include "Main.h"
 #include "AaptAssets.h"
+#include "OutputSet.h"
+#include "ResourceTable.h"
+#include "ResourceFilter.h"
 
-#include <utils.h>
-#include <utils/ZipFile.h>
+#include <androidfw/misc.h>
+
+#include <utils/Log.h>
+#include <utils/threads.h>
+#include <utils/List.h>
+#include <utils/Errors.h>
+#include <utils/misc.h>
 
 #include <sys/types.h>
 #include <dirent.h>
@@ -22,19 +30,16 @@ static const char* kExcludeExtension = ".EXCLUDE";
 static const char* kNoCompressExt[] = {
     ".jpg", ".jpeg", ".png", ".gif",
     ".wav", ".mp2", ".mp3", ".ogg", ".aac",
-    ".mpg", ".mpeg", ".mid", ".midi", ".smf",
-    ".rtttl", ".imy", ".xmf", ".mp4", ".m4a",
+    ".mpg", ".mpeg", ".mid", ".midi", ".smf", ".jet",
+    ".rtttl", ".imy", ".xmf", ".mxmf", ".mp4", ".m4a",
     ".m4v", ".3gp", ".3gpp", ".3g2", ".3gpp2",
     ".amr", ".awb", ".wma", ".wmv"
 };
 
 /* fwd decls, so I can write this downward */
-ssize_t processAssets(Bundle* bundle, ZipFile* zip, const sp<AaptAssets>& assets);
-ssize_t processAssets(Bundle* bundle, ZipFile* zip,
-                        const sp<AaptDir>& dir, const AaptGroupEntry& ge);
-bool processFile(Bundle* bundle, ZipFile* zip,
-                        const sp<AaptGroup>& group, const sp<AaptFile>& file);
-bool okayToCompress(const String8& pathName);
+ssize_t processAssets(Bundle* bundle, ZipFile* zip, const sp<const OutputSet>& outputSet);
+bool processFile(Bundle* bundle, ZipFile* zip, String8 storageName, const sp<const AaptFile>& file);
+bool okayToCompress(Bundle* bundle, const String8& pathName);
 ssize_t processJarFiles(Bundle* bundle, ZipFile* zip);
 
 /*
@@ -44,9 +49,13 @@ ssize_t processJarFiles(Bundle* bundle, ZipFile* zip);
  * On success, "bundle->numPackages" will be the number of Zip packages
  * we created.
  */
-status_t writeAPK(Bundle* bundle, const sp<AaptAssets>& assets,
-                       const String8& outputFile)
+status_t writeAPK(Bundle* bundle, const String8& outputFile, const sp<OutputSet>& outputSet)
 {
+    #if BENCHMARK
+    fprintf(stdout, "BENCHMARK: Starting APK Bundling \n");
+    long startAPKTime = clock();
+    #endif /* BENCHMARK */
+
     status_t result = NO_ERROR;
     ZipFile* zip = NULL;
     int count;
@@ -100,7 +109,7 @@ status_t writeAPK(Bundle* bundle, const sp<AaptAssets>& assets,
         printf("Writing all files...\n");
     }
 
-    count = processAssets(bundle, zip, assets);
+    count = processAssets(bundle, zip, outputSet);
     if (count < 0) {
         fprintf(stderr, "ERROR: unable to process assets while packaging '%s'\n",
                 outputFile.string());
@@ -165,8 +174,23 @@ status_t writeAPK(Bundle* bundle, const sp<AaptAssets>& assets,
         delete zip;        // close the file so we can remove it in Win32
         zip = NULL;
         if (unlink(outputFile.string()) != 0) {
-            fprintf(stderr, "WARNING: could not unlink '%s'\n", outputFile.string());
+            fprintf(stderr, "warning: could not unlink '%s'\n", outputFile.string());
         }
+    }
+
+    // If we've been asked to generate a dependency file for the .ap_ package,
+    // do so here
+    if (bundle->getGenDependencies()) {
+        // The dependency file gets output to the same directory
+        // as the specified output file with an additional .d extension.
+        // e.g. bin/resources.ap_.d
+        String8 dependencyFile = outputFile;
+        dependencyFile.append(".d");
+
+        FILE* fp = fopen(dependencyFile.string(), "a");
+        // Add this file to the dependency file
+        fprintf(fp, "%s \\\n", outputFile.string());
+        fclose(fp);
     }
 
     assert(result == NO_ERROR);
@@ -178,61 +202,37 @@ bail:
             printf("Removing %s due to earlier failures\n", outputFile.string());
         }
         if (unlink(outputFile.string()) != 0) {
-            fprintf(stderr, "WARNING: could not unlink '%s'\n", outputFile.string());
+            fprintf(stderr, "warning: could not unlink '%s'\n", outputFile.string());
         }
     }
 
     if (result == NO_ERROR && bundle->getVerbose())
         printf("Done!\n");
+
+    #if BENCHMARK
+    fprintf(stdout, "BENCHMARK: End APK Bundling. Time Elapsed: %f ms \n",(clock() - startAPKTime)/1000.0);
+    #endif /* BENCHMARK */
     return result;
 }
 
-ssize_t processAssets(Bundle* bundle, ZipFile* zip,
-                      const sp<AaptAssets>& assets)
+ssize_t processAssets(Bundle* bundle, ZipFile* zip, const sp<const OutputSet>& outputSet)
 {
     ssize_t count = 0;
-
-    const size_t N = assets->getGroupEntries().size();
-    for (size_t i=0; i<N; i++) {
-        const AaptGroupEntry& ge = assets->getGroupEntries()[i];
-        ssize_t res = processAssets(bundle, zip, assets, ge);
-        if (res < 0) {
-            return res;
-        }
-        count += res;
-    }
-
-    return count;
-}
-
-ssize_t processAssets(Bundle* bundle, ZipFile* zip,
-                      const sp<AaptDir>& dir, const AaptGroupEntry& ge)
-{
-    ssize_t count = 0;
-
-    const size_t ND = dir->getDirs().size();
-    size_t i;
-    for (i=0; i<ND; i++) {
-        ssize_t res = processAssets(bundle, zip, dir->getDirs().valueAt(i), ge);
-        if (res < 0) {
-            return res;
-        }
-        count += res;
-    }
-
-    const size_t NF = dir->getFiles().size();
-    for (i=0; i<NF; i++) {
-        sp<AaptGroup> gp = dir->getFiles().valueAt(i);
-        ssize_t fi = gp->getFiles().indexOfKey(ge);
-        if (fi >= 0) {
-            sp<AaptFile> fl = gp->getFiles().valueAt(fi);
-            if (!processFile(bundle, zip, gp, fl)) {
+    const std::set<OutputEntry>& entries = outputSet->getEntries();
+    std::set<OutputEntry>::const_iterator iter = entries.begin();
+    for (; iter != entries.end(); iter++) {
+        const OutputEntry& entry = *iter;
+        if (entry.getFile() == NULL) {
+            fprintf(stderr, "warning: null file being processed.\n");
+        } else {
+            String8 storagePath(entry.getPath());
+            storagePath.convertToResPath();
+            if (!processFile(bundle, zip, storagePath, entry.getFile())) {
                 return UNKNOWN_ERROR;
             }
             count++;
         }
     }
-
     return count;
 }
 
@@ -243,12 +243,10 @@ ssize_t processAssets(Bundle* bundle, ZipFile* zip,
  * delete the existing entry before adding the new one.
  */
 bool processFile(Bundle* bundle, ZipFile* zip,
-                 const sp<AaptGroup>& group, const sp<AaptFile>& file)
+                 String8 storageName, const sp<const AaptFile>& file)
 {
     const bool hasData = file->hasData();
 
-    String8 storageName(group->getPath());
-    storageName.convertToResPath();
     ZipEntry* entry;
     bool fromGzip = false;
     status_t result;
@@ -271,7 +269,7 @@ bool processFile(Bundle* bundle, ZipFile* zip,
     if (fileNameLen > excludeExtensionLen
             && (0 == strcmp(storageName.string() + (fileNameLen - excludeExtensionLen),
                             kExcludeExtension))) {
-        fprintf(stderr, "WARNING: '%s' not added to Zip\n", storageName.string());
+        fprintf(stderr, "warning: '%s' not added to Zip\n", storageName.string());
         return true;
     }
 
@@ -327,7 +325,7 @@ bool processFile(Bundle* bundle, ZipFile* zip,
     } else if (!hasData) {
         /* don't compress certain files, e.g. PNGs */
         int compressionMethod = bundle->getCompressionMethod();
-        if (!okayToCompress(storageName)) {
+        if (!okayToCompress(bundle, storageName)) {
             compressionMethod = ZipEntry::kCompressStored;
         }
         result = zip->add(file->getSourceFile().string(), storageName.string(), compressionMethod,
@@ -352,8 +350,8 @@ bool processFile(Bundle* bundle, ZipFile* zip,
             fprintf(stderr, "      Unable to add '%s': file already in archive (try '-u'?)\n",
                     file->getPrintableSource().string());
         } else {
-            fprintf(stderr, "      Unable to add '%s': Zip add failed\n", 
-                    file->getPrintableSource().string());
+            fprintf(stderr, "      Unable to add '%s': Zip add failed (%d)\n",
+                    file->getPrintableSource().string(), result);
         }
         return false;
     }
@@ -365,7 +363,7 @@ bool processFile(Bundle* bundle, ZipFile* zip,
  * Determine whether or not we want to try to compress this file based
  * on the file extension.
  */
-bool okayToCompress(const String8& pathName)
+bool okayToCompress(Bundle* bundle, const String8& pathName)
 {
     String8 ext = pathName.getPathExtension();
     int i;
@@ -376,6 +374,19 @@ bool okayToCompress(const String8& pathName)
     for (i = 0; i < NELEM(kNoCompressExt); i++) {
         if (strcasecmp(ext.string(), kNoCompressExt[i]) == 0)
             return false;
+    }
+
+    const android::Vector<const char*>& others(bundle->getNoCompressExtensions());
+    for (i = 0; i < (int)others.size(); i++) {
+        const char* str = others[i];
+        int pos = pathName.length() - strlen(str);
+        if (pos < 0) {
+            continue;
+        }
+        const char* path = pathName.string();
+        if (strcasecmp(path + pos, str) == 0) {
+            return false;
+        }
     }
 
     return true;
@@ -416,7 +427,7 @@ ssize_t processJarFile(ZipFile* jar, ZipFile* out)
 
 ssize_t processJarFiles(Bundle* bundle, ZipFile* zip)
 {
-    ssize_t err;
+    status_t err;
     ssize_t count = 0;
     const android::Vector<const char*>& jars = bundle->getJarFiles();
 
@@ -425,7 +436,7 @@ ssize_t processJarFiles(Bundle* bundle, ZipFile* zip)
         ZipFile jar;
         err = jar.open(jars[i], ZipFile::kOpenReadOnly);
         if (err != 0) {
-            fprintf(stderr, "ERROR: unable to open '%s' as a zip file: %zd\n",
+            fprintf(stderr, "ERROR: unable to open '%s' as a zip file: %d\n",
                 jars[i], err);
             return err;
         }

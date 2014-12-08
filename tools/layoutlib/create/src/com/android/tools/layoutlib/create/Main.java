@@ -18,11 +18,43 @@ package com.android.tools.layoutlib.create;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 
-
+/**
+ * Entry point for the layoutlib_create tool.
+ * <p/>
+ * The tool does not currently rely on any external configuration file.
+ * Instead the configuration is mostly done via the {@link CreateInfo} class.
+ * <p/>
+ * For a complete description of the tool and its implementation, please refer to
+ * the "README.txt" file at the root of this project.
+ * <p/>
+ * For a quick test, invoke this as follows:
+ * <pre>
+ * $ make layoutlib
+ * </pre>
+ * which does:
+ * <pre>
+ * $ make layoutlib_create &lt;bunch of framework jars&gt;
+ * $ java -jar out/host/linux-x86/framework/layoutlib_create.jar \
+ *        out/host/common/obj/JAVA_LIBRARIES/temp_layoutlib_intermediates/javalib.jar \
+ *        out/target/common/obj/JAVA_LIBRARIES/core_intermediates/classes.jar \
+ *        out/target/common/obj/JAVA_LIBRARIES/framework_intermediates/classes.jar
+ * </pre>
+ */
 public class Main {
+
+    public static class Options {
+        public boolean listAllDeps = false;
+        public boolean listOnlyMissingDeps = false;
+    }
+
+    public static final Options sOptions = new Options();
 
     public static void main(String[] args) {
 
@@ -33,53 +65,37 @@ public class Main {
 
         if (!processArgs(log, args, osJarPath, osDestJar)) {
             log.error("Usage: layoutlib_create [-v] output.jar input.jar ...");
+            log.error("Usage: layoutlib_create [-v] [--list-deps|--missing-deps] input.jar ...");
             System.exit(1);
         }
 
-        log.info("Output: %1$s", osDestJar[0]);
+        if (sOptions.listAllDeps || sOptions.listOnlyMissingDeps) {
+            System.exit(listDeps(osJarPath, log));
+
+        } else {
+            System.exit(createLayoutLib(osDestJar[0], osJarPath, log));
+        }
+
+
+        System.exit(1);
+    }
+
+    private static int createLayoutLib(String osDestJar, ArrayList<String> osJarPath, Log log) {
+        log.info("Output: %1$s", osDestJar);
         for (String path : osJarPath) {
             log.info("Input :      %1$s", path);
         }
-        
+
         try {
-            AsmGenerator agen = new AsmGenerator(log, osDestJar[0],
-                    new Class<?>[] {  // classes to inject in the final JAR
-                        OverrideMethod.class,
-                        OverrideMethod.MethodListener.class
-                    },
-                    new String[] {  // methods to force override
-                        "android.content.res.Resources$Theme#obtainStyledAttributes",
-                    },
-                    new String[] {  // classes to rename (so that we can replace them in layoutlib)
-                        // original-platform-class-name ======> renamed-class-name
-                        "android.graphics.Matrix",              "android.graphics._Original_Matrix",
-                        "android.graphics.Paint",               "android.graphics._Original_Paint",
-                        "android.graphics.Typeface",            "android.graphics._Original_Typeface",
-                        "android.graphics.Bitmap",              "android.graphics._Original_Bitmap",
-                        "android.graphics.Path",                "android.graphics._Original_Path",
-                        "android.graphics.PorterDuffXfermode",  "android.graphics._Original_PorterDuffXfermode",
-                        "android.graphics.Shader",              "android.graphics._Original_Shader",
-                        "android.graphics.LinearGradient",      "android.graphics._Original_LinearGradient",
-                        "android.graphics.BitmapShader",        "android.graphics._Original_BitmapShader",
-                        "android.graphics.ComposeShader",       "android.graphics._Original_ComposeShader",
-                        "android.graphics.RadialGradient",      "android.graphics._Original_RadialGradient",
-                        "android.graphics.SweepGradient",       "android.graphics._Original_SweepGradient",
-                        "android.util.FloatMath",               "android.util._Original_FloatMath",
-                        "android.view.SurfaceView",             "android.view._Original_SurfaceView",
-                    },
-                    new String[] { // methods deleted from their return type.
-                    "android.graphics.Paint", // class to delete method from
-                        "android.graphics.Paint$Align", // list of type identifying methods to delete
-                        "android.graphics.Paint$Style",
-                        "android.graphics.Paint$Join",
-                        "android.graphics.Paint$Cap",
-                        "android.graphics.Paint$FontMetrics",
-                        "android.graphics.Paint$FontMetricsInt",
-                        null }
-            );
+            CreateInfo info = new CreateInfo();
+            Set<String> excludeClasses = info.getExcludedClasses();
+            AsmGenerator agen = new AsmGenerator(log, osDestJar, info);
 
             AsmAnalyzer aa = new AsmAnalyzer(log, osJarPath, agen,
-                    new String[] { "android.view.View" },   // derived from
+                    new String[] {                          // derived from
+                        "android.view.View",
+                        "android.app.Fragment"
+                    },
                     new String[] {                          // include classes
                         "android.*", // for android.R
                         "android.util.*",
@@ -96,10 +112,19 @@ public class Main {
                         "com.android.internal.R**",
                         "android.pim.*", // for datepicker
                         "android.os.*",  // for android.os.Handler
-                        });
+                        "android.database.ContentObserver", // for Digital clock
+                        "com.android.i18n.phonenumbers.*",  // for TextView with autolink attribute
+                        "android.app.DatePickerDialog",     // b.android.com/28318
+                        "android.app.TimePickerDialog",     // b.android.com/61515
+                        "com.android.internal.view.menu.ActionMenu",
+                    },
+                    excludeClasses,
+                    new String[] {
+                        "com/android/i18n/phonenumbers/data/*",
+                    });
             aa.analyze();
             agen.generate();
-            
+
             // Throw an error if any class failed to get renamed by the generator
             //
             // IMPORTANT: if you're building the platform and you get this error message,
@@ -119,17 +144,33 @@ public class Main {
                 for (String path : osJarPath) {
                     log.info("- Input JAR : %1$s", path);
                 }
-                System.exit(1);
+                return 1;
             }
-            
-            System.exit(0);
+
+            return 0;
         } catch (IOException e) {
             log.exception(e, "Failed to load jar");
         } catch (LogAbortException e) {
             e.error(log);
         }
 
-        System.exit(1);
+        return 1;
+    }
+
+    private static int listDeps(ArrayList<String> osJarPath, Log log) {
+        DependencyFinder df = new DependencyFinder(log);
+        try {
+            List<Map<String, Set<String>>> result = df.findDeps(osJarPath);
+            if (sOptions.listAllDeps) {
+                df.printAllDeps(result);
+            } else if (sOptions.listOnlyMissingDeps) {
+                df.printMissingDeps(result);
+            }
+        } catch (IOException e) {
+            log.exception(e, "Failed to load jar");
+        }
+
+        return 0;
     }
 
     /**
@@ -141,32 +182,37 @@ public class Main {
      */
     private static boolean processArgs(Log log, String[] args,
             ArrayList<String> osJarPath, String[] osDestJar) {
-        for (int i = 0; i < args.length; i++) {
-            String s = args[i];
+        boolean needs_dest = true;
+        for (String s : args) {
             if (s.equals("-v")) {
                 log.setVerbose(true);
+            } else if (s.equals("--list-deps")) {
+                sOptions.listAllDeps = true;
+                needs_dest = false;
+            } else if (s.equals("--missing-deps")) {
+                sOptions.listOnlyMissingDeps = true;
+                needs_dest = false;
             } else if (!s.startsWith("-")) {
-                if (osDestJar[0] == null) {
+                if (needs_dest && osDestJar[0] == null) {
                     osDestJar[0] = s;
                 } else {
                     osJarPath.add(s);
                 }
             } else {
-                log.error("Unknow argument: %s", s);
+                log.error("Unknown argument: %s", s);
                 return false;
             }
         }
-        
+
         if (osJarPath.isEmpty()) {
             log.error("Missing parameter: path to input jar");
             return false;
         }
-        if (osDestJar[0] == null) {
+        if (needs_dest && osDestJar[0] == null) {
             log.error("Missing parameter: path to output jar");
             return false;
         }
 
         return true;
     }
-
 }

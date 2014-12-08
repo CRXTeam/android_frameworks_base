@@ -26,21 +26,26 @@ import android.text.*;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.View;
+import android.text.InputType;
 
 import java.lang.ref.WeakReference;
 
 /**
  * This is the key listener for typing normal text.  It delegates to
  * other key listeners appropriate to the current keyboard and language.
+ * <p></p>
+ * As for all implementations of {@link KeyListener}, this class is only concerned
+ * with hardware keyboards.  Software input methods have no obligation to trigger
+ * the methods in this class.
  */
 public class TextKeyListener extends BaseKeyListener implements SpanWatcher {
     private static TextKeyListener[] sInstance =
         new TextKeyListener[Capitalize.values().length * 2];
 
-    /* package */ static final Object ACTIVE = new Object();
-    /* package */ static final Object CAPPED = new Object();
-    /* package */ static final Object INHIBIT_REPLACEMENT = new Object();
-    /* package */ static final Object LAST_TYPED = new Object();
+    /* package */ static final Object ACTIVE = new NoCopySpan.Concrete();
+    /* package */ static final Object CAPPED = new NoCopySpan.Concrete();
+    /* package */ static final Object INHIBIT_REPLACEMENT = new NoCopySpan.Concrete();
+    /* package */ static final Object LAST_TYPED = new NoCopySpan.Concrete();
 
     private Capitalize mAutoCap;
     private boolean mAutoText;
@@ -114,76 +119,15 @@ public class TextKeyListener extends BaseKeyListener implements SpanWatcher {
             return true;
         }
 
-        // Back over allowed opening punctuation.
-
-        for (i = off; i > 0; i--) {
-            c = cs.charAt(i - 1);
-
-            if (c != '"' && c != '(' && c != '[' && c != '\'') {
-                break;
-            }
-        }
-
-        // Start of paragraph, with optional whitespace.
-
-        int j = i;
-        while (j > 0 && ((c = cs.charAt(j - 1)) == ' ' || c == '\t')) {
-            j--;
-        }
-        if (j == 0 || cs.charAt(j - 1) == '\n') {
-            return true;
-        }
-
-        // Or start of word if we are that style.
-
-        if (cap == Capitalize.WORDS) {
-            return i != j;
-        }
-
-        // There must be a space if not the start of paragraph.
-
-        if (i == j) {
-            return false;
-        }
-
-        // Back over allowed closing punctuation.
-
-        for (; j > 0; j--) {
-            c = cs.charAt(j - 1);
-
-            if (c != '"' && c != ')' && c != ']' && c != '\'') {
-                break;
-            }
-        }
-
-        if (j > 0) {
-            c = cs.charAt(j - 1);
-
-            if (c == '.' || c == '?' || c == '!') {
-                // Do not capitalize if the word ends with a period but
-                // also contains a period, in which case it is an abbreviation.
-
-                if (c == '.') {
-                    for (int k = j - 2; k >= 0; k--) {
-                        c = cs.charAt(k);
-
-                        if (c == '.') {
-                            return false;
-                        }
-
-                        if (!Character.isLetter(c)) {
-                            break;
-                        }
-                    }
-                }
-
-                return true;
-            }
-        }
-
-        return false;
+        return TextUtils.getCapsMode(cs, off, cap == Capitalize.WORDS
+                ? TextUtils.CAP_MODE_WORDS : TextUtils.CAP_MODE_SENTENCES)
+                != 0;
     }
 
+    public int getInputType() {
+        return makeTextContentType(mAutoCap, mAutoText);
+    }
+    
     @Override
     public boolean onKeyDown(View view, Editable content,
                              int keyCode, KeyEvent event) {
@@ -198,6 +142,13 @@ public class TextKeyListener extends BaseKeyListener implements SpanWatcher {
         KeyListener im = getKeyListener(event);
 
         return im.onKeyUp(view, content, keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyOther(View view, Editable content, KeyEvent event) {
+        KeyListener im = getKeyListener(event);
+
+        return im.onKeyOther(view, content, event);
     }
 
     /**
@@ -233,13 +184,21 @@ public class TextKeyListener extends BaseKeyListener implements SpanWatcher {
     }
 
     private KeyListener getKeyListener(KeyEvent event) {
-        KeyCharacterMap kmap = KeyCharacterMap.load(event.getKeyboardDevice());
+        KeyCharacterMap kmap = event.getKeyCharacterMap();
         int kind = kmap.getKeyboardType();
 
         if (kind == KeyCharacterMap.ALPHA) {
             return QwertyKeyListener.getInstance(mAutoText, mAutoCap);
         } else if (kind == KeyCharacterMap.NUMERIC) {
             return MultiTapKeyListener.getInstance(mAutoText, mAutoCap);
+        } else if (kind == KeyCharacterMap.FULL
+                || kind == KeyCharacterMap.SPECIAL_FUNCTION) {
+            // We consider special function keyboards full keyboards as a workaround for
+            // devices that do not have built-in keyboards.  Applications may try to inject
+            // key events using the built-in keyboard device id which may be configured as
+            // a special function keyboard using a default key map.  Ideally, as of Honeycomb,
+            // these applications should be modified to use KeyCharacterMap.VIRTUAL_KEYBOARD.
+            return QwertyKeyListener.getInstanceForFullKeyboard();
         }
 
         return NullKeyListener.getInstance();
@@ -251,6 +210,10 @@ public class TextKeyListener extends BaseKeyListener implements SpanWatcher {
 
     private static class NullKeyListener implements KeyListener
     {
+        public int getInputType() {
+            return InputType.TYPE_NULL;
+        }
+        
         public boolean onKeyDown(View view, Editable content,
                                  int keyCode, KeyEvent event) {
             return false;
@@ -261,6 +224,13 @@ public class TextKeyListener extends BaseKeyListener implements SpanWatcher {
             return false;
         }
 
+        public boolean onKeyOther(View view, Editable content, KeyEvent event) {
+            return false;
+        }
+
+        public void clearMetaKeyState(View view, Editable content, int states) {
+        }
+        
         public static NullKeyListener getInstance() {
             if (sInstance != null)
                 return sInstance;
@@ -288,8 +258,10 @@ public class TextKeyListener extends BaseKeyListener implements SpanWatcher {
     private void initPrefs(Context context) {
         final ContentResolver contentResolver = context.getContentResolver();
         mResolver = new WeakReference<ContentResolver>(contentResolver);
-        mObserver = new SettingsObserver();
-        contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, mObserver);
+        if (mObserver == null) {
+            mObserver = new SettingsObserver();
+            contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, mObserver);
+        }
 
         updatePrefs(contentResolver);
         mPrefsInited = true;

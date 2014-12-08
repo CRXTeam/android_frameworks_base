@@ -16,31 +16,76 @@
 
 package android.app;
 
-import android.content.Context;
+import android.content.Intent;
 import android.os.Binder;
 import android.os.RemoteException;
 import android.os.IBinder;
-import android.os.ServiceManager;
 import android.view.IWindowManager;
 import android.view.IOnKeyguardExitResult;
+import android.view.WindowManagerGlobal;
 
 /**
- * Class that can be used to lock and unlock the keyboard. Get an instance of this 
+ * Class that can be used to lock and unlock the keyboard. Get an instance of this
  * class by calling {@link android.content.Context#getSystemService(java.lang.String)}
  * with argument {@link android.content.Context#KEYGUARD_SERVICE}. The
- * Actual class to control the keyboard locking is
+ * actual class to control the keyboard locking is
  * {@link android.app.KeyguardManager.KeyguardLock}.
  */
 public class KeyguardManager {
     private IWindowManager mWM;
 
     /**
+     * Intent used to prompt user for device credentials.
+     * @hide
+     */
+    public static final String ACTION_CONFIRM_DEVICE_CREDENTIAL =
+            "android.app.action.CONFIRM_DEVICE_CREDENTIAL";
+
+    /**
+     * A CharSequence dialog title to show to the user when used with a
+     * {@link #ACTION_CONFIRM_DEVICE_CREDENTIAL}.
+     * @hide
+     */
+    public static final String EXTRA_TITLE = "android.app.extra.TITLE";
+
+    /**
+     * A CharSequence description to show to the user when used with
+     * {@link #ACTION_CONFIRM_DEVICE_CREDENTIAL}.
+     * @hide
+     */
+    public static final String EXTRA_DESCRIPTION = "android.app.extra.DESCRIPTION";
+
+    /**
+     * Get an intent to prompt the user to confirm credentials (pin, pattern or password)
+     * for the current user of the device. The caller is expected to launch this activity using
+     * {@link android.app.Activity#startActivityForResult(Intent, int)} and check for
+     * {@link android.app.Activity#RESULT_OK} if the user successfully completes the challenge.
+     *
+     * @return the intent for launching the activity or null if no password is required.
+     **/
+    public Intent createConfirmDeviceCredentialIntent(CharSequence title, CharSequence description) {
+        if (!isKeyguardSecure()) return null;
+        Intent intent = new Intent(ACTION_CONFIRM_DEVICE_CREDENTIAL);
+        intent.putExtra(EXTRA_TITLE, title);
+        intent.putExtra(EXTRA_DESCRIPTION, description);
+        // For security reasons, only allow this to come from system settings.
+        intent.setPackage("com.android.settings");
+        return intent;
+    }
+
+    /**
+     * @deprecated Use {@link android.view.WindowManager.LayoutParams#FLAG_DISMISS_KEYGUARD}
+     * and/or {@link android.view.WindowManager.LayoutParams#FLAG_SHOW_WHEN_LOCKED}
+     * instead; this allows you to seamlessly hide the keyguard as your application
+     * moves in and out of the foreground and does not require that any special
+     * permissions be requested.
+     *
      * Handle returned by {@link KeyguardManager#newKeyguardLock} that allows
      * you to disable / reenable the keyguard.
      */
     public class KeyguardLock {
-        private IBinder mToken = new Binder();
-        private String mTag;
+        private final IBinder mToken = new Binder();
+        private final String mTag;
 
         KeyguardLock(String tag) {
             mTag = tag;
@@ -53,6 +98,12 @@ public class KeyguardManager {
          *
          * A good place to call this is from {@link android.app.Activity#onResume()}
          *
+         * Note: This call has no effect while any {@link android.app.admin.DevicePolicyManager}
+         * is enabled that requires a password.
+         *
+         * <p>This method requires the caller to hold the permission
+         * {@link android.Manifest.permission#DISABLE_KEYGUARD}.
+         *
          * @see #reenableKeyguard()
          */
         public void disableKeyguard() {
@@ -64,9 +115,15 @@ public class KeyguardManager {
 
         /**
          * Reenable the keyguard.  The keyguard will reappear if the previous
-         * call to {@link #disableKeyguard()} caused it it to be hidden.
+         * call to {@link #disableKeyguard()} caused it to be hidden.
          *
-         * A good place to call this is from {@link android.app.Activity#onPause()} 
+         * A good place to call this is from {@link android.app.Activity#onPause()}
+         *
+         * Note: This call has no effect while any {@link android.app.admin.DevicePolicyManager}
+         * is enabled that requires a password.
+         *
+         * <p>This method requires the caller to hold the permission
+         * {@link android.Manifest.permission#DISABLE_KEYGUARD}.
          *
          * @see #disableKeyguard()
          */
@@ -93,12 +150,18 @@ public class KeyguardManager {
 
 
     KeyguardManager() {
-        mWM = IWindowManager.Stub.asInterface(ServiceManager.getService(Context.WINDOW_SERVICE));
+        mWM = WindowManagerGlobal.getWindowManagerService();
     }
 
     /**
+     * @deprecated Use {@link android.view.WindowManager.LayoutParams#FLAG_DISMISS_KEYGUARD}
+     * and/or {@link android.view.WindowManager.LayoutParams#FLAG_SHOW_WHEN_LOCKED}
+     * instead; this allows you to seamlessly hide the keyguard as your application
+     * moves in and out of the foreground and does not require that any special
+     * permissions be requested.
+     *
      * Enables you to lock or unlock the keyboard. Get an instance of this class by
-     * calling {@link android.content.Context#getSystemService(java.lang.String) Context.getSystemService()}. 
+     * calling {@link android.content.Context#getSystemService(java.lang.String) Context.getSystemService()}.
      * This class is wrapped by {@link android.app.KeyguardManager KeyguardManager}.
      * @param tag A tag that informally identifies who you are (for debugging who
      *   is disabling he keyguard).
@@ -106,8 +169,35 @@ public class KeyguardManager {
      * @return A {@link KeyguardLock} handle to use to disable and reenable the
      *   keyguard.
      */
+    @Deprecated
     public KeyguardLock newKeyguardLock(String tag) {
         return new KeyguardLock(tag);
+    }
+
+    /**
+     * Return whether the keyguard is currently locked.
+     *
+     * @return true if keyguard is locked.
+     */
+    public boolean isKeyguardLocked() {
+        try {
+            return mWM.isKeyguardLocked();
+        } catch (RemoteException ex) {
+            return false;
+        }
+    }
+
+    /**
+     * Return whether the keyguard requires a password to unlock.
+     *
+     * @return true if keyguard is secure.
+     */
+    public boolean isKeyguardSecure() {
+        try {
+            return mWM.isKeyguardSecure();
+        } catch (RemoteException ex) {
+            return false;
+        }
     }
 
     /**
@@ -128,6 +218,12 @@ public class KeyguardManager {
     }
 
     /**
+     * @deprecated Use {@link android.view.WindowManager.LayoutParams#FLAG_DISMISS_KEYGUARD}
+     * and/or {@link android.view.WindowManager.LayoutParams#FLAG_SHOW_WHEN_LOCKED}
+     * instead; this allows you to seamlessly hide the keyguard as your application
+     * moves in and out of the foreground and does not require that any special
+     * permissions be requested.
+     *
      * Exit the keyguard securely.  The use case for this api is that, after
      * disabling the keyguard, your app, which was granted permission to
      * disable the keyguard and show a limited amount of information deemed
@@ -137,15 +233,21 @@ public class KeyguardManager {
      * This will, if the keyguard is secure, bring up the unlock screen of
      * the keyguard.
      *
+     * <p>This method requires the caller to hold the permission
+     * {@link android.Manifest.permission#DISABLE_KEYGUARD}.
+     *
      * @param callback Let's you know whether the operation was succesful and
      *   it is safe to launch anything that would normally be considered safe
      *   once the user has gotten past the keyguard.
      */
+    @Deprecated
     public void exitKeyguardSecurely(final OnKeyguardExitResult callback) {
         try {
             mWM.exitKeyguardSecurely(new IOnKeyguardExitResult.Stub() {
                 public void onKeyguardExitResult(boolean success) throws RemoteException {
-                    callback.onKeyguardExitResult(success);
+                    if (callback != null) {
+                        callback.onKeyguardExitResult(success);
+                    }
                 }
             });
         } catch (RemoteException e) {

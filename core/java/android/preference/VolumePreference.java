@@ -16,146 +16,206 @@
 
 package android.preference;
 
-import android.content.ContentResolver;
+import android.app.Dialog;
 import android.content.Context;
 import android.content.res.TypedArray;
-import android.database.ContentObserver;
-import android.media.Ringtone;
-import android.media.RingtoneManager;
-import android.media.AudioManager;
-import android.os.Handler;
-import android.preference.PreferenceManager;
-import android.provider.Settings;
-import android.provider.Settings.System;
+import android.os.Parcel;
+import android.os.Parcelable;
 import android.util.AttributeSet;
+import android.view.KeyEvent;
 import android.view.View;
 import android.widget.SeekBar;
-import android.widget.SeekBar.OnSeekBarChangeListener;
 
 /**
  * @hide
  */
-public class VolumePreference extends SeekBarPreference implements OnSeekBarChangeListener,
-        Runnable, PreferenceManager.OnActivityStopListener {
+public class VolumePreference extends SeekBarDialogPreference implements
+        PreferenceManager.OnActivityStopListener, View.OnKeyListener, SeekBarVolumizer.Callback {
 
-    private static final String TAG = "VolumePreference";
-    
-    private ContentResolver mContentResolver;
-    private Handler mHandler = new Handler();
+    static final String TAG = "VolumePreference";
 
-    private AudioManager mVolume;
     private int mStreamType;
-    private int mOriginalStreamVolume; 
-    private Ringtone mRingtone;
 
-    private int mLastProgress;
-    private SeekBar mSeekBar;
-    
-    private ContentObserver mVolumeObserver = new ContentObserver(mHandler) {
-        @Override
-        public void onChange(boolean selfChange) {
-            super.onChange(selfChange);
+    /** May be null if the dialog isn't visible. */
+    private SeekBarVolumizer mSeekBarVolumizer;
 
-            if (mSeekBar != null) {
-                mSeekBar.setProgress(System.getInt(mContentResolver,
-                        System.VOLUME_SETTINGS[mStreamType], 0));
-            }
-        }
-    };
-    
-    public VolumePreference(Context context, AttributeSet attrs) {
-        super(context, attrs);
-        
-        TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.VolumePreference, 0, 0);
+    public VolumePreference(
+            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.VolumePreference, defStyleAttr, defStyleRes);
         mStreamType = a.getInt(android.R.styleable.VolumePreference_streamType, 0);
-        a.recycle();        
-    
-        mContentResolver = context.getContentResolver();
-        
-        mVolume = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+        a.recycle();
     }
-    
+
+    public VolumePreference(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public VolumePreference(Context context, AttributeSet attrs) {
+        this(context, attrs, com.android.internal.R.attr.dialogPreferenceStyle);
+    }
+
+    public void setStreamType(int streamType) {
+        mStreamType = streamType;
+    }
+
     @Override
     protected void onBindDialogView(View view) {
         super.onBindDialogView(view);
-    
-        final SeekBar seekBar = mSeekBar = (SeekBar) view.findViewById(com.android.internal.R.id.seekbar);
-        seekBar.setMax(mVolume.getStreamMaxVolume(mStreamType));
-        mOriginalStreamVolume = mVolume.getStreamVolume(mStreamType);
-        seekBar.setProgress(mOriginalStreamVolume);
-        seekBar.setOnSeekBarChangeListener(this);
-        
-        mContentResolver.registerContentObserver(System.getUriFor(System.VOLUME_SETTINGS[mStreamType]), false, mVolumeObserver);
+
+        final SeekBar seekBar = (SeekBar) view.findViewById(com.android.internal.R.id.seekbar);
+        mSeekBarVolumizer = new SeekBarVolumizer(getContext(), mStreamType, null, this);
+        mSeekBarVolumizer.setSeekBar(seekBar);
 
         getPreferenceManager().registerOnActivityStopListener(this);
-        mRingtone = RingtoneManager.getRingtone(getContext(), Settings.System.DEFAULT_RINGTONE_URI);
+
+        // grab focus and key events so that pressing the volume buttons in the
+        // dialog doesn't also show the normal volume adjust toast.
+        view.setOnKeyListener(this);
+        view.setFocusableInTouchMode(true);
+        view.requestFocus();
+    }
+
+    public boolean onKey(View v, int keyCode, KeyEvent event) {
+        // If key arrives immediately after the activity has been cleaned up.
+        if (mSeekBarVolumizer == null) return true;
+        boolean isdown = (event.getAction() == KeyEvent.ACTION_DOWN);
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_VOLUME_DOWN:
+                if (isdown) {
+                    mSeekBarVolumizer.changeVolumeBy(-1);
+                }
+                return true;
+            case KeyEvent.KEYCODE_VOLUME_UP:
+                if (isdown) {
+                    mSeekBarVolumizer.changeVolumeBy(1);
+                }
+                return true;
+            case KeyEvent.KEYCODE_VOLUME_MUTE:
+                if (isdown) {
+                    mSeekBarVolumizer.muteVolume();
+                }
+                return true;
+            default:
+                return false;
+        }
     }
 
     @Override
     protected void onDialogClosed(boolean positiveResult) {
         super.onDialogClosed(positiveResult);
-        
-        if (!positiveResult) {
-            mVolume.setStreamVolume(mStreamType, mOriginalStreamVolume, 0);
+
+        if (!positiveResult && mSeekBarVolumizer != null) {
+            mSeekBarVolumizer.revertVolume();
         }
-        
+
         cleanup();
     }
-    
 
     public void onActivityStop() {
-        cleanup();
+        if (mSeekBarVolumizer != null) {
+            mSeekBarVolumizer.postStopSample();
+        }
     }
 
     /**
      * Do clean up.  This can be called multiple times!
      */
     private void cleanup() {
-        stopSample();
-        if (mVolumeObserver != null) {
-            mContentResolver.unregisterContentObserver(mVolumeObserver);
-        }
-        getPreferenceManager().unregisterOnActivityStopListener(this);
-        mSeekBar = null;
+       getPreferenceManager().unregisterOnActivityStopListener(this);
+
+       if (mSeekBarVolumizer != null) {
+           Dialog dialog = getDialog();
+           if (dialog != null && dialog.isShowing()) {
+               View view = dialog.getWindow().getDecorView()
+                       .findViewById(com.android.internal.R.id.seekbar);
+               if (view != null) view.setOnKeyListener(null);
+               // Stopped while dialog was showing, revert changes
+               mSeekBarVolumizer.revertVolume();
+           }
+           mSeekBarVolumizer.stop();
+           mSeekBarVolumizer = null;
+       }
+
     }
 
-    public void onProgressChanged(SeekBar seekBar, int progress, boolean fromTouch) {
-        if (!fromTouch) {
+    @Override
+    public void onSampleStarting(SeekBarVolumizer volumizer) {
+        if (mSeekBarVolumizer != null && volumizer != mSeekBarVolumizer) {
+            mSeekBarVolumizer.stopSample();
+        }
+    }
+
+    @Override
+    protected Parcelable onSaveInstanceState() {
+        final Parcelable superState = super.onSaveInstanceState();
+        if (isPersistent()) {
+            // No need to save instance state since it's persistent
+            return superState;
+        }
+
+        final SavedState myState = new SavedState(superState);
+        if (mSeekBarVolumizer != null) {
+            mSeekBarVolumizer.onSaveInstanceState(myState.getVolumeStore());
+        }
+        return myState;
+    }
+
+    @Override
+    protected void onRestoreInstanceState(Parcelable state) {
+        if (state == null || !state.getClass().equals(SavedState.class)) {
+            // Didn't save state for us in onSaveInstanceState
+            super.onRestoreInstanceState(state);
             return;
         }
 
-        postSetVolume(progress);
-    }
-
-    private void postSetVolume(int progress) {
-        // Do the volume changing separately to give responsive UI
-        mLastProgress = progress;
-        mHandler.removeCallbacks(this);
-        mHandler.post(this);
-    }
-    
-    public void onStartTrackingTouch(SeekBar seekBar) {
-    }
-
-    public void onStopTrackingTouch(SeekBar seekBar) {
-        if (mRingtone != null && !mRingtone.isPlaying()) {
-            sample();
+        SavedState myState = (SavedState) state;
+        super.onRestoreInstanceState(myState.getSuperState());
+        if (mSeekBarVolumizer != null) {
+            mSeekBarVolumizer.onRestoreInstanceState(myState.getVolumeStore());
         }
     }
 
-    public void run() {
-        mVolume.setStreamVolume(mStreamType, mLastProgress, 0);
-    }
-    
-    private void sample() {
-        mRingtone.play();
+    public static class VolumeStore {
+        public int volume = -1;
+        public int originalVolume = -1;
     }
 
-    private void stopSample() {
-        if (mRingtone != null) {
-            mRingtone.stop();
+    private static class SavedState extends BaseSavedState {
+        VolumeStore mVolumeStore = new VolumeStore();
+
+        public SavedState(Parcel source) {
+            super(source);
+            mVolumeStore.volume = source.readInt();
+            mVolumeStore.originalVolume = source.readInt();
         }
+
+        @Override
+        public void writeToParcel(Parcel dest, int flags) {
+            super.writeToParcel(dest, flags);
+            dest.writeInt(mVolumeStore.volume);
+            dest.writeInt(mVolumeStore.originalVolume);
+        }
+
+        VolumeStore getVolumeStore() {
+            return mVolumeStore;
+        }
+
+        public SavedState(Parcelable superState) {
+            super(superState);
+        }
+
+        public static final Parcelable.Creator<SavedState> CREATOR =
+                new Parcelable.Creator<SavedState>() {
+            public SavedState createFromParcel(Parcel in) {
+                return new SavedState(in);
+            }
+
+            public SavedState[] newArray(int size) {
+                return new SavedState[size];
+            }
+        };
     }
-    
 }

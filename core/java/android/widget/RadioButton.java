@@ -18,6 +18,8 @@ package android.widget;
 
 import android.content.Context;
 import android.util.AttributeSet;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 
 /**
@@ -33,6 +35,9 @@ import android.util.AttributeSet;
  * {@link android.widget.RadioGroup}. When several radio buttons live inside
  * a radio group, checking one radio button unchecks all the others.</p>
  * </p>
+ *
+ * <p>See the <a href="{@docRoot}guide/topics/ui/controls/radiobutton.html">Radio Buttons</a>
+ * guide.</p>
  *
  * <p><strong>XML attributes</strong></p>
  * <p> 
@@ -52,8 +57,12 @@ public class RadioButton extends CompoundButton {
         this(context, attrs, com.android.internal.R.attr.radioButtonStyle);
     }
 
-    public RadioButton(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public RadioButton(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public RadioButton(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
     }
 
     /**
@@ -68,5 +77,17 @@ public class RadioButton extends CompoundButton {
         if (!isChecked()) {
             super.toggle();
         }
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(RadioButton.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(RadioButton.class.getName());
     }
 }

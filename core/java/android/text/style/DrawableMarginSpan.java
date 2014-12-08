@@ -19,7 +19,6 @@ package android.text.style;
 import android.graphics.drawable.Drawable;
 import android.graphics.Paint;
 import android.graphics.Canvas;
-import android.graphics.RectF;
 import android.text.Spanned;
 import android.text.Layout;
 
@@ -49,9 +48,6 @@ implements LeadingMarginSpan, LineHeightSpan
 
         int dw = mDrawable.getIntrinsicWidth();
         int dh = mDrawable.getIntrinsicHeight();
-
-        if (dir < 0)
-            x -= dw;
 
         // XXX What to do about Paint?
         mDrawable.setBounds(ix, itop, ix+dw, itop+dh);

@@ -16,29 +16,37 @@
 
 package android.view;
 
-import android.content.Context;
-import android.content.res.TypedArray;
-import android.content.res.XmlResourceParser;
-import android.util.AttributeSet;
-import android.util.Xml;
+import android.graphics.Canvas;
+import android.os.Handler;
+import android.os.Message;
+import android.os.Trace;
+import android.widget.FrameLayout;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
+
+import android.content.Context;
+import android.content.res.Resources;
+import android.content.res.TypedArray;
+import android.content.res.XmlResourceParser;
+import android.util.AttributeSet;
+import android.util.Log;
+import android.util.Xml;
 
 import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.util.HashMap;
 
 /**
- * This class is used to instantiate layout XML file into its corresponding View
- * objects. It is never be used directly -- use
+ * Instantiates a layout XML file into its corresponding {@link android.view.View}
+ * objects. It is never used directly. Instead, use
  * {@link android.app.Activity#getLayoutInflater()} or
  * {@link Context#getSystemService} to retrieve a standard LayoutInflater instance
  * that is already hooked up to the current context and correctly configured
  * for the device you are running on.  For example:
  *
  * <pre>LayoutInflater inflater = (LayoutInflater)context.getSystemService
- *      Context.LAYOUT_INFLATER_SERVICE);</pre>
+ *      (Context.LAYOUT_INFLATER_SERVICE);</pre>
  * 
  * <p>
  * To create a new LayoutInflater with an additional {@link Factory} for your
@@ -56,7 +64,8 @@ import java.util.HashMap;
  * @see Context#getSystemService
  */
 public abstract class LayoutInflater {
-    private final boolean DEBUG = false;
+    private static final String TAG = LayoutInflater.class.getSimpleName();
+    private static final boolean DEBUG = false;
 
     /**
      * This field should be made private, so it is hidden from the SDK.
@@ -67,21 +76,28 @@ public abstract class LayoutInflater {
     // these are optional, set by the caller
     private boolean mFactorySet;
     private Factory mFactory;
+    private Factory2 mFactory2;
+    private Factory2 mPrivateFactory;
     private Filter mFilter;
 
-    private final Object[] mConstructorArgs = new Object[2];
+    final Object[] mConstructorArgs = new Object[2];
 
-    private static final Class[] mConstructorSignature = new Class[] {
+    static final Class<?>[] mConstructorSignature = new Class[] {
             Context.class, AttributeSet.class};
 
-    private static final HashMap<String, Constructor> sConstructorMap =
-            new HashMap<String, Constructor>();
+    private static final HashMap<String, Constructor<? extends View>> sConstructorMap =
+            new HashMap<String, Constructor<? extends View>>();
     
     private HashMap<String, Boolean> mFilterMap;
 
     private static final String TAG_MERGE = "merge";
     private static final String TAG_INCLUDE = "include";
+    private static final String TAG_1995 = "blink";
     private static final String TAG_REQUEST_FOCUS = "requestFocus";
+    private static final String TAG_TAG = "tag";
+
+    private static final int[] ATTRS_THEME = new int[] {
+            com.android.internal.R.attr.theme };
 
     /**
      * Hook to allow clients of the LayoutInflater to restrict the set of Views that are allowed
@@ -97,6 +113,7 @@ public abstract class LayoutInflater {
          * 
          * @return True if this class is allowed to be inflated, or false otherwise
          */
+        @SuppressWarnings("unchecked")
         boolean onLoadClass(Class clazz);
     }
     
@@ -121,18 +138,47 @@ public abstract class LayoutInflater {
         public View onCreateView(String name, Context context, AttributeSet attrs);
     }
 
-    private static class FactoryMerger implements Factory {
+    public interface Factory2 extends Factory {
+        /**
+         * Version of {@link #onCreateView(String, Context, AttributeSet)}
+         * that also supplies the parent that the view created view will be
+         * placed in.
+         *
+         * @param parent The parent that the created view will be placed
+         * in; <em>note that this may be null</em>.
+         * @param name Tag name to be inflated.
+         * @param context The context the view is being created in.
+         * @param attrs Inflation attributes as specified in XML file.
+         *
+         * @return View Newly created view. Return null for the default
+         *         behavior.
+         */
+        public View onCreateView(View parent, String name, Context context, AttributeSet attrs);
+    }
+
+    private static class FactoryMerger implements Factory2 {
         private final Factory mF1, mF2;
+        private final Factory2 mF12, mF22;
         
-        FactoryMerger(Factory f1, Factory f2) {
+        FactoryMerger(Factory f1, Factory2 f12, Factory f2, Factory2 f22) {
             mF1 = f1;
             mF2 = f2;
+            mF12 = f12;
+            mF22 = f22;
         }
         
         public View onCreateView(String name, Context context, AttributeSet attrs) {
             View v = mF1.onCreateView(name, context, attrs);
             if (v != null) return v;
             return mF2.onCreateView(name, context, attrs);
+        }
+
+        public View onCreateView(View parent, String name, Context context, AttributeSet attrs) {
+            View v = mF12 != null ? mF12.onCreateView(parent, name, context, attrs)
+                    : mF1.onCreateView(name, context, attrs);
+            if (v != null) return v;
+            return mF22 != null ? mF22.onCreateView(parent, name, context, attrs)
+                    : mF2.onCreateView(name, context, attrs);
         }
     }
     
@@ -161,7 +207,9 @@ public abstract class LayoutInflater {
     protected LayoutInflater(LayoutInflater original, Context newContext) {
         mContext = newContext;
         mFactory = original.mFactory;
-        mFilter = original.mFilter;
+        mFactory2 = original.mFactory2;
+        mPrivateFactory = original.mPrivateFactory;
+        setFilter(original.mFilter);
     }
     
     /**
@@ -199,12 +247,23 @@ public abstract class LayoutInflater {
     }
 
     /**
-     * Return the current factory (or null). This is called on each element
+     * Return the current {@link Factory} (or null). This is called on each element
      * name. If the factory returns a View, add that to the hierarchy. If it
      * returns null, proceed to call onCreateView(name).
      */
     public final Factory getFactory() {
         return mFactory;
+    }
+
+    /**
+     * Return the current {@link Factory2}.  Returns null if no factory is set
+     * or the set factory does not implement the {@link Factory2} interface.
+     * This is called on each element
+     * name. If the factory returns a View, add that to the hierarchy. If it
+     * returns null, proceed to call onCreateView(name).
+     */
+    public final Factory2 getFactory2() {
+        return mFactory2;
     }
 
     /**
@@ -233,7 +292,37 @@ public abstract class LayoutInflater {
         if (mFactory == null) {
             mFactory = factory;
         } else {
-            mFactory = new FactoryMerger(factory, mFactory);
+            mFactory = new FactoryMerger(factory, null, mFactory, mFactory2);
+        }
+    }
+
+    /**
+     * Like {@link #setFactory}, but allows you to set a {@link Factory2}
+     * interface.
+     */
+    public void setFactory2(Factory2 factory) {
+        if (mFactorySet) {
+            throw new IllegalStateException("A factory has already been set on this LayoutInflater");
+        }
+        if (factory == null) {
+            throw new NullPointerException("Given factory can not be null");
+        }
+        mFactorySet = true;
+        if (mFactory == null) {
+            mFactory = mFactory2 = factory;
+        } else {
+            mFactory = mFactory2 = new FactoryMerger(factory, factory, mFactory, mFactory2);
+        }
+    }
+
+    /**
+     * @hide for use by framework
+     */
+    public void setPrivateFactory(Factory2 factory) {
+        if (mPrivateFactory == null) {
+            mPrivateFactory = factory;
+        } else {
+            mPrivateFactory = new FactoryMerger(factory, factory, mPrivateFactory, mPrivateFactory);
         }
     }
 
@@ -314,8 +403,13 @@ public abstract class LayoutInflater {
      *         the inflated XML file.
      */
     public View inflate(int resource, ViewGroup root, boolean attachToRoot) {
-        if (DEBUG) System.out.println("INFLATING from resource: " + resource);
-        XmlResourceParser parser = getContext().getResources().getLayout(resource);
+        final Resources res = getContext().getResources();
+        if (DEBUG) {
+            Log.d(TAG, "INFLATING from resource: \"" + res.getResourceName(resource) + "\" ("
+                    + Integer.toHexString(resource) + ")");
+        }
+
+        final XmlResourceParser parser = res.getLayout(resource);
         try {
             return inflate(parser, root, attachToRoot);
         } finally {
@@ -347,7 +441,10 @@ public abstract class LayoutInflater {
      */
     public View inflate(XmlPullParser parser, ViewGroup root, boolean attachToRoot) {
         synchronized (mConstructorArgs) {
+            Trace.traceBegin(Trace.TRACE_TAG_VIEW, "inflate");
+
             final AttributeSet attrs = Xml.asAttributeSet(parser);
+            Context lastContext = (Context)mConstructorArgs[0];
             mConstructorArgs[0] = mContext;
             View result = root;
 
@@ -379,10 +476,10 @@ public abstract class LayoutInflater {
                                 + "ViewGroup root and attachToRoot=true");
                     }
 
-                    rInflate(parser, root, attrs);
+                    rInflate(parser, root, attrs, false, false);
                 } else {
                     // Temp is the root view that was found in the xml
-                    View temp = createViewFromTag(name, attrs);
+                    final View temp = createViewFromTag(root, name, attrs, false);
 
                     ViewGroup.LayoutParams params = null;
 
@@ -404,7 +501,7 @@ public abstract class LayoutInflater {
                         System.out.println("-----> start inflating children");
                     }
                     // Inflate all children under temp
-                    rInflate(parser, temp, attrs);
+                    rInflate(parser, temp, attrs, true, true);
                     if (DEBUG) {
                         System.out.println("-----> done inflating children");
                     }
@@ -432,7 +529,13 @@ public abstract class LayoutInflater {
                         + ": " + e.getMessage());
                 ex.initCause(e);
                 throw ex;
+            } finally {
+                // Don't retain static reference on context.
+                mConstructorArgs[0] = lastContext;
+                mConstructorArgs[1] = null;
             }
+
+            Trace.traceEnd(Trace.TRACE_TAG_VIEW);
 
             return result;
         }
@@ -453,17 +556,20 @@ public abstract class LayoutInflater {
      * @param name The full name of the class to be instantiated.
      * @param attrs The XML attributes supplied for this instance.
      * 
-     * @return View The newly instantied view, or null.
+     * @return View The newly instantiated view, or null.
      */
     public final View createView(String name, String prefix, AttributeSet attrs)
             throws ClassNotFoundException, InflateException {
-        Constructor constructor = sConstructorMap.get(name);
+        Constructor<? extends View> constructor = sConstructorMap.get(name);
+        Class<? extends View> clazz = null;
 
         try {
+            Trace.traceBegin(Trace.TRACE_TAG_VIEW, name);
+
             if (constructor == null) {
                 // Class not found in the cache, see if it's real, and try to add it
-                Class clazz = mContext.getClassLoader().loadClass(
-                        prefix != null ? (prefix + name) : name);
+                clazz = mContext.getClassLoader().loadClass(
+                        prefix != null ? (prefix + name) : name).asSubclass(View.class);
                 
                 if (mFilter != null && clazz != null) {
                     boolean allowed = mFilter.onLoadClass(clazz);
@@ -480,8 +586,8 @@ public abstract class LayoutInflater {
                     Boolean allowedState = mFilterMap.get(name);
                     if (allowedState == null) {
                         // New class -- remember whether it is allowed
-                        Class clazz = mContext.getClassLoader().loadClass(
-                                prefix != null ? (prefix + name) : name);
+                        clazz = mContext.getClassLoader().loadClass(
+                                prefix != null ? (prefix + name) : name).asSubclass(View.class);
                         
                         boolean allowed = clazz != null && mFilter.onLoadClass(clazz);
                         mFilterMap.put(name, allowed);
@@ -496,7 +602,15 @@ public abstract class LayoutInflater {
 
             Object[] args = mConstructorArgs;
             args[1] = attrs;
-            return (View) constructor.newInstance(args);
+
+            constructor.setAccessible(true);
+            final View view = constructor.newInstance(args);
+            if (view instanceof ViewStub) {
+                // Use the same context when inflating ViewStub later.
+                final ViewStub viewStub = (ViewStub) view;
+                viewStub.setLayoutInflater(cloneInContext((Context) args[0]));
+            }
+            return view;
 
         } catch (NoSuchMethodException e) {
             InflateException ie = new InflateException(attrs.getPositionDescription()
@@ -505,26 +619,34 @@ public abstract class LayoutInflater {
             ie.initCause(e);
             throw ie;
 
+        } catch (ClassCastException e) {
+            // If loaded class is not a View subclass
+            InflateException ie = new InflateException(attrs.getPositionDescription()
+                    + ": Class is not a View "
+                    + (prefix != null ? (prefix + name) : name));
+            ie.initCause(e);
+            throw ie;
         } catch (ClassNotFoundException e) {
             // If loadClass fails, we should propagate the exception.
             throw e;
         } catch (Exception e) {
             InflateException ie = new InflateException(attrs.getPositionDescription()
                     + ": Error inflating class "
-                    + (constructor == null ? "<unknown>" : constructor.getClass().getName()));
+                    + (clazz == null ? "<unknown>" : clazz.getName()));
             ie.initCause(e);
             throw ie;
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_VIEW);
         }
     }
 
     /**
-     * Throw an excpetion because the specified class is not allowed to be inflated.
+     * Throw an exception because the specified class is not allowed to be inflated.
      */
     private void failNotAllowed(String name, String prefix, AttributeSet attrs) {
-        InflateException ie = new InflateException(attrs.getPositionDescription()
+        throw new InflateException(attrs.getPositionDescription()
                 + ": Class not allowed to be inflated "
                 + (prefix != null ? (prefix + name) : name));
-        throw ie;
     }
 
     /**
@@ -543,25 +665,85 @@ public abstract class LayoutInflater {
         return createView(name, "android.view.", attrs);
     }
 
-    /*
-     * default visibility so the BridgeInflater can override it.
+    /**
+     * Version of {@link #onCreateView(String, AttributeSet)} that also
+     * takes the future parent of the view being constructed.  The default
+     * implementation simply calls {@link #onCreateView(String, AttributeSet)}.
+     *
+     * @param parent The future parent of the returned view.  <em>Note that
+     * this may be null.</em>
+     * @param name The fully qualified class name of the View to be create.
+     * @param attrs An AttributeSet of attributes to apply to the View.
+     *
+     * @return View The View created.
      */
-    View createViewFromTag(String name, AttributeSet attrs) {
+    protected View onCreateView(View parent, String name, AttributeSet attrs)
+            throws ClassNotFoundException {
+        return onCreateView(name, attrs);
+    }
+
+    /**
+     * Creates a view from a tag name using the supplied attribute set.
+     * <p>
+     * If {@code inheritContext} is true and the parent is non-null, the view
+     * will be inflated in parent view's context. If the view specifies a
+     * &lt;theme&gt; attribute, the inflation context will be wrapped with the
+     * specified theme.
+     * <p>
+     * Note: Default visibility so the BridgeInflater can override it.
+     */
+    View createViewFromTag(View parent, String name, AttributeSet attrs, boolean inheritContext) {
         if (name.equals("view")) {
             name = attrs.getAttributeValue(null, "class");
+        }
+
+        Context viewContext;
+        if (parent != null && inheritContext) {
+            viewContext = parent.getContext();
+        } else {
+            viewContext = mContext;
+        }
+
+        // Apply a theme wrapper, if requested.
+        final TypedArray ta = viewContext.obtainStyledAttributes(attrs, ATTRS_THEME);
+        final int themeResId = ta.getResourceId(0, 0);
+        if (themeResId != 0) {
+            viewContext = new ContextThemeWrapper(viewContext, themeResId);
+        }
+        ta.recycle();
+
+        if (name.equals(TAG_1995)) {
+            // Let's party like it's 1995!
+            return new BlinkLayout(viewContext, attrs);
         }
 
         if (DEBUG) System.out.println("******** Creating view: " + name);
 
         try {
-            View view = (mFactory == null) ? null : mFactory.onCreateView(name,
-                    mContext, attrs);
+            View view;
+            if (mFactory2 != null) {
+                view = mFactory2.onCreateView(parent, name, viewContext, attrs);
+            } else if (mFactory != null) {
+                view = mFactory.onCreateView(name, viewContext, attrs);
+            } else {
+                view = null;
+            }
+
+            if (view == null && mPrivateFactory != null) {
+                view = mPrivateFactory.onCreateView(parent, name, viewContext, attrs);
+            }
 
             if (view == null) {
-                if (-1 == name.indexOf('.')) {
-                    view = onCreateView(name, attrs);
-                } else {
-                    view = createView(name, null, attrs);
+                final Object lastContext = mConstructorArgs[0];
+                mConstructorArgs[0] = viewContext;
+                try {
+                    if (-1 == name.indexOf('.')) {
+                        view = onCreateView(parent, name, attrs);
+                    } else {
+                        view = createView(name, null, attrs);
+                    }
+                } finally {
+                    mConstructorArgs[0] = lastContext;
                 }
             }
 
@@ -588,9 +770,14 @@ public abstract class LayoutInflater {
     /**
      * Recursive method used to descend down the xml hierarchy and instantiate
      * views, instantiate their children, and then call onFinishInflate().
+     *
+     * @param inheritContext Whether the root view should be inflated in its
+     *            parent's context. This should be true when called inflating
+     *            child views recursively, or false otherwise.
      */
-    private void rInflate(XmlPullParser parser, View parent, final AttributeSet attrs)
-            throws XmlPullParserException, IOException {
+    void rInflate(XmlPullParser parser, View parent, final AttributeSet attrs,
+            boolean finishInflate, boolean inheritContext) throws XmlPullParserException,
+            IOException {
 
         final int depth = parser.getDepth();
         int type;
@@ -606,29 +793,35 @@ public abstract class LayoutInflater {
             
             if (TAG_REQUEST_FOCUS.equals(name)) {
                 parseRequestFocus(parser, parent);
+            } else if (TAG_TAG.equals(name)) {
+                parseViewTag(parser, parent, attrs);
             } else if (TAG_INCLUDE.equals(name)) {
                 if (parser.getDepth() == 0) {
                     throw new InflateException("<include /> cannot be the root element");
                 }
-                parseInclude(parser, parent, attrs);
+                parseInclude(parser, parent, attrs, inheritContext);
             } else if (TAG_MERGE.equals(name)) {
                 throw new InflateException("<merge /> must be the root element");
             } else {
-                final View view = createViewFromTag(name, attrs);
+                final View view = createViewFromTag(parent, name, attrs, inheritContext);
                 final ViewGroup viewGroup = (ViewGroup) parent;
                 final ViewGroup.LayoutParams params = viewGroup.generateLayoutParams(attrs);
-                rInflate(parser, view, attrs);
+                rInflate(parser, view, attrs, true, true);
                 viewGroup.addView(view, params);
             }
         }
 
-        parent.onFinishInflate();
+        if (finishInflate) parent.onFinishInflate();
     }
 
-    private void parseRequestFocus(XmlPullParser parser, View parent)
+    /**
+     * Parses a <code>&lt;request-focus&gt;</code> element and requests focus on
+     * the containing View.
+     */
+    private void parseRequestFocus(XmlPullParser parser, View view)
             throws XmlPullParserException, IOException {
         int type;
-        parent.requestFocus();
+        view.requestFocus();
         final int currentDepth = parser.getDepth();
         while (((type = parser.next()) != XmlPullParser.END_TAG ||
                 parser.getDepth() > currentDepth) && type != XmlPullParser.END_DOCUMENT) {
@@ -636,9 +829,30 @@ public abstract class LayoutInflater {
         }
     }
 
-    private void parseInclude(XmlPullParser parser, View parent, AttributeSet attrs)
+    /**
+     * Parses a <code>&lt;tag&gt;</code> element and sets a keyed tag on the
+     * containing View.
+     */
+    private void parseViewTag(XmlPullParser parser, View view, AttributeSet attrs)
             throws XmlPullParserException, IOException {
+        int type;
 
+        final TypedArray ta = mContext.obtainStyledAttributes(
+                attrs, com.android.internal.R.styleable.ViewTag);
+        final int key = ta.getResourceId(com.android.internal.R.styleable.ViewTag_id, 0);
+        final CharSequence value = ta.getText(com.android.internal.R.styleable.ViewTag_value);
+        view.setTag(key, value);
+        ta.recycle();
+
+        final int currentDepth = parser.getDepth();
+        while (((type = parser.next()) != XmlPullParser.END_TAG ||
+                parser.getDepth() > currentDepth) && type != XmlPullParser.END_DOCUMENT) {
+            // Empty
+        }
+    }
+
+    private void parseInclude(XmlPullParser parser, View parent, AttributeSet attrs,
+            boolean inheritContext) throws XmlPullParserException, IOException {
         int type;
 
         if (parent instanceof ViewGroup) {
@@ -673,9 +887,10 @@ public abstract class LayoutInflater {
 
                     if (TAG_MERGE.equals(childName)) {
                         // Inflate all children.
-                        rInflate(childParser, parent, childAttrs);
+                        rInflate(childParser, parent, childAttrs, false, inheritContext);
                     } else {
-                        final View view = createViewFromTag(childName, childAttrs);
+                        final View view = createViewFromTag(parent, childName, childAttrs,
+                                inheritContext);
                         final ViewGroup group = (ViewGroup) parent;
 
                         // We try to load the layout params set in the <include /> tag. If
@@ -698,7 +913,7 @@ public abstract class LayoutInflater {
                         }
 
                         // Inflate all children.
-                        rInflate(childParser, view, childAttrs);
+                        rInflate(childParser, view, childAttrs, true, true);
 
                         // Attempt to override the included layout's android:id with the
                         // one set on the <include /> tag itself.
@@ -740,5 +955,64 @@ public abstract class LayoutInflater {
                 parser.getDepth() > currentDepth) && type != XmlPullParser.END_DOCUMENT) {
             // Empty
         }
-    }    
+    }
+
+    private static class BlinkLayout extends FrameLayout {
+        private static final int MESSAGE_BLINK = 0x42;
+        private static final int BLINK_DELAY = 500;
+
+        private boolean mBlink;
+        private boolean mBlinkState;
+        private final Handler mHandler;
+
+        public BlinkLayout(Context context, AttributeSet attrs) {
+            super(context, attrs);
+            mHandler = new Handler(new Handler.Callback() {
+                @Override
+                public boolean handleMessage(Message msg) {
+                    if (msg.what == MESSAGE_BLINK) {
+                        if (mBlink) {
+                            mBlinkState = !mBlinkState;
+                            makeBlink();
+                        }
+                        invalidate();
+                        return true;
+                    }
+                    return false;
+                }
+            });
+        }
+
+        private void makeBlink() {
+            Message message = mHandler.obtainMessage(MESSAGE_BLINK);
+            mHandler.sendMessageDelayed(message, BLINK_DELAY);
+        }
+
+        @Override
+        protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+
+            mBlink = true;
+            mBlinkState = true;
+
+            makeBlink();
+        }
+
+        @Override
+        protected void onDetachedFromWindow() {
+            super.onDetachedFromWindow();
+
+            mBlink = false;
+            mBlinkState = true;
+
+            mHandler.removeMessages(MESSAGE_BLINK);
+        }
+
+        @Override
+        protected void dispatchDraw(Canvas canvas) {
+            if (mBlinkState) {
+                super.dispatchDraw(canvas);
+            }
+        }
+    }
 }

@@ -16,17 +16,17 @@
 
 package android.preference;
 
-
 import android.app.AlertDialog.Builder;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.res.TypedArray;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.text.TextUtils;
 import android.util.AttributeSet;
 
 /**
- * The {@link ListPreference} is a preference that displays a list of entries as
+ * A {@link Preference} that displays a list of entries as
  * a dialog.
  * <p>
  * This preference will store a string into the SharedPreferences. This string will be the value
@@ -39,18 +39,36 @@ public class ListPreference extends DialogPreference {
     private CharSequence[] mEntries;
     private CharSequence[] mEntryValues;
     private String mValue;
+    private String mSummary;
     private int mClickedDialogEntryIndex;
-    
-    public ListPreference(Context context, AttributeSet attrs) {
-        super(context, attrs);
-        
-        TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.ListPreference, 0, 0);
+    private boolean mValueSet;
+
+    public ListPreference(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        TypedArray a = context.obtainStyledAttributes(
+                attrs, com.android.internal.R.styleable.ListPreference, defStyleAttr, defStyleRes);
         mEntries = a.getTextArray(com.android.internal.R.styleable.ListPreference_entries);
         mEntryValues = a.getTextArray(com.android.internal.R.styleable.ListPreference_entryValues);
         a.recycle();
+
+        /* Retrieve the Preference summary attribute since it's private
+         * in the Preference class.
+         */
+        a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.Preference, defStyleAttr, defStyleRes);
+        mSummary = a.getString(com.android.internal.R.styleable.Preference_summary);
+        a.recycle();
     }
-    
+
+    public ListPreference(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public ListPreference(Context context, AttributeSet attrs) {
+        this(context, attrs, com.android.internal.R.attr.dialogPreferenceStyle);
+    }
+
     public ListPreference(Context context) {
         this(context, null);
     }
@@ -121,9 +139,53 @@ public class ListPreference extends DialogPreference {
      * @param value The value to set for the key.
      */
     public void setValue(String value) {
-        mValue = value;
-        
-        persistString(value);
+        // Always persist/notify the first time.
+        final boolean changed = !TextUtils.equals(mValue, value);
+        if (changed || !mValueSet) {
+            mValue = value;
+            mValueSet = true;
+            persistString(value);
+            if (changed) {
+                notifyChanged();
+            }
+        }
+    }
+
+    /**
+     * Returns the summary of this ListPreference. If the summary
+     * has a {@linkplain java.lang.String#format String formatting}
+     * marker in it (i.e. "%s" or "%1$s"), then the current entry
+     * value will be substituted in its place.
+     *
+     * @return the summary with appropriate string substitution
+     */
+    @Override
+    public CharSequence getSummary() {
+        final CharSequence entry = getEntry();
+        if (mSummary == null || entry == null) {
+            return super.getSummary();
+        } else {
+            return String.format(mSummary, entry);
+        }
+    }
+
+    /**
+     * Sets the summary for this Preference with a CharSequence.
+     * If the summary has a
+     * {@linkplain java.lang.String#format String formatting}
+     * marker in it (i.e. "%s" or "%1$s"), then the current entry
+     * value will be substituted in its place when it's retrieved.
+     *
+     * @param summary The summary for the preference.
+     */
+    @Override
+    public void setSummary(CharSequence summary) {
+        super.setSummary(summary);
+        if (summary == null && mSummary != null) {
+            mSummary = null;
+        } else if (summary != null && !summary.equals(mSummary)) {
+            mSummary = summary.toString();
+        }
     }
 
     /**
@@ -192,8 +254,22 @@ public class ListPreference extends DialogPreference {
                 new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface dialog, int which) {
                         mClickedDialogEntryIndex = which;
+
+                        /*
+                         * Clicking on an item simulates the positive button
+                         * click, and dismisses the dialog.
+                         */
+                        ListPreference.this.onClick(dialog, DialogInterface.BUTTON_POSITIVE);
+                        dialog.dismiss();
                     }
         });
+        
+        /*
+         * The typical interaction for list-based dialogs is to have
+         * click-on-an-item dismiss the dialog instead of the user having to
+         * press 'Ok'.
+         */
+        builder.setPositiveButton(null, null);
     }
 
     @Override

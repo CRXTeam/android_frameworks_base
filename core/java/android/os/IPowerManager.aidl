@@ -17,15 +17,51 @@
 
 package android.os;
 
+import android.os.WorkSource;
+
 /** @hide */
+
 interface IPowerManager
 {
-    void acquireWakeLock(int flags, IBinder lock, String tag);
-    void goToSleep(long time);
-    void releaseWakeLock(IBinder lock);
-    void userActivity(long when, boolean noChangeLights);
-    void userActivityWithForce(long when, boolean noChangeLights, boolean force);
-    void setPokeLock(int pokey, IBinder lock, String tag);
-    void setStayOnSetting(boolean val);
-    long getScreenOnTime();
+    // WARNING: The first five methods must remain the first five methods because their
+    // transaction numbers must not change unless IPowerManager.cpp is also updated.
+    void acquireWakeLock(IBinder lock, int flags, String tag, String packageName, in WorkSource ws,
+            String historyTag);
+    void acquireWakeLockWithUid(IBinder lock, int flags, String tag, String packageName,
+            int uidtoblame);
+    void releaseWakeLock(IBinder lock, int flags);
+    void updateWakeLockUids(IBinder lock, in int[] uids);
+    oneway void powerHint(int hintId, int data);
+
+    void updateWakeLockWorkSource(IBinder lock, in WorkSource ws, String historyTag);
+    boolean isWakeLockLevelSupported(int level);
+
+    void userActivity(long time, int event, int flags);
+    void wakeUp(long time);
+    void goToSleep(long time, int reason, int flags);
+    void nap(long time);
+    boolean isInteractive();
+    boolean isPowerSaveMode();
+    boolean setPowerSaveMode(boolean mode);
+
+    void reboot(boolean confirm, String reason, boolean wait);
+    void shutdown(boolean confirm, boolean wait);
+    void crash(String message);
+
+    void setStayOnSetting(int val);
+    void setMaximumScreenOffTimeoutFromDeviceAdmin(int timeMs);
+
+    // temporarily overrides the screen brightness settings to allow the user to
+    // see the effect of a settings change without applying it immediately
+    void setTemporaryScreenBrightnessSettingOverride(int brightness);
+    void setTemporaryScreenAutoBrightnessAdjustmentSettingOverride(float adj);
+
+    // sets the attention light (used by phone app only)
+    void setAttentionLight(boolean on, int color);
+    // update the uids being synchronized by network socket request manager
+    void updateBlockedUids(int uid, boolean isBlocked);
+
+    void cpuBoost(int duration);
+
+	void wakeUpWithProximityCheck(long time);
 }

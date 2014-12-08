@@ -16,10 +16,20 @@
 
 package android.app;
 
+import android.app.SearchableInfo;
+import android.app.ISearchManagerCallback;
 import android.content.ComponentName;
-import android.server.search.SearchableInfo;
+import android.content.pm.ResolveInfo;
+import android.content.res.Configuration;
+import android.os.Bundle;
 
 /** @hide */
 interface ISearchManager {
-   SearchableInfo getSearchableInfo(in ComponentName launchActivity, boolean globalSearch);
+   SearchableInfo getSearchableInfo(in ComponentName launchActivity);
+   List<SearchableInfo> getSearchablesInGlobalSearch();
+   List<ResolveInfo> getGlobalSearchActivities();
+   ComponentName getGlobalSearchActivity();
+   ComponentName getWebSearchActivity();
+   ComponentName getAssistIntent(int userHandle);
+   boolean launchAssistAction(int requestType, String hint, int userHandle);
 }

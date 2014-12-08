@@ -22,6 +22,8 @@ import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.animation.AlphaAnimation;
 
 import com.android.internal.R;
@@ -29,8 +31,7 @@ import com.android.internal.R;
 
 /**
  * The {@code ZoomControls} class displays a simple set of controls used for zooming and
- * provides callbacks to register for events.
- */
+ * provides callbacks to register for events. */
 @Widget
 public class ZoomControls extends LinearLayout {
 
@@ -106,5 +107,17 @@ public class ZoomControls extends LinearLayout {
     @Override
     public boolean hasFocus() {
         return mZoomIn.hasFocus() || mZoomOut.hasFocus();
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(ZoomControls.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(ZoomControls.class.getName());
     }
 }

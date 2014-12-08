@@ -19,6 +19,9 @@ package android.content;
 import android.os.Parcel;
 import android.os.Parcelable;
 
+import java.io.PrintWriter;
+import java.lang.Comparable;
+
 /**
  * Identifier for a specific application component
  * ({@link android.app.Activity}, {@link android.app.Service},
@@ -29,7 +32,7 @@ import android.os.Parcelable;
  * name inside of that package.
  * 
  */
-public final class ComponentName implements Parcelable {
+public final class ComponentName implements Parcelable, Cloneable, Comparable<ComponentName> {
     private final String mPackage;
     private final String mClass;
 
@@ -75,6 +78,10 @@ public final class ComponentName implements Parcelable {
         mClass = cls.getName();
     }
 
+    public ComponentName clone() {
+        return new ComponentName(mPackage, mClass);
+    }
+
     /**
      * Return the package name of this component.
      */
@@ -104,6 +111,32 @@ public final class ComponentName implements Parcelable {
         return mClass;
     }
     
+    private static void appendShortClassName(StringBuilder sb, String packageName,
+            String className) {
+        if (className.startsWith(packageName)) {
+            int PN = packageName.length();
+            int CN = className.length();
+            if (CN > PN && className.charAt(PN) == '.') {
+                sb.append(className, PN, CN);
+                return;
+            }
+        }
+        sb.append(className);
+    }
+
+    private static void printShortClassName(PrintWriter pw, String packageName,
+            String className) {
+        if (className.startsWith(packageName)) {
+            int PN = packageName.length();
+            int CN = className.length();
+            if (CN > PN && className.charAt(PN) == '.') {
+                pw.write(className, PN, CN-PN);
+                return;
+            }
+        }
+        pw.print(className);
+    }
+
     /**
      * Return a String that unambiguously describes both the package and
      * class names contained in the ComponentName.  You can later recover
@@ -121,7 +154,7 @@ public final class ComponentName implements Parcelable {
     }
     
     /**
-     * The samee as {@link #flattenToString()}, but abbreviates the class
+     * The same as {@link #flattenToString()}, but abbreviates the class
      * name if it is a suffix of the package.  The result can still be used
      * with {@link #unflattenFromString(String)}.
      * 
@@ -132,9 +165,29 @@ public final class ComponentName implements Parcelable {
      * @see #unflattenFromString(String)
      */
     public String flattenToShortString() {
-        return mPackage + "/" + getShortClassName();
+        StringBuilder sb = new StringBuilder(mPackage.length() + mClass.length());
+        appendShortString(sb, mPackage, mClass);
+        return sb.toString();
     }
-    
+
+    /** @hide */
+    public void appendShortString(StringBuilder sb) {
+        appendShortString(sb, mPackage, mClass);
+    }
+
+    /** @hide */
+    public static void appendShortString(StringBuilder sb, String packageName, String className) {
+        sb.append(packageName).append('/');
+        appendShortClassName(sb, packageName, className);
+    }
+
+    /** @hide */
+    public static void printShortString(PrintWriter pw, String packageName, String className) {
+        pw.print(packageName);
+        pw.print('/');
+        printShortClassName(pw, packageName, className);
+    }
+
     /**
      * Recover a ComponentName from a String that was previously created with
      * {@link #flattenToString()}.  It splits the string at the first '/',
@@ -195,6 +248,15 @@ public final class ComponentName implements Parcelable {
     @Override
     public int hashCode() {
         return mPackage.hashCode() + mClass.hashCode();
+    }
+
+    public int compareTo(ComponentName that) {
+        int v;
+        v = this.mPackage.compareTo(that.mPackage);
+        if (v != 0) {
+            return v;
+        }
+        return this.mClass.compareTo(that.mClass);
     }
     
     public int describeContents() {

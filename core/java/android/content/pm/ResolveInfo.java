@@ -1,11 +1,30 @@
+/*
+ * Copyright (C) 2007 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package android.content.pm;
 
+import android.content.ComponentName;
 import android.content.IntentFilter;
 import android.graphics.drawable.Drawable;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.os.UserHandle;
 import android.text.TextUtils;
 import android.util.Printer;
+import android.util.Slog;
 
 import java.text.Collator;
 import java.util.Comparator;
@@ -17,20 +36,30 @@ import java.util.Comparator;
  * &lt;intent&gt; tags.
  */
 public class ResolveInfo implements Parcelable {
+    private static final String TAG = "ResolveInfo";
+
     /**
-     * The activity that corresponds to this resolution match, if this
-     * resolution is for an activity.  One and only one of this and
-     * serviceInfo must be non-null.
+     * The activity or broadcast receiver that corresponds to this resolution
+     * match, if this resolution is for an activity or broadcast receiver.
+     * Exactly one of {@link #activityInfo}, {@link #serviceInfo}, or
+     * {@link #providerInfo} will be non-null.
      */
     public ActivityInfo activityInfo;
     
     /**
-     * The service that corresponds to this resolution match, if this
-     * resolution is for a service. One and only one of this and
-     * activityInfo must be non-null.
+     * The service that corresponds to this resolution match, if this resolution
+     * is for a service. Exactly one of {@link #activityInfo},
+     * {@link #serviceInfo}, or {@link #providerInfo} will be non-null.
      */
     public ServiceInfo serviceInfo;
-    
+
+    /**
+     * The provider that corresponds to this resolution match, if this
+     * resolution is for a provider. Exactly one of {@link #activityInfo},
+     * {@link #serviceInfo}, or {@link #providerInfo} will be non-null.
+     */
+    public ProviderInfo providerInfo;
+
     /**
      * The IntentFilter that was matched for this ResolveInfo.
      */
@@ -92,6 +121,36 @@ public class ResolveInfo implements Parcelable {
     public int icon;
 
     /**
+     * Optional -- if non-null, the {@link #labelRes} and {@link #icon}
+     * resources will be loaded from this package, rather than the one
+     * containing the resolved component.
+     */
+    public String resolvePackageName;
+
+    /**
+     * If not equal to UserHandle.USER_CURRENT, then the intent will be forwarded to this user.
+     * @hide
+     */
+    public int targetUserId;
+
+    /**
+     * @hide
+     */
+    public boolean noResourceId;
+
+    /**
+     * @hide Target comes from system process?
+     */
+    public boolean system;
+
+    private ComponentInfo getComponentInfo() {
+        if (activityInfo != null) return activityInfo;
+        if (serviceInfo != null) return serviceInfo;
+        if (providerInfo != null) return providerInfo;
+        throw new IllegalStateException("Missing ComponentInfo!");
+    }
+
+    /**
      * Retrieve the current textual label associated with this resolution.  This
      * will call back on the given PackageManager to load the label from
      * the application.
@@ -106,16 +165,26 @@ public class ResolveInfo implements Parcelable {
         if (nonLocalizedLabel != null) {
             return nonLocalizedLabel;
         }
-        ComponentInfo ci = activityInfo != null ? activityInfo : serviceInfo;
-        ApplicationInfo ai = ci.applicationInfo;
         CharSequence label;
+        if (resolvePackageName != null && labelRes != 0) {
+            label = pm.getText(resolvePackageName, labelRes, null);
+            if (label != null) {
+                return label.toString().trim();
+            }
+        }
+        ComponentInfo ci = getComponentInfo();
+        ApplicationInfo ai = ci.applicationInfo;
         if (labelRes != 0) {
             label = pm.getText(ci.packageName, labelRes, ai);
             if (label != null) {
-                return label;
+                return label.toString().trim();
             }
         }
-        return ci.loadLabel(pm);
+
+        CharSequence data = ci.loadLabel(pm);
+        // Make the data safe
+        if (data != null) data = data.toString().trim();
+        return data;
     }
     
     /**
@@ -130,9 +199,15 @@ public class ResolveInfo implements Parcelable {
      * item does not have an icon, the default activity icon is returned.
      */
     public Drawable loadIcon(PackageManager pm) {
-        ComponentInfo ci = activityInfo != null ? activityInfo : serviceInfo;
-        ApplicationInfo ai = ci.applicationInfo;
         Drawable dr;
+        if (resolvePackageName != null && icon != 0) {
+            dr = pm.getDrawable(resolvePackageName, icon, null);
+            if (dr != null) {
+                return dr;
+            }
+        }
+        ComponentInfo ci = getComponentInfo();
+        ApplicationInfo ai = ci.applicationInfo;
         if (icon != 0) {
             dr = pm.getDrawable(ci.packageName, icon, ai);
             if (dr != null) {
@@ -150,9 +225,12 @@ public class ResolveInfo implements Parcelable {
      * @return The icon associated with this match.
      */
     public final int getIconResource() {
+        if (noResourceId) return 0;
         if (icon != 0) return icon;
-        if (activityInfo != null) return activityInfo.getIconResource();
-        if (serviceInfo != null) return serviceInfo.getIconResource();
+        final ComponentInfo ci = getComponentInfo();
+        if (ci != null) {
+            return ci.getIconResource();
+        }
         return 0;
     }
 
@@ -160,36 +238,76 @@ public class ResolveInfo implements Parcelable {
         if (filter != null) {
             pw.println(prefix + "Filter:");
             filter.dump(pw, prefix + "  ");
-        } else {
-            pw.println(prefix + "Filter: null");
         }
         pw.println(prefix + "priority=" + priority
                 + " preferredOrder=" + preferredOrder
                 + " match=0x" + Integer.toHexString(match)
                 + " specificIndex=" + specificIndex
                 + " isDefault=" + isDefault);
-        pw.println(prefix + "labelRes=0x" + Integer.toHexString(labelRes)
-                + " nonLocalizedLabel=" + nonLocalizedLabel
-                + " icon=0x" + Integer.toHexString(icon));
+        if (resolvePackageName != null) {
+            pw.println(prefix + "resolvePackageName=" + resolvePackageName);
+        }
+        if (labelRes != 0 || nonLocalizedLabel != null || icon != 0) {
+            pw.println(prefix + "labelRes=0x" + Integer.toHexString(labelRes)
+                    + " nonLocalizedLabel=" + nonLocalizedLabel
+                    + " icon=0x" + Integer.toHexString(icon));
+        }
         if (activityInfo != null) {
             pw.println(prefix + "ActivityInfo:");
             activityInfo.dump(pw, prefix + "  ");
         } else if (serviceInfo != null) {
             pw.println(prefix + "ServiceInfo:");
-            // TODO
-            //serviceInfo.dump(pw, prefix + "  ");
+            serviceInfo.dump(pw, prefix + "  ");
+        } else if (providerInfo != null) {
+            pw.println(prefix + "ProviderInfo:");
+            providerInfo.dump(pw, prefix + "  ");
         }
     }
     
     public ResolveInfo() {
+        targetUserId = UserHandle.USER_CURRENT;
+    }
+
+    public ResolveInfo(ResolveInfo orig) {
+        activityInfo = orig.activityInfo;
+        serviceInfo = orig.serviceInfo;
+        providerInfo = orig.providerInfo;
+        filter = orig.filter;
+        priority = orig.priority;
+        preferredOrder = orig.preferredOrder;
+        match = orig.match;
+        specificIndex = orig.specificIndex;
+        labelRes = orig.labelRes;
+        nonLocalizedLabel = orig.nonLocalizedLabel;
+        icon = orig.icon;
+        resolvePackageName = orig.resolvePackageName;
+        system = orig.system;
+        targetUserId = orig.targetUserId;
     }
 
     public String toString() {
-        ComponentInfo ci = activityInfo != null ? activityInfo : serviceInfo;
-        return "ResolveInfo{"
-            + Integer.toHexString(System.identityHashCode(this))
-            + " " + ci.name + " p=" + priority + " o="
-            + preferredOrder + " m=0x" + Integer.toHexString(match) + "}";
+        final ComponentInfo ci = getComponentInfo();
+        StringBuilder sb = new StringBuilder(128);
+        sb.append("ResolveInfo{");
+        sb.append(Integer.toHexString(System.identityHashCode(this)));
+        sb.append(' ');
+        ComponentName.appendShortString(sb, ci.packageName, ci.name);
+        if (priority != 0) {
+            sb.append(" p=");
+            sb.append(priority);
+        }
+        if (preferredOrder != 0) {
+            sb.append(" o=");
+            sb.append(preferredOrder);
+        }
+        sb.append(" m=0x");
+        sb.append(Integer.toHexString(match));
+        if (targetUserId != UserHandle.USER_CURRENT) {
+            sb.append(" targetUserId=");
+            sb.append(targetUserId);
+        }
+        sb.append('}');
+        return sb.toString();
     }
 
     public int describeContents() {
@@ -203,6 +321,9 @@ public class ResolveInfo implements Parcelable {
         } else if (serviceInfo != null) {
             dest.writeInt(2);
             serviceInfo.writeToParcel(dest, parcelableFlags);
+        } else if (providerInfo != null) {
+            dest.writeInt(3);
+            providerInfo.writeToParcel(dest, parcelableFlags);
         } else {
             dest.writeInt(0);
         }
@@ -219,6 +340,10 @@ public class ResolveInfo implements Parcelable {
         dest.writeInt(labelRes);
         TextUtils.writeToParcel(nonLocalizedLabel, dest, parcelableFlags);
         dest.writeInt(icon);
+        dest.writeString(resolvePackageName);
+        dest.writeInt(targetUserId);
+        dest.writeInt(system ? 1 : 0);
+        dest.writeInt(noResourceId ? 1 : 0);
     }
 
     public static final Creator<ResolveInfo> CREATOR
@@ -232,18 +357,21 @@ public class ResolveInfo implements Parcelable {
     };
 
     private ResolveInfo(Parcel source) {
+        activityInfo = null;
+        serviceInfo = null;
+        providerInfo = null;
         switch (source.readInt()) {
             case 1:
                 activityInfo = ActivityInfo.CREATOR.createFromParcel(source);
-                serviceInfo = null;
                 break;
             case 2:
                 serviceInfo = ServiceInfo.CREATOR.createFromParcel(source);
-                activityInfo = null;
+                break;
+            case 3:
+                providerInfo = ProviderInfo.CREATOR.createFromParcel(source);
                 break;
             default:
-                activityInfo = null;
-                serviceInfo = null;
+                Slog.w(TAG, "Missing ComponentInfo!");
                 break;
         }
         if (source.readInt() != 0) {
@@ -257,24 +385,36 @@ public class ResolveInfo implements Parcelable {
         nonLocalizedLabel
                 = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(source);
         icon = source.readInt();
+        resolvePackageName = source.readString();
+        targetUserId = source.readInt();
+        system = source.readInt() != 0;
+        noResourceId = source.readInt() != 0;
     }
     
     public static class DisplayNameComparator
             implements Comparator<ResolveInfo> {
         public DisplayNameComparator(PackageManager pm) {
             mPM = pm;
+            mCollator.setStrength(Collator.PRIMARY);
         }
 
         public final int compare(ResolveInfo a, ResolveInfo b) {
+            // We want to put the one targeted to another user at the end of the dialog.
+            if (a.targetUserId != UserHandle.USER_CURRENT) {
+                return 1;
+            }
+            if (b.targetUserId != UserHandle.USER_CURRENT) {
+                return -1;
+            }
             CharSequence  sa = a.loadLabel(mPM);
             if (sa == null) sa = a.activityInfo.name;
             CharSequence  sb = b.loadLabel(mPM);
             if (sb == null) sb = b.activityInfo.name;
             
-            return sCollator.compare(sa.toString(), sb.toString());
+            return mCollator.compare(sa.toString(), sb.toString());
         }
 
-        private final Collator   sCollator = Collator.getInstance();
+        private final Collator   mCollator = Collator.getInstance();
         private PackageManager   mPM;
     }
 }

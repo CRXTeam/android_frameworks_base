@@ -22,17 +22,24 @@ import android.content.res.TypedArray;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
 
 /**
  * Base class for a {@link FrameLayout} container that will perform animations
  * when switching between its views.
+ *
+ * @attr ref android.R.styleable#ViewAnimator_inAnimation
+ * @attr ref android.R.styleable#ViewAnimator_outAnimation
+ * @attr ref android.R.styleable#ViewAnimator_animateFirstView
  */
 public class ViewAnimator extends FrameLayout {
 
     int mWhichChild = 0;
     boolean mFirstTime = true;
+
     boolean mAnimateFirstTime = true;
 
     Animation mInAnimation;
@@ -40,7 +47,7 @@ public class ViewAnimator extends FrameLayout {
 
     public ViewAnimator(Context context) {
         super(context);
-        initViewAnimator();
+        initViewAnimator(context, null);
     }
 
     public ViewAnimator(Context context, AttributeSet attrs) {
@@ -56,20 +63,42 @@ public class ViewAnimator extends FrameLayout {
         if (resource > 0) {
             setOutAnimation(context, resource);
         }
+
+        boolean flag = a.getBoolean(com.android.internal.R.styleable.ViewAnimator_animateFirstView, true);
+        setAnimateFirstView(flag);
+
         a.recycle();
 
-        initViewAnimator();
+        initViewAnimator(context, attrs);
     }
 
-    private void initViewAnimator() {
-        mMeasureAllChildren = true;
+    /**
+     * Initialize this {@link ViewAnimator}, possibly setting
+     * {@link #setMeasureAllChildren(boolean)} based on {@link FrameLayout} flags.
+     */
+    private void initViewAnimator(Context context, AttributeSet attrs) {
+        if (attrs == null) {
+            // For compatibility, always measure children when undefined.
+            mMeasureAllChildren = true;
+            return;
+        }
+
+        // For compatibility, default to measure children, but allow XML
+        // attribute to override.
+        final TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.FrameLayout);
+        final boolean measureAllChildren = a.getBoolean(
+                com.android.internal.R.styleable.FrameLayout_measureAllChildren, true);
+        setMeasureAllChildren(measureAllChildren);
+        a.recycle();
     }
-    
+
     /**
      * Sets which child view will be displayed.
-     * 
+     *
      * @param whichChild the index of the child view to display
      */
+    @android.view.RemotableViewMethod
     public void setDisplayedChild(int whichChild) {
         mWhichChild = whichChild;
         if (whichChild >= getChildCount()) {
@@ -85,17 +114,18 @@ public class ViewAnimator extends FrameLayout {
             requestFocus(FOCUS_FORWARD);
         }
     }
-    
+
     /**
      * Returns the index of the currently displayed child view.
      */
     public int getDisplayedChild() {
         return mWhichChild;
     }
-    
+
     /**
      * Manually shows the next child.
      */
+    @android.view.RemotableViewMethod
     public void showNext() {
         setDisplayedChild(mWhichChild + 1);
     }
@@ -103,10 +133,40 @@ public class ViewAnimator extends FrameLayout {
     /**
      * Manually shows the previous child.
      */
+    @android.view.RemotableViewMethod
     public void showPrevious() {
         setDisplayedChild(mWhichChild - 1);
     }
 
+    /**
+     * Shows only the specified child. The other displays Views exit the screen,
+     * optionally with the with the {@link #getOutAnimation() out animation} and
+     * the specified child enters the screen, optionally with the
+     * {@link #getInAnimation() in animation}.
+     *
+     * @param childIndex The index of the child to be shown.
+     * @param animate Whether or not to use the in and out animations, defaults
+     *            to true.
+     */
+    void showOnly(int childIndex, boolean animate) {
+        final int count = getChildCount();
+        for (int i = 0; i < count; i++) {
+            final View child = getChildAt(i);
+            if (i == childIndex) {
+                if (animate && mInAnimation != null) {
+                    child.startAnimation(mInAnimation);
+                }
+                child.setVisibility(View.VISIBLE);
+                mFirstTime = false;
+            } else {
+                if (animate && mOutAnimation != null && child.getVisibility() == View.VISIBLE) {
+                    child.startAnimation(mOutAnimation);
+                } else if (child.getAnimation() == mInAnimation)
+                    child.clearAnimation();
+                child.setVisibility(View.GONE);
+            }
+        }
+    }
     /**
      * Shows only the specified child. The other displays Views exit the screen
      * with the {@link #getOutAnimation() out animation} and the specified child
@@ -115,23 +175,8 @@ public class ViewAnimator extends FrameLayout {
      * @param childIndex The index of the child to be shown.
      */
     void showOnly(int childIndex) {
-        final int count = getChildCount();
-        for (int i = 0; i < count; i++) {
-            final View child = getChildAt(i);
-            if (i == childIndex) {
-                if ((!mFirstTime || mAnimateFirstTime) && mInAnimation != null) {
-                    child.startAnimation(mInAnimation);
-                }
-                child.setVisibility(View.VISIBLE);
-                mFirstTime = false;
-            } else {
-                if (mOutAnimation != null && child.getVisibility() == View.VISIBLE) {
-                    child.startAnimation(mOutAnimation);
-                } else if (child.getAnimation() == mInAnimation)
-                    child.clearAnimation();
-                child.setVisibility(View.GONE);
-            }
-        }
+        final boolean animate = (!mFirstTime || mAnimateFirstTime);
+        showOnly(childIndex, animate);
     }
 
     @Override
@@ -142,6 +187,60 @@ public class ViewAnimator extends FrameLayout {
         } else {
             child.setVisibility(View.GONE);
         }
+        if (index >= 0 && mWhichChild >= index) {
+            // Added item above current one, increment the index of the displayed child
+            setDisplayedChild(mWhichChild + 1);
+        }
+    }
+
+    @Override
+    public void removeAllViews() {
+        super.removeAllViews();
+        mWhichChild = 0;
+        mFirstTime = true;
+    }
+
+    @Override
+    public void removeView(View view) {
+        final int index = indexOfChild(view);
+        if (index >= 0) {
+            removeViewAt(index);
+        }
+    }
+
+    @Override
+    public void removeViewAt(int index) {
+        super.removeViewAt(index);
+        final int childCount = getChildCount();
+        if (childCount == 0) {
+            mWhichChild = 0;
+            mFirstTime = true;
+        } else if (mWhichChild >= childCount) {
+            // Displayed is above child count, so float down to top of stack
+            setDisplayedChild(childCount - 1);
+        } else if (mWhichChild == index) {
+            // Displayed was removed, so show the new child living in its place
+            setDisplayedChild(mWhichChild);
+        }
+    }
+
+    public void removeViewInLayout(View view) {
+        removeView(view);
+    }
+
+    public void removeViews(int start, int count) {
+        super.removeViews(start, count);
+        if (getChildCount() == 0) {
+            mWhichChild = 0;
+            mFirstTime = true;
+        } else if (mWhichChild >= start && mWhichChild < start + count) {
+            // Try showing new displayed child, wrapping if needed
+            setDisplayedChild(mWhichChild);
+        }
+    }
+
+    public void removeViewsInLayout(int start, int count) {
+        removeViews(start, count);
     }
 
     /**
@@ -230,8 +329,21 @@ public class ViewAnimator extends FrameLayout {
     }
 
     /**
+     * Returns whether the current View should be animated the first time the ViewAnimator
+     * is displayed.
+     *
+     * @return true if the current View will be animated the first time it is displayed,
+     * false otherwise.
+     *
+     * @see #setAnimateFirstView(boolean)
+     */
+    public boolean getAnimateFirstView() {
+        return mAnimateFirstTime;
+    }
+
+    /**
      * Indicates whether the current View should be animated the first time
-     * the ViewAnimation is displayed.
+     * the ViewAnimator is displayed.
      *
      * @param animate True to animate the current View the first time it is displayed,
      *                false otherwise.
@@ -243,5 +355,17 @@ public class ViewAnimator extends FrameLayout {
     @Override
     public int getBaseline() {
         return (getCurrentView() != null) ? getCurrentView().getBaseline() : super.getBaseline();
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(ViewAnimator.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(ViewAnimator.class.getName());
     }
 }

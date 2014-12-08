@@ -18,37 +18,41 @@ package android.widget;
 
 import android.content.Context;
 import android.util.AttributeSet;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 
 
 /**
- * A Seekbar is an extension of ProgressBar that adds a draggable thumb. The user can touch
- * the thumb and drag left or right to set the current progress level. 
- * 
+ * A SeekBar is an extension of ProgressBar that adds a draggable thumb. The user can touch
+ * the thumb and drag left or right to set the current progress level or use the arrow keys.
+ * Placing focusable widgets to the left or right of a SeekBar is discouraged. 
+ * <p>
+ * Clients of the SeekBar can attach a {@link SeekBar.OnSeekBarChangeListener} to
  * be notified of the user's actions.
- * Clients of the Seekbar can attach a {@link SeekBar.OnSeekBarChangeListener} to
  *
  * @attr ref android.R.styleable#SeekBar_thumb
  */
 public class SeekBar extends AbsSeekBar {
 
     /**
-     * A callback that notifies clients when the progress level has been changed. This 
-     * includes changes that were initiated by the user through a touch gesture as well
-     * as changes that were initiated programmatically. 
+     * A callback that notifies clients when the progress level has been
+     * changed. This includes changes that were initiated by the user through a
+     * touch gesture or arrow key/trackball as well as changes that were initiated
+     * programmatically.
      */
     public interface OnSeekBarChangeListener {
         
         /**
-         * Notification that the progress level has changed. Clients can use the fromTouch parameter
+         * Notification that the progress level has changed. Clients can use the fromUser parameter
          * to distinguish user-initiated changes from those that occurred programmatically.
          * 
          * @param seekBar The SeekBar whose progress has changed
          * @param progress The current progress level. This will be in the range 0..max where max
          *        was set by {@link ProgressBar#setMax(int)}. (The default value for max is 100.)
-         * @param fromTouch True if the progress change was initiated by a user's touch gesture.
+         * @param fromUser True if the progress change was initiated by the user.
          */
-        void onProgressChanged(SeekBar seekBar, int progress, boolean fromTouch);
+        void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser);
     
         /**
          * Notification that the user has started a touch gesture. Clients may want to use this
@@ -75,16 +79,20 @@ public class SeekBar extends AbsSeekBar {
         this(context, attrs, com.android.internal.R.attr.seekBarStyle);
     }
 
-    public SeekBar(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public SeekBar(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public SeekBar(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
     }
 
     @Override
-    void onProgressRefresh(float scale, boolean fromTouch) {
-        super.onProgressRefresh(scale, fromTouch);
+    void onProgressRefresh(float scale, boolean fromUser) {
+        super.onProgressRefresh(scale, fromUser);
 
         if (mOnSeekBarChangeListener != null) {
-            mOnSeekBarChangeListener.onProgressChanged(this, getProgress(), fromTouch);
+            mOnSeekBarChangeListener.onProgressChanged(this, getProgress(), fromUser);
         }
     }
 
@@ -102,6 +110,7 @@ public class SeekBar extends AbsSeekBar {
     
     @Override
     void onStartTrackingTouch() {
+        super.onStartTrackingTouch();
         if (mOnSeekBarChangeListener != null) {
             mOnSeekBarChangeListener.onStartTrackingTouch(this);
         }
@@ -109,8 +118,21 @@ public class SeekBar extends AbsSeekBar {
     
     @Override
     void onStopTrackingTouch() {
+        super.onStopTrackingTouch();
         if (mOnSeekBarChangeListener != null) {
             mOnSeekBarChangeListener.onStopTrackingTouch(this);
         }
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(SeekBar.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(SeekBar.class.getName());
     }
 }

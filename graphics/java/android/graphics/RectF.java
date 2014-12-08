@@ -16,6 +16,10 @@
 
 package android.graphics;
 
+import java.io.PrintWriter;
+
+import android.os.Parcel;
+import android.os.Parcelable;
 import android.util.FloatMath;
 import com.android.internal.util.FastMath;
 
@@ -26,7 +30,7 @@ import com.android.internal.util.FastMath;
  * the rectangle's width and height. Note: most methods do not check to see that
  * the coordinates are sorted correctly (i.e. left <= right and top <= bottom).
  */
-public class RectF {
+public class RectF implements Parcelable {
     public float left;
     public float top;
     public float right;
@@ -42,9 +46,9 @@ public class RectF {
      * checking is performed, so the caller must ensure that left <= right and
      * top <= bottom.
      *
-     * @param left   The X coordinate of the left side of the rectagle
+     * @param left   The X coordinate of the left side of the rectangle
      * @param top    The Y coordinate of the top of the rectangle
-     * @param right  The X coordinate of the right side of the rectagle
+     * @param right  The X coordinate of the right side of the rectangle
      * @param bottom The Y coordinate of the bottom of the rectangle
      */
     public RectF(float left, float top, float right, float bottom) {
@@ -62,24 +66,79 @@ public class RectF {
      *          rectangle.
      */
     public RectF(RectF r) {
-        left = r.left;
-        top = r.top;
-        right = r.right;
-        bottom = r.bottom;
+        if (r == null) {
+            left = top = right = bottom = 0.0f;
+        } else {
+            left = r.left;
+            top = r.top;
+            right = r.right;
+            bottom = r.bottom;
+        }
     }
     
     public RectF(Rect r) {
-        left = r.left;
-        top = r.top;
-        right = r.right;
-        bottom = r.bottom;
+        if (r == null) {
+            left = top = right = bottom = 0.0f;
+        } else {
+            left = r.left;
+            top = r.top;
+            right = r.right;
+            bottom = r.bottom;
+        }
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+
+        RectF r = (RectF) o;
+        return left == r.left && top == r.top && right == r.right && bottom == r.bottom;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = (left != +0.0f ? Float.floatToIntBits(left) : 0);
+        result = 31 * result + (top != +0.0f ? Float.floatToIntBits(top) : 0);
+        result = 31 * result + (right != +0.0f ? Float.floatToIntBits(right) : 0);
+        result = 31 * result + (bottom != +0.0f ? Float.floatToIntBits(bottom) : 0);
+        return result;
     }
 
     public String toString() {
         return "RectF(" + left + ", " + top + ", "
                       + right + ", " + bottom + ")";
     }
+
+    /**
+     * Return a string representation of the rectangle in a compact form.
+     */
+    public String toShortString() {
+        return toShortString(new StringBuilder(32));
+    }
     
+    /**
+     * Return a string representation of the rectangle in a compact form.
+     * @hide
+     */
+    public String toShortString(StringBuilder sb) {
+        sb.setLength(0);
+        sb.append('['); sb.append(left); sb.append(',');
+        sb.append(top); sb.append("]["); sb.append(right);
+        sb.append(','); sb.append(bottom); sb.append(']');
+        return sb.toString();
+    }
+    
+    /**
+     * Print short representation to given writer.
+     * @hide
+     */
+    public void printShortString(PrintWriter pw) {
+        pw.print('['); pw.print(left); pw.print(',');
+        pw.print(top); pw.print("]["); pw.print(right);
+        pw.print(','); pw.print(bottom); pw.print(']');
+    }
+
     /**
      * Returns true if the rectangle is empty (left >= right or top >= bottom)
      */
@@ -131,9 +190,9 @@ public class RectF {
      * checking is performed, so it is up to the caller to ensure that
      * left <= right and top <= bottom.
      *
-     * @param left   The X coordinate of the left side of the rectagle
+     * @param left   The X coordinate of the left side of the rectangle
      * @param top    The Y coordinate of the top of the rectangle
-     * @param right  The X coordinate of the right side of the rectagle
+     * @param right  The X coordinate of the right side of the rectangle
      * @param bottom The Y coordinate of the bottom of the rectangle
      */
     public void set(float left, float top, float right, float bottom) {
@@ -474,5 +533,55 @@ public class RectF {
             top = bottom;
             bottom = temp;
         }
+    }
+
+    /**
+     * Parcelable interface methods
+     */
+    public int describeContents() {
+        return 0;
+    }
+    
+    /**
+     * Write this rectangle to the specified parcel. To restore a rectangle from
+     * a parcel, use readFromParcel()
+     * @param out The parcel to write the rectangle's coordinates into
+     */
+    public void writeToParcel(Parcel out, int flags) {
+        out.writeFloat(left);
+        out.writeFloat(top);
+        out.writeFloat(right);
+        out.writeFloat(bottom);
+    }
+    
+    public static final Parcelable.Creator<RectF> CREATOR = new Parcelable.Creator<RectF>() {
+        /**
+         * Return a new rectangle from the data in the specified parcel.
+         */
+        public RectF createFromParcel(Parcel in) {
+            RectF r = new RectF();
+            r.readFromParcel(in);
+            return r;
+        }
+        
+        /**
+         * Return an array of rectangles of the specified size.
+         */
+        public RectF[] newArray(int size) {
+            return new RectF[size];
+        }
+    };
+    
+    /**
+     * Set the rectangle's coordinates from the data stored in the specified
+     * parcel. To write a rectangle to a parcel, call writeToParcel().
+     *
+     * @param in The parcel to read the rectangle's coordinates from
+     */
+    public void readFromParcel(Parcel in) {
+        left = in.readFloat();
+        top = in.readFloat();
+        right = in.readFloat();
+        bottom = in.readFloat();
     }
 }

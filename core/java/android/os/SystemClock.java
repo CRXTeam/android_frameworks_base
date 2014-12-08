@@ -16,6 +16,9 @@
 
 package android.os;
 
+import android.app.IAlarmManager;
+import android.content.Context;
+import android.util.Slog;
 
 /**
  * Core timekeeping facilities.
@@ -30,7 +33,13 @@ package android.os;
  *     backwards or forwards unpredictably.  This clock should only be used
  *     when correspondence with real-world dates and times is important, such
  *     as in a calendar or alarm clock application.  Interval or elapsed
- *     time measurements should use a different clock.
+ *     time measurements should use a different clock.  If you are using
+ *     System.currentTimeMillis(), consider listening to the
+ *     {@link android.content.Intent#ACTION_TIME_TICK ACTION_TIME_TICK},
+ *     {@link android.content.Intent#ACTION_TIME_CHANGED ACTION_TIME_CHANGED}
+ *     and {@link android.content.Intent#ACTION_TIMEZONE_CHANGED
+ *     ACTION_TIMEZONE_CHANGED} {@link android.content.Intent Intent}
+ *     broadcasts to find out when the time changes.
  *
  *     <li> <p> {@link #uptimeMillis} is counted in milliseconds since the
  *     system was booted.  This clock stops when the system enters deep
@@ -40,15 +49,16 @@ package android.os;
  *     such as {@link Thread#sleep(long) Thread.sleep(millls)},
  *     {@link Object#wait(long) Object.wait(millis)}, and
  *     {@link System#nanoTime System.nanoTime()}.  This clock is guaranteed
- *     to be monotonic, and is the recommended basis for the general purpose
- *     interval timing of user interface events, performance measurements,
- *     and anything else that does not need to measure elapsed time during
- *     device sleep.  Most methods that accept a timestamp value expect the
- *     {@link #uptimeMillis} clock.
+ *     to be monotonic, and is suitable for interval timing when the
+ *     interval does not span device sleep.  Most methods that accept a
+ *     timestamp value currently expect the {@link #uptimeMillis} clock.
  *
- *     <li> <p> {@link #elapsedRealtime} is counted in milliseconds since the
- *     system was booted, including deep sleep.  This clock should be used
- *     when measuring time intervals that may span periods of system sleep.
+ *     <li> <p> {@link #elapsedRealtime} and {@link #elapsedRealtimeNanos}
+ *     return the time since the system was booted, and include deep sleep.
+ *     This clock is guaranteed to be monotonic, and continues to tick even
+ *     when the CPU is in power saving modes, so is the recommend basis
+ *     for general purpose interval timing.
+ *
  * </ul>
  *
  * There are several mechanisms for controlling the timing of events:
@@ -82,6 +92,8 @@ package android.os;
  * </ul>
  */
 public final class SystemClock {
+    private static final String TAG = "SystemClock";
+
     /**
      * This class is uninstantiable.
      */
@@ -127,12 +139,26 @@ public final class SystemClock {
      *
      * @return if the clock was successfully set to the specified time.
      */
-    native public static boolean setCurrentTimeMillis(long millis);
+    public static boolean setCurrentTimeMillis(long millis) {
+        IBinder b = ServiceManager.getService(Context.ALARM_SERVICE);
+        IAlarmManager mgr = IAlarmManager.Stub.asInterface(b);
+        if (mgr == null) {
+            return false;
+        }
+
+        try {
+            return mgr.setTime(millis);
+        } catch (RemoteException e) {
+            Slog.e(TAG, "Unable to set RTC", e);
+        } catch (SecurityException e) {
+            Slog.e(TAG, "Unable to set RTC", e);
+        }
+
+        return false;
+    }
 
     /**
      * Returns milliseconds since boot, not counting time spent in deep sleep.
-     * <b>Note:</b> This value may get reset occasionally (before it would
-     * otherwise wrap around).
      *
      * @return milliseconds of non-sleep uptime since boot.
      */
@@ -144,11 +170,36 @@ public final class SystemClock {
      * @return elapsed milliseconds since boot.
      */
     native public static long elapsedRealtime();
-    
+
+    /**
+     * Returns nanoseconds since boot, including time spent in sleep.
+     *
+     * @return elapsed nanoseconds since boot.
+     */
+    public static native long elapsedRealtimeNanos();
+
     /**
      * Returns milliseconds running in the current thread.
      * 
      * @return elapsed milliseconds in the thread
      */
     public static native long currentThreadTimeMillis();
+
+    /**
+     * Returns microseconds running in the current thread.
+     * 
+     * @return elapsed microseconds in the thread
+     * 
+     * @hide
+     */
+    public static native long currentThreadTimeMicro();
+
+    /**
+     * Returns current wall time in  microseconds.
+     * 
+     * @return elapsed microseconds in wall time
+     * 
+     * @hide
+     */
+    public static native long currentTimeMicro();
 }

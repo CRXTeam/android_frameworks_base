@@ -18,11 +18,14 @@ package android.util;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.InvocationTargetException;
+import java.util.Locale;
 
 /**
- * <p>Various utilities for debugging and logging.</p> 
+ * <p>Various utilities for debugging and logging.</p>
  */
 public class DebugUtils {
+    /** @hide */ public DebugUtils() {}
+
     /**
      * <p>Filters objects against the <code>ANDROID_OBJECT_FILTER</code>
      * environment variable. This environment variable can filter objects
@@ -43,8 +46,8 @@ public class DebugUtils {
      *
      * <p>This class is useful for debugging and logging purpose:</p>
      * <pre>
-     * if (Config.DEBUG) {
-     *   if (DebugUtils.isObjectSelected(childView) && Config.LOGV) {
+     * if (DEBUG) {
+     *   if (DebugUtils.isObjectSelected(childView) && LOGV_ENABLED) {
      *     Log.v(TAG, "Object " + childView + " logged!");
      *   }
      * }
@@ -76,7 +79,7 @@ public class DebugUtils {
                         Class<?> parent = klass;
                         do {
                             declaredMethod = parent.getDeclaredMethod("get" +
-                                    pair[0].substring(0, 1).toUpperCase() +
+                                    pair[0].substring(0, 1).toUpperCase(Locale.ROOT) +
                                     pair[0].substring(1),
                                     (Class[]) null);
                         } while ((parent = klass.getSuperclass()) != null &&
@@ -99,6 +102,25 @@ public class DebugUtils {
             }
         }
         return match;
+    }
+
+    /** @hide */
+    public static void buildShortClassTag(Object cls, StringBuilder out) {
+        if (cls == null) {
+            out.append("null");
+        } else {
+            String simpleName = cls.getClass().getSimpleName();
+            if (simpleName == null || simpleName.isEmpty()) {
+                simpleName = cls.getClass().getName();
+                int end = simpleName.lastIndexOf('.');
+                if (end > 0) {
+                    simpleName = simpleName.substring(end+1);
+                }
+            }
+            out.append(simpleName);
+            out.append('{');
+            out.append(Integer.toHexString(System.identityHashCode(cls)));
+        }
     }
 
 }

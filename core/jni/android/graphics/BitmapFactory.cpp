@@ -1,197 +1,53 @@
+#define LOG_TAG "BitmapFactory"
+
+#include "BitmapFactory.h"
+#include "NinePatchPeeker.h"
+#include "SkFrontBufferedStream.h"
 #include "SkImageDecoder.h"
+#include "SkMath.h"
 #include "SkPixelRef.h"
 #include "SkStream.h"
-#include "GraphicsJNI.h"
 #include "SkTemplates.h"
 #include "SkUtils.h"
 #include "CreateJavaOutputStreamAdaptor.h"
+#include "AutoDecodeCancel.h"
+#include "Utils.h"
+#include "JNIHelp.h"
+#include "GraphicsJNI.h"
 
 #include <android_runtime/AndroidRuntime.h>
-#include <utils/Asset.h>
-#include <utils/ResourceTypes.h>
+#include <androidfw/Asset.h>
+#include <androidfw/ResourceTypes.h>
+#include <cutils/compiler.h>
 #include <netinet/in.h>
+#include <stdio.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 
-static jclass gOptions_class;
-static jfieldID gOptions_justBoundsFieldID;
-static jfieldID gOptions_sampleSizeFieldID;
-static jfieldID gOptions_configFieldID;
-static jfieldID gOptions_ditherFieldID;
-static jfieldID gOptions_widthFieldID;
-static jfieldID gOptions_heightFieldID;
-static jfieldID gOptions_mimeFieldID;
+jfieldID gOptions_justBoundsFieldID;
+jfieldID gOptions_sampleSizeFieldID;
+jfieldID gOptions_configFieldID;
+jfieldID gOptions_premultipliedFieldID;
+jfieldID gOptions_mutableFieldID;
+jfieldID gOptions_ditherFieldID;
+jfieldID gOptions_preferQualityOverSpeedFieldID;
+jfieldID gOptions_scaledFieldID;
+jfieldID gOptions_densityFieldID;
+jfieldID gOptions_screenDensityFieldID;
+jfieldID gOptions_targetDensityFieldID;
+jfieldID gOptions_widthFieldID;
+jfieldID gOptions_heightFieldID;
+jfieldID gOptions_mimeFieldID;
+jfieldID gOptions_mCancelID;
+jfieldID gOptions_bitmapFieldID;
 
-static jclass gFileDescriptor_class;
-static jfieldID gFileDescriptor_descriptor;
+jfieldID gBitmap_nativeBitmapFieldID;
+jfieldID gBitmap_ninePatchInsetsFieldID;
 
-#if 0
-    #define TRACE_BITMAP(code)  code
-#else
-    #define TRACE_BITMAP(code)
-#endif
-
-//#define MIN_SIZE_TO_USE_MMAP    (4*1024)
-
-///////////////////////////////////////////////////////////////////////////////
-
-class AutoDecoderCancel {
-public:
-    AutoDecoderCancel(jobject options, SkImageDecoder* decoder);
-    ~AutoDecoderCancel();
-
-    static bool RequestCancel(jobject options);
-    
-private:
-    AutoDecoderCancel*  fNext;
-    jobject             fJOptions;  // java options object
-    SkImageDecoder*     fDecoder;
-};
-
-static SkMutex  gAutoDecoderCancelMutex;
-static AutoDecoderCancel* gAutoDecoderCancel;
-
-AutoDecoderCancel::AutoDecoderCancel(jobject joptions,
-                                       SkImageDecoder* decoder) {
-    fJOptions = joptions;
-    fDecoder = decoder;
-
-    // only need to be in the list if we have options
-    if (NULL != joptions) {
-        SkAutoMutexAcquire ac(gAutoDecoderCancelMutex);
-        
-        fNext = gAutoDecoderCancel;
-        gAutoDecoderCancel = this;
-    }
-}
-
-AutoDecoderCancel::~AutoDecoderCancel() {
-    const jobject joptions = fJOptions;
-    
-    if (NULL != joptions) {
-        SkAutoMutexAcquire ac(gAutoDecoderCancelMutex);
-        
-        // remove us
-        AutoDecoderCancel* pair = gAutoDecoderCancel;
-        AutoDecoderCancel* prev = NULL;
-        while (pair != NULL) {
-            AutoDecoderCancel* next = pair->fNext;
-            if (pair->fJOptions == joptions) {
-                SkASSERT(pair->fDecoder == fDecoder);
-                if (prev) {
-                    prev->fNext = next;
-                } else {
-                    gAutoDecoderCancel = next;
-                }
-                return;
-            }
-            pair = next;
-        }
-        SkDebugf("xxxxxxxxxxxxxxxxxxxxxxx not found in pair list %p %p\n",
-                 fJOptions, fDecoder);
-    }
-}
-
-bool AutoDecoderCancel::RequestCancel(jobject joptions) {
-    SkAutoMutexAcquire ac(gAutoDecoderCancelMutex);
-
-    AutoDecoderCancel* pair = gAutoDecoderCancel;
-    while (pair != NULL) {
-        if (pair->fJOptions == joptions) {
-            pair->fDecoder->cancelDecode();
-            return true;
-        }
-        pair = pair->fNext;
-    }
-    return false;
-}
-
-///////////////////////////////////////////////////////////////////////////////
+jclass gInsetStruct_class;
+jmethodID gInsetStruct_constructorMethodID;
 
 using namespace android;
-
-class NinePatchPeeker : public SkImageDecoder::Peeker {
-public:
-    NinePatchPeeker() {
-        fPatchIsValid = false;
-    }
-
-    ~NinePatchPeeker() {
-        if (fPatchIsValid) {
-            free(fPatch);
-        }
-    }
-
-    bool    fPatchIsValid;
-    Res_png_9patch*  fPatch;
-
-    virtual bool peek(const char tag[], const void* data, size_t length) {
-        if (strcmp("npTc", tag) == 0 && length >= sizeof(Res_png_9patch)) {
-            Res_png_9patch* patch = (Res_png_9patch*) data;
-            size_t patchSize = patch->serializedSize();
-            assert(length == patchSize);
-            // You have to copy the data because it is owned by the png reader
-            Res_png_9patch* patchNew = (Res_png_9patch*) malloc(patchSize);
-            memcpy(patchNew, patch, patchSize);
-            Res_png_9patch::deserialize(patchNew);
-            patchNew->fileToDevice();
-            if (fPatchIsValid) {
-                free(fPatch);
-            }
-            fPatch = patchNew;
-            //printf("9patch: (%d,%d)-(%d,%d)\n",
-            //       fPatch.sizeLeft, fPatch.sizeTop,
-            //       fPatch.sizeRight, fPatch.sizeBottom);
-            fPatchIsValid = true;
-        } else {
-            fPatch = NULL;
-        }
-        return true;    // keep on decoding
-    }
-};
-
-class AssetStreamAdaptor : public SkStream {
-public:
-    AssetStreamAdaptor(Asset* a) : fAsset(a) {}
-    
-	virtual bool rewind() {
-        off_t pos = fAsset->seek(0, SEEK_SET);
-        return pos != (off_t)-1;
-    }
-    
-	virtual size_t read(void* buffer, size_t size) {
-        ssize_t amount;
-        
-        if (NULL == buffer) {
-            if (0 == size) {  // caller is asking us for our total length
-                return fAsset->getLength();
-            }
-            // asset->seek returns new total offset
-            // we want to return amount that was skipped
-
-            off_t oldOffset = fAsset->seek(0, SEEK_CUR);
-            if (-1 == oldOffset) {
-                return 0;
-            }
-            off_t newOffset = fAsset->seek(size, SEEK_CUR);
-            if (-1 == newOffset) {
-                return 0;
-            }
-            amount = newOffset - oldOffset;
-        } else {
-            amount = fAsset->read(buffer, size);
-        }
-        
-        if (amount < 0) {
-            amount = 0;
-        }
-        return amount;
-    }
-    
-private:
-    Asset*  fAsset;
-};
-
-///////////////////////////////////////////////////////////////////////////////
 
 static inline int32_t validOrNeg1(bool isValid, int32_t value) {
 //    return isValid ? value : -1;
@@ -199,7 +55,7 @@ static inline int32_t validOrNeg1(bool isValid, int32_t value) {
     return ((int32_t)isValid - 1) | value;
 }
 
-static jstring getMimeTypeString(JNIEnv* env, SkImageDecoder::Format format) {
+jstring getMimeTypeString(JNIEnv* env, SkImageDecoder::Format format) {
     static const struct {
         SkImageDecoder::Format fFormat;
         const char*            fMimeType;
@@ -209,9 +65,10 @@ static jstring getMimeTypeString(JNIEnv* env, SkImageDecoder::Format format) {
         { SkImageDecoder::kICO_Format,  "image/x-ico" },
         { SkImageDecoder::kJPEG_Format, "image/jpeg" },
         { SkImageDecoder::kPNG_Format,  "image/png" },
+        { SkImageDecoder::kWEBP_Format, "image/webp" },
         { SkImageDecoder::kWBMP_Format, "image/vnd.wap.wbmp" }
     };
-    
+
     const char* cstr = NULL;
     for (size_t i = 0; i < SK_ARRAY_COUNT(gMimeTypes); i++) {
         if (gMimeTypes[i].fFormat == format) {
@@ -227,209 +84,455 @@ static jstring getMimeTypeString(JNIEnv* env, SkImageDecoder::Format format) {
     return jstr;
 }
 
-static jobject doDecode(JNIEnv* env, SkStream* stream, jobject padding,
-                        jobject options) {
+static bool optionsJustBounds(JNIEnv* env, jobject options) {
+    return options != NULL && env->GetBooleanField(options, gOptions_justBoundsFieldID);
+}
+
+static void scaleDivRange(int32_t* divs, int count, float scale, int maxValue) {
+    for (int i = 0; i < count; i++) {
+        divs[i] = int32_t(divs[i] * scale + 0.5f);
+        if (i > 0 && divs[i] == divs[i - 1]) {
+            divs[i]++; // avoid collisions
+        }
+    }
+
+    if (CC_UNLIKELY(divs[count - 1] > maxValue)) {
+        // if the collision avoidance above put some divs outside the bounds of the bitmap,
+        // slide outer stretchable divs inward to stay within bounds
+        int highestAvailable = maxValue;
+        for (int i = count - 1; i >= 0; i--) {
+            divs[i] = highestAvailable;
+            if (i > 0 && divs[i] <= divs[i-1]){
+                // keep shifting
+                highestAvailable = divs[i] - 1;
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+static void scaleNinePatchChunk(android::Res_png_9patch* chunk, float scale,
+        int scaledWidth, int scaledHeight) {
+    chunk->paddingLeft = int(chunk->paddingLeft * scale + 0.5f);
+    chunk->paddingTop = int(chunk->paddingTop * scale + 0.5f);
+    chunk->paddingRight = int(chunk->paddingRight * scale + 0.5f);
+    chunk->paddingBottom = int(chunk->paddingBottom * scale + 0.5f);
+
+    scaleDivRange(chunk->getXDivs(), chunk->numXDivs, scale, scaledWidth);
+    scaleDivRange(chunk->getYDivs(), chunk->numYDivs, scale, scaledHeight);
+}
+
+static SkColorType colorTypeForScaledOutput(SkColorType colorType) {
+    switch (colorType) {
+        case kUnknown_SkColorType:
+        case kIndex_8_SkColorType:
+            return kN32_SkColorType;
+        default:
+            break;
+    }
+    return colorType;
+}
+
+class ScaleCheckingAllocator : public SkBitmap::HeapAllocator {
+public:
+    ScaleCheckingAllocator(float scale, int size)
+            : mScale(scale), mSize(size) {
+    }
+
+    virtual bool allocPixelRef(SkBitmap* bitmap, SkColorTable* ctable) {
+        // accounts for scale in final allocation, using eventual size and config
+        const int bytesPerPixel = SkColorTypeBytesPerPixel(
+                colorTypeForScaledOutput(bitmap->colorType()));
+        const int requestedSize = bytesPerPixel *
+                int(bitmap->width() * mScale + 0.5f) *
+                int(bitmap->height() * mScale + 0.5f);
+        if (requestedSize > mSize) {
+            ALOGW("bitmap for alloc reuse (%d bytes) can't fit scaled bitmap (%d bytes)",
+                    mSize, requestedSize);
+            return false;
+        }
+        return SkBitmap::HeapAllocator::allocPixelRef(bitmap, ctable);
+    }
+private:
+    const float mScale;
+    const int mSize;
+};
+
+class RecyclingPixelAllocator : public SkBitmap::Allocator {
+public:
+    RecyclingPixelAllocator(SkPixelRef* pixelRef, unsigned int size)
+            : mPixelRef(pixelRef), mSize(size) {
+        SkSafeRef(mPixelRef);
+    }
+
+    ~RecyclingPixelAllocator() {
+        SkSafeUnref(mPixelRef);
+    }
+
+    virtual bool allocPixelRef(SkBitmap* bitmap, SkColorTable* ctable) {
+        const SkImageInfo& info = bitmap->info();
+        if (info.fColorType == kUnknown_SkColorType) {
+            ALOGW("unable to reuse a bitmap as the target has an unknown bitmap configuration");
+            return false;
+        }
+
+        const int64_t size64 = info.getSafeSize64(bitmap->rowBytes());
+        if (!sk_64_isS32(size64)) {
+            ALOGW("bitmap is too large");
+            return false;
+        }
+
+        const size_t size = sk_64_asS32(size64);
+        if (size > mSize) {
+            ALOGW("bitmap marked for reuse (%d bytes) can't fit new bitmap (%d bytes)",
+                    mSize, size);
+            return false;
+        }
+
+        // Create a new pixelref with the new ctable that wraps the previous pixelref
+        SkPixelRef* pr = new AndroidPixelRef(*static_cast<AndroidPixelRef*>(mPixelRef),
+                info, bitmap->rowBytes(), ctable);
+
+        bitmap->setPixelRef(pr)->unref();
+        // since we're already allocated, we lockPixels right away
+        // HeapAllocator/JavaPixelAllocator behaves this way too
+        bitmap->lockPixels();
+        return true;
+    }
+
+private:
+    SkPixelRef* const mPixelRef;
+    const unsigned int mSize;
+};
+
+static jobject doDecode(JNIEnv* env, SkStreamRewindable* stream, jobject padding, jobject options) {
 
     int sampleSize = 1;
-    SkImageDecoder::Mode mode = SkImageDecoder::kDecodePixels_Mode;
-    SkBitmap::Config prefConfig = SkBitmap::kNo_Config;
+
+    SkImageDecoder::Mode decodeMode = SkImageDecoder::kDecodePixels_Mode;
+    SkColorType prefColorType = kN32_SkColorType;
+
     bool doDither = true;
-    
-    if (NULL != options) {
+    bool isMutable = false;
+    float scale = 1.0f;
+    bool preferQualityOverSpeed = false;
+    bool requireUnpremultiplied = false;
+
+    jobject javaBitmap = NULL;
+
+    if (options != NULL) {
         sampleSize = env->GetIntField(options, gOptions_sampleSizeFieldID);
-        if (env->GetBooleanField(options, gOptions_justBoundsFieldID)) {
-            mode = SkImageDecoder::kDecodeBounds_Mode;
+        if (optionsJustBounds(env, options)) {
+            decodeMode = SkImageDecoder::kDecodeBounds_Mode;
         }
+
         // initialize these, in case we fail later on
         env->SetIntField(options, gOptions_widthFieldID, -1);
         env->SetIntField(options, gOptions_heightFieldID, -1);
         env->SetObjectField(options, gOptions_mimeFieldID, 0);
-        
+
         jobject jconfig = env->GetObjectField(options, gOptions_configFieldID);
-        prefConfig = GraphicsJNI::getNativeBitmapConfig(env, jconfig);
+        prefColorType = GraphicsJNI::getNativeBitmapColorType(env, jconfig);
+        isMutable = env->GetBooleanField(options, gOptions_mutableFieldID);
         doDither = env->GetBooleanField(options, gOptions_ditherFieldID);
+        preferQualityOverSpeed = env->GetBooleanField(options,
+                gOptions_preferQualityOverSpeedFieldID);
+        requireUnpremultiplied = !env->GetBooleanField(options, gOptions_premultipliedFieldID);
+        javaBitmap = env->GetObjectField(options, gOptions_bitmapFieldID);
+
+        if (env->GetBooleanField(options, gOptions_scaledFieldID)) {
+            const int density = env->GetIntField(options, gOptions_densityFieldID);
+            const int targetDensity = env->GetIntField(options, gOptions_targetDensityFieldID);
+            const int screenDensity = env->GetIntField(options, gOptions_screenDensityFieldID);
+            if (density != 0 && targetDensity != 0 && density != screenDensity) {
+                scale = (float) targetDensity / density;
+            }
+        }
     }
+
+    const bool willScale = scale != 1.0f;
 
     SkImageDecoder* decoder = SkImageDecoder::Factory(stream);
-    if (NULL == decoder) {
-        return NULL;
+    if (decoder == NULL) {
+        return nullObjectReturn("SkImageDecoder::Factory returned null");
     }
-    
+
     decoder->setSampleSize(sampleSize);
     decoder->setDitherImage(doDither);
+    decoder->setPreferQualityOverSpeed(preferQualityOverSpeed);
+    decoder->setRequireUnpremultipliedColors(requireUnpremultiplied);
 
-    NinePatchPeeker     peeker;
-    JavaPixelAllocator  allocator(env);
-    SkBitmap*           bitmap = new SkBitmap;
-    Res_png_9patch      dummy9Patch;
+    SkBitmap* outputBitmap = NULL;
+    unsigned int existingBufferSize = 0;
+    if (javaBitmap != NULL) {
+        outputBitmap = (SkBitmap*) env->GetLongField(javaBitmap, gBitmap_nativeBitmapFieldID);
+        if (outputBitmap->isImmutable()) {
+            ALOGW("Unable to reuse an immutable bitmap as an image decoder target.");
+            javaBitmap = NULL;
+            outputBitmap = NULL;
+        } else {
+            existingBufferSize = GraphicsJNI::getBitmapAllocationByteCount(env, javaBitmap);
+        }
+    }
 
-    SkAutoTDelete<SkImageDecoder>   add(decoder);
-    SkAutoTDelete<SkBitmap>         adb(bitmap);
+    SkAutoTDelete<SkBitmap> adb(outputBitmap == NULL ? new SkBitmap : NULL);
+    if (outputBitmap == NULL) outputBitmap = adb.get();
 
+    NinePatchPeeker peeker(decoder);
     decoder->setPeeker(&peeker);
-    decoder->setAllocator(&allocator);
-    
-    AutoDecoderCancel   adc(options, decoder);
 
-    if (!decoder->decode(stream, bitmap, prefConfig, mode)) {
-        return NULL;
+    JavaPixelAllocator javaAllocator(env);
+    RecyclingPixelAllocator recyclingAllocator(outputBitmap->pixelRef(), existingBufferSize);
+    ScaleCheckingAllocator scaleCheckingAllocator(scale, existingBufferSize);
+    SkBitmap::Allocator* outputAllocator = (javaBitmap != NULL) ?
+            (SkBitmap::Allocator*)&recyclingAllocator : (SkBitmap::Allocator*)&javaAllocator;
+    if (decodeMode != SkImageDecoder::kDecodeBounds_Mode) {
+        if (!willScale) {
+            // If the java allocator is being used to allocate the pixel memory, the decoder
+            // need not write zeroes, since the memory is initialized to 0.
+            decoder->setSkipWritingZeroes(outputAllocator == &javaAllocator);
+            decoder->setAllocator(outputAllocator);
+        } else if (javaBitmap != NULL) {
+            // check for eventual scaled bounds at allocation time, so we don't decode the bitmap
+            // only to find the scaled result too large to fit in the allocation
+            decoder->setAllocator(&scaleCheckingAllocator);
+        }
     }
-    
+
+    // Only setup the decoder to be deleted after its stack-based, refcounted
+    // components (allocators, peekers, etc) are declared. This prevents RefCnt
+    // asserts from firing due to the order objects are deleted from the stack.
+    SkAutoTDelete<SkImageDecoder> add(decoder);
+
+    AutoDecoderCancel adc(options, decoder);
+
+    // To fix the race condition in case "requestCancelDecode"
+    // happens earlier than AutoDecoderCancel object is added
+    // to the gAutoDecoderCancelMutex linked list.
+    if (options != NULL && env->GetBooleanField(options, gOptions_mCancelID)) {
+        return nullObjectReturn("gOptions_mCancelID");
+    }
+
+    SkBitmap decodingBitmap;
+    if (!decoder->decode(stream, &decodingBitmap, prefColorType, decodeMode)) {
+        return nullObjectReturn("decoder->decode returned false");
+    }
+
+    int scaledWidth = decodingBitmap.width();
+    int scaledHeight = decodingBitmap.height();
+
+    if (willScale && decodeMode != SkImageDecoder::kDecodeBounds_Mode) {
+        scaledWidth = int(scaledWidth * scale + 0.5f);
+        scaledHeight = int(scaledHeight * scale + 0.5f);
+    }
+
     // update options (if any)
-    if (NULL != options) {
-        env->SetIntField(options, gOptions_widthFieldID, bitmap->width());
-        env->SetIntField(options, gOptions_heightFieldID, bitmap->height());
-        // TODO: set the mimeType field with the data from the codec.
-        // but how to reuse a set of strings, rather than allocating new one
-        // each time?
+    if (options != NULL) {
+        env->SetIntField(options, gOptions_widthFieldID, scaledWidth);
+        env->SetIntField(options, gOptions_heightFieldID, scaledHeight);
         env->SetObjectField(options, gOptions_mimeFieldID,
-                            getMimeTypeString(env, decoder->getFormat()));
+                getMimeTypeString(env, decoder->getFormat()));
     }
-    
+
     // if we're in justBounds mode, return now (skip the java bitmap)
-    if (SkImageDecoder::kDecodeBounds_Mode == mode) {
+    if (decodeMode == SkImageDecoder::kDecodeBounds_Mode) {
         return NULL;
     }
 
     jbyteArray ninePatchChunk = NULL;
-    if (peeker.fPatchIsValid) {
-        size_t ninePatchArraySize = peeker.fPatch->serializedSize();
+    if (peeker.mPatch != NULL) {
+        if (willScale) {
+            scaleNinePatchChunk(peeker.mPatch, scale, scaledWidth, scaledHeight);
+        }
+
+        size_t ninePatchArraySize = peeker.mPatch->serializedSize();
         ninePatchChunk = env->NewByteArray(ninePatchArraySize);
-        if (NULL == ninePatchChunk) {
-            return NULL;
+        if (ninePatchChunk == NULL) {
+            return nullObjectReturn("ninePatchChunk == null");
         }
-        jbyte* array = (jbyte*)env->GetPrimitiveArrayCritical(ninePatchChunk,
-                                                              NULL);
-        if (NULL == array) {
-            return NULL;
+
+        jbyte* array = (jbyte*) env->GetPrimitiveArrayCritical(ninePatchChunk, NULL);
+        if (array == NULL) {
+            return nullObjectReturn("primitive array == null");
         }
-        peeker.fPatch->serialize(array);
+
+        memcpy(array, peeker.mPatch, peeker.mPatchSize);
         env->ReleasePrimitiveArrayCritical(ninePatchChunk, array, 0);
     }
 
-    // detach bitmap from its autotdeleter, since we want to own it now
-    adb.detach();
+    jobject ninePatchInsets = NULL;
+    if (peeker.mHasInsets) {
+        ninePatchInsets = env->NewObject(gInsetStruct_class, gInsetStruct_constructorMethodID,
+                peeker.mOpticalInsets[0], peeker.mOpticalInsets[1], peeker.mOpticalInsets[2], peeker.mOpticalInsets[3],
+                peeker.mOutlineInsets[0], peeker.mOutlineInsets[1], peeker.mOutlineInsets[2], peeker.mOutlineInsets[3],
+                peeker.mOutlineRadius, peeker.mOutlineAlpha, scale);
+        if (ninePatchInsets == NULL) {
+            return nullObjectReturn("nine patch insets == null");
+        }
+        if (javaBitmap != NULL) {
+            env->SetObjectField(javaBitmap, gBitmap_ninePatchInsetsFieldID, ninePatchInsets);
+        }
+    }
+
+    if (willScale) {
+        // This is weird so let me explain: we could use the scale parameter
+        // directly, but for historical reasons this is how the corresponding
+        // Dalvik code has always behaved. We simply recreate the behavior here.
+        // The result is slightly different from simply using scale because of
+        // the 0.5f rounding bias applied when computing the target image size
+        const float sx = scaledWidth / float(decodingBitmap.width());
+        const float sy = scaledHeight / float(decodingBitmap.height());
+
+        // TODO: avoid copying when scaled size equals decodingBitmap size
+        SkColorType colorType = colorTypeForScaledOutput(decodingBitmap.colorType());
+        // FIXME: If the alphaType is kUnpremul and the image has alpha, the
+        // colors may not be correct, since Skia does not yet support drawing
+        // to/from unpremultiplied bitmaps.
+        outputBitmap->setInfo(SkImageInfo::Make(scaledWidth, scaledHeight,
+                colorType, decodingBitmap.alphaType()));
+        if (!outputBitmap->allocPixels(outputAllocator, NULL)) {
+            return nullObjectReturn("allocation failed for scaled bitmap");
+        }
+
+        // If outputBitmap's pixels are newly allocated by Java, there is no need
+        // to erase to 0, since the pixels were initialized to 0.
+        if (outputAllocator != &javaAllocator) {
+            outputBitmap->eraseColor(0);
+        }
+
+        SkPaint paint;
+        paint.setFilterLevel(SkPaint::kLow_FilterLevel);
+
+        SkCanvas canvas(*outputBitmap);
+        canvas.scale(sx, sy);
+        canvas.drawBitmap(decodingBitmap, 0.0f, 0.0f, &paint);
+    } else {
+        outputBitmap->swap(decodingBitmap);
+    }
 
     if (padding) {
-        if (peeker.fPatchIsValid) {
+        if (peeker.mPatch != NULL) {
             GraphicsJNI::set_jrect(env, padding,
-                                   peeker.fPatch->paddingLeft,
-                                   peeker.fPatch->paddingTop,
-                                   peeker.fPatch->paddingRight,
-                                   peeker.fPatch->paddingBottom);
+                    peeker.mPatch->paddingLeft, peeker.mPatch->paddingTop,
+                    peeker.mPatch->paddingRight, peeker.mPatch->paddingBottom);
         } else {
             GraphicsJNI::set_jrect(env, padding, -1, -1, -1, -1);
         }
     }
-    
-    // promise we will never change our pixels (great for sharing and pictures)
-    SkPixelRef* ref = bitmap->pixelRef();
-    SkASSERT(ref);
-    ref->setImmutable();
 
-    return GraphicsJNI::createBitmap(env, bitmap, false, ninePatchChunk);
+    // if we get here, we're in kDecodePixels_Mode and will therefore
+    // already have a pixelref installed.
+    if (outputBitmap->pixelRef() == NULL) {
+        return nullObjectReturn("Got null SkPixelRef");
+    }
+
+    if (!isMutable && javaBitmap == NULL) {
+        // promise we will never change our pixels (great for sharing and pictures)
+        outputBitmap->setImmutable();
+    }
+
+    // detach bitmap from its autodeleter, since we want to own it now
+    adb.detach();
+
+    if (javaBitmap != NULL) {
+        bool isPremultiplied = !requireUnpremultiplied;
+        GraphicsJNI::reinitBitmap(env, javaBitmap, outputBitmap, isPremultiplied);
+        outputBitmap->notifyPixelsChanged();
+        // If a java bitmap was passed in for reuse, pass it back
+        return javaBitmap;
+    }
+
+    int bitmapCreateFlags = 0x0;
+    if (isMutable) bitmapCreateFlags |= GraphicsJNI::kBitmapCreateFlag_Mutable;
+    if (!requireUnpremultiplied) bitmapCreateFlags |= GraphicsJNI::kBitmapCreateFlag_Premultiplied;
+
+    // now create the java bitmap
+    return GraphicsJNI::createBitmap(env, outputBitmap, javaAllocator.getStorageObj(),
+            bitmapCreateFlags, ninePatchChunk, ninePatchInsets, -1);
 }
 
-static jobject nativeDecodeStream(JNIEnv* env, jobject clazz,
-                                  jobject is,       // InputStream
-                                  jbyteArray storage,   // byte[]
-                                  jobject padding,
-                                  jobject options) {  // BitmapFactory$Options
-    jobject bitmap = NULL;
-    SkStream* stream = CreateJavaInputStreamAdaptor(env, is, storage);
+// Need to buffer enough input to be able to rewind as much as might be read by a decoder
+// trying to determine the stream's format. Currently the most is 64, read by
+// SkImageDecoder_libwebp.
+// FIXME: Get this number from SkImageDecoder
+#define BYTES_TO_BUFFER 64
 
-    if (stream) {
-        bitmap = doDecode(env, stream, padding, options);
-        stream->unref();
+static jobject nativeDecodeStream(JNIEnv* env, jobject clazz, jobject is, jbyteArray storage,
+        jobject padding, jobject options) {
+
+    jobject bitmap = NULL;
+    SkAutoTUnref<SkStream> stream(CreateJavaInputStreamAdaptor(env, is, storage));
+
+    if (stream.get()) {
+        SkAutoTUnref<SkStreamRewindable> bufferedStream(
+                SkFrontBufferedStream::Create(stream, BYTES_TO_BUFFER));
+        SkASSERT(bufferedStream.get() != NULL);
+        bitmap = doDecode(env, bufferedStream, padding, options);
     }
     return bitmap;
 }
 
-static ssize_t getFDSize(int fd) {
-    off_t curr = ::lseek(fd, 0, SEEK_CUR);
-    if (curr < 0) {
-        return 0;
-    }
-    size_t size = ::lseek(fd, 0, SEEK_END);
-    ::lseek(fd, curr, SEEK_SET);
-    return size;
-}
+static jobject nativeDecodeFileDescriptor(JNIEnv* env, jobject clazz, jobject fileDescriptor,
+        jobject padding, jobject bitmapFactoryOptions) {
 
-/** Restore the file descriptor's offset in our destructor
- */
-class AutoFDSeek {
-public:
-    AutoFDSeek(int fd) : fFD(fd) {
-        fCurr = ::lseek(fd, 0, SEEK_CUR);
-    }
-    ~AutoFDSeek() {
-        if (fCurr >= 0) {
-            ::lseek(fFD, fCurr, SEEK_SET);
-        }
-    }
-private:
-    int     fFD;
-    off_t   fCurr;
-};
-
-static jobject nativeDecodeFileDescriptor(JNIEnv* env, jobject clazz,
-                                          jobject fileDescriptor,
-                                          jobject padding,
-                                          jobject bitmapFactoryOptions) {
     NPE_CHECK_RETURN_ZERO(env, fileDescriptor);
 
-    jint descriptor = env->GetIntField(fileDescriptor,
-                                       gFileDescriptor_descriptor);
-    
-#ifdef MIN_SIZE_TO_USE_MMAP
-    // First try to use mmap
-    size_t size = getFDSize(descriptor);
-    if (size >= MIN_SIZE_TO_USE_MMAP) {
-        void* addr = mmap(NULL, size, PROT_READ, MAP_PRIVATE, descriptor, 0);
-//        SkDebugf("-------- mmap returned %p %d\n", addr, size);
-        if (MAP_FAILED != addr) {
-            SkMemoryStream strm(addr, size);
-            jobject obj = doDecode(env, &strm, padding, bitmapFactoryOptions);
-            munmap(addr, size);
-            return obj;
-        }
-    }
-#endif
+    jint descriptor = jniGetFDFromFileDescriptor(env, fileDescriptor);
 
-    // we pass false for closeWhenDone, since the caller owns the descriptor    
-    SkFDStream file(descriptor, false);
-    if (!file.isValid()) {
-        return NULL;
+    struct stat fdStat;
+    if (fstat(descriptor, &fdStat) == -1) {
+        doThrowIOE(env, "broken file descriptor");
+        return nullObjectReturn("fstat return -1");
     }
-    
-    /* Restore our offset when we leave, so the caller doesn't have to.
-       This is a real feature, so we can be called more than once with the
-       same descriptor.
-    */
-    AutoFDSeek as(descriptor);
 
-    return doDecode(env, &file, padding, bitmapFactoryOptions);
+    // Restore the descriptor's offset on exiting this function.
+    AutoFDSeek autoRestore(descriptor);
+
+    FILE* file = fdopen(descriptor, "r");
+    if (file == NULL) {
+        return nullObjectReturn("Could not open file");
+    }
+
+    SkAutoTUnref<SkFILEStream> fileStream(new SkFILEStream(file,
+                         SkFILEStream::kCallerRetains_Ownership));
+
+    // Use a buffered stream. Although an SkFILEStream can be rewound, this
+    // ensures that SkImageDecoder::Factory never rewinds beyond the
+    // current position of the file descriptor.
+    SkAutoTUnref<SkStreamRewindable> stream(SkFrontBufferedStream::Create(fileStream,
+            BYTES_TO_BUFFER));
+
+    return doDecode(env, stream, padding, bitmapFactoryOptions);
 }
 
-static jobject nativeDecodeAsset(JNIEnv* env, jobject clazz,
-                                 jint native_asset,    // Asset
-                                 jobject padding,       // Rect
-                                 jobject options) { // BitmapFactory$Options
-    AssetStreamAdaptor  mystream((Asset*)native_asset);
+static jobject nativeDecodeAsset(JNIEnv* env, jobject clazz, jlong native_asset,
+        jobject padding, jobject options) {
 
-    return doDecode(env, &mystream, padding, options);
+    Asset* asset = reinterpret_cast<Asset*>(native_asset);
+    // since we know we'll be done with the asset when we return, we can
+    // just use a simple wrapper
+    SkAutoTUnref<SkStreamRewindable> stream(new AssetStreamAdaptor(asset,
+            AssetStreamAdaptor::kNo_OwnAsset, AssetStreamAdaptor::kNo_HasMemoryBase));
+    return doDecode(env, stream, padding, options);
 }
 
 static jobject nativeDecodeByteArray(JNIEnv* env, jobject, jbyteArray byteArray,
-                                     int offset, int length, jobject options) {
-    AutoJavaByteArray   ar(env, byteArray);
-    SkMemoryStream  stream(ar.ptr() + offset, length);
+        jint offset, jint length, jobject options) {
 
-    return doDecode(env, &stream, NULL, options);
+    AutoJavaByteArray ar(env, byteArray);
+    SkMemoryStream* stream = new SkMemoryStream(ar.ptr() + offset, length, false);
+    SkAutoUnref aur(stream);
+    return doDecode(env, stream, NULL, options);
 }
 
 static void nativeRequestCancel(JNIEnv*, jobject joptions) {
     (void)AutoDecoderCancel::RequestCancel(joptions);
+}
+
+static jboolean nativeIsSeekable(JNIEnv* env, jobject, jobject fileDescriptor) {
+    jint descriptor = jniGetFDFromFileDescriptor(env, fileDescriptor);
+    return ::lseek64(descriptor, 0, SEEK_CUR) != -1 ? JNI_TRUE : JNI_FALSE;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -446,25 +549,24 @@ static JNINativeMethod gMethods[] = {
     },
 
     {   "nativeDecodeAsset",
-        "(ILandroid/graphics/Rect;Landroid/graphics/BitmapFactory$Options;)Landroid/graphics/Bitmap;",
+        "(JLandroid/graphics/Rect;Landroid/graphics/BitmapFactory$Options;)Landroid/graphics/Bitmap;",
         (void*)nativeDecodeAsset
     },
 
     {   "nativeDecodeByteArray",
         "([BIILandroid/graphics/BitmapFactory$Options;)Landroid/graphics/Bitmap;",
         (void*)nativeDecodeByteArray
-    }
+    },
+
+    {   "nativeIsSeekable",
+        "(Ljava/io/FileDescriptor;)Z",
+        (void*)nativeIsSeekable
+    },
 };
 
 static JNINativeMethod gOptionsMethods[] = {
     {   "requestCancel", "()V", (void*)nativeRequestCancel }
 };
-
-static jclass make_globalref(JNIEnv* env, const char classname[]) {
-    jclass c = env->FindClass(classname);
-    SkASSERT(c);
-    return (jclass)env->NewGlobalRef(c);
-}
 
 static jfieldID getFieldIDCheck(JNIEnv* env, jclass clazz,
                                 const char fieldname[], const char type[]) {
@@ -473,25 +575,37 @@ static jfieldID getFieldIDCheck(JNIEnv* env, jclass clazz,
     return id;
 }
 
-#define kClassPathName  "android/graphics/BitmapFactory"
-
-#define RETURN_ERR_IF_NULL(value) \
-    do { if (!(value)) { assert(0); return -1; } } while (false)
-
-int register_android_graphics_BitmapFactory(JNIEnv* env);
 int register_android_graphics_BitmapFactory(JNIEnv* env) {
-    gOptions_class = make_globalref(env, "android/graphics/BitmapFactory$Options");
-    gOptions_justBoundsFieldID = getFieldIDCheck(env, gOptions_class, "inJustDecodeBounds", "Z");
-    gOptions_sampleSizeFieldID = getFieldIDCheck(env, gOptions_class, "inSampleSize", "I");
-    gOptions_configFieldID = getFieldIDCheck(env, gOptions_class, "inPreferredConfig",
+    jclass options_class = env->FindClass("android/graphics/BitmapFactory$Options");
+    SkASSERT(options_class);
+    gOptions_bitmapFieldID = getFieldIDCheck(env, options_class, "inBitmap",
+            "Landroid/graphics/Bitmap;");
+    gOptions_justBoundsFieldID = getFieldIDCheck(env, options_class, "inJustDecodeBounds", "Z");
+    gOptions_sampleSizeFieldID = getFieldIDCheck(env, options_class, "inSampleSize", "I");
+    gOptions_configFieldID = getFieldIDCheck(env, options_class, "inPreferredConfig",
             "Landroid/graphics/Bitmap$Config;");
-    gOptions_ditherFieldID = getFieldIDCheck(env, gOptions_class, "inDither", "Z");
-    gOptions_widthFieldID = getFieldIDCheck(env, gOptions_class, "outWidth", "I");
-    gOptions_heightFieldID = getFieldIDCheck(env, gOptions_class, "outHeight", "I");
-    gOptions_mimeFieldID = getFieldIDCheck(env, gOptions_class, "outMimeType", "Ljava/lang/String;");
+    gOptions_premultipliedFieldID = getFieldIDCheck(env, options_class, "inPremultiplied", "Z");
+    gOptions_mutableFieldID = getFieldIDCheck(env, options_class, "inMutable", "Z");
+    gOptions_ditherFieldID = getFieldIDCheck(env, options_class, "inDither", "Z");
+    gOptions_preferQualityOverSpeedFieldID = getFieldIDCheck(env, options_class,
+            "inPreferQualityOverSpeed", "Z");
+    gOptions_scaledFieldID = getFieldIDCheck(env, options_class, "inScaled", "Z");
+    gOptions_densityFieldID = getFieldIDCheck(env, options_class, "inDensity", "I");
+    gOptions_screenDensityFieldID = getFieldIDCheck(env, options_class, "inScreenDensity", "I");
+    gOptions_targetDensityFieldID = getFieldIDCheck(env, options_class, "inTargetDensity", "I");
+    gOptions_widthFieldID = getFieldIDCheck(env, options_class, "outWidth", "I");
+    gOptions_heightFieldID = getFieldIDCheck(env, options_class, "outHeight", "I");
+    gOptions_mimeFieldID = getFieldIDCheck(env, options_class, "outMimeType", "Ljava/lang/String;");
+    gOptions_mCancelID = getFieldIDCheck(env, options_class, "mCancel", "Z");
 
-    gFileDescriptor_class = make_globalref(env, "java/io/FileDescriptor");
-    gFileDescriptor_descriptor = getFieldIDCheck(env, gFileDescriptor_class, "descriptor", "I");
+    jclass bitmap_class = env->FindClass("android/graphics/Bitmap");
+    SkASSERT(bitmap_class);
+    gBitmap_nativeBitmapFieldID = getFieldIDCheck(env, bitmap_class, "mNativeBitmap", "J");
+    gBitmap_ninePatchInsetsFieldID = getFieldIDCheck(env, bitmap_class, "mNinePatchInsets",
+            "Landroid/graphics/NinePatch$InsetStruct;");
+
+    gInsetStruct_class = (jclass) env->NewGlobalRef(env->FindClass("android/graphics/NinePatch$InsetStruct"));
+    gInsetStruct_constructorMethodID = env->GetMethodID(gInsetStruct_class, "<init>", "(IIIIIIIIFIF)V");
 
     int ret = AndroidRuntime::registerNativeMethods(env,
                                     "android/graphics/BitmapFactory$Options",
@@ -500,6 +614,6 @@ int register_android_graphics_BitmapFactory(JNIEnv* env) {
     if (ret) {
         return ret;
     }
-    return android::AndroidRuntime::registerNativeMethods(env, kClassPathName,
+    return android::AndroidRuntime::registerNativeMethods(env, "android/graphics/BitmapFactory",
                                          gMethods, SK_ARRAY_COUNT(gMethods));
 }

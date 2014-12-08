@@ -28,10 +28,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.widget.EditText;
-import android.widget.LinearLayout;
 
 /**
- * The {@link EditTextPreference} class is a preference that allows for string
+ * A {@link Preference} that allows for string
  * input.
  * <p>
  * It is a subclass of {@link DialogPreference} and shows the {@link EditText}
@@ -50,9 +49,9 @@ public class EditTextPreference extends DialogPreference {
     private EditText mEditText;
     
     private String mText;
-    
-    public EditTextPreference(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+
+    public EditTextPreference(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
         
         mEditText = new EditText(context, attrs);
         
@@ -66,6 +65,10 @@ public class EditTextPreference extends DialogPreference {
          * We reset the enabled state.
          */
         mEditText.setEnabled(true);
+    }
+
+    public EditTextPreference(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
     }
 
     public EditTextPreference(Context context, AttributeSet attrs) {
@@ -128,7 +131,7 @@ public class EditTextPreference extends DialogPreference {
         ViewGroup container = (ViewGroup) dialogView
                 .findViewById(com.android.internal.R.id.edittext_container);
         if (container != null) {
-            container.addView(editText, ViewGroup.LayoutParams.FILL_PARENT,
+            container.addView(editText, ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
         }
     }
@@ -167,6 +170,13 @@ public class EditTextPreference extends DialogPreference {
      */
     public EditText getEditText() {
         return mEditText;
+    }
+
+    /** @hide */
+    @Override
+    protected boolean needInputMethod() {
+        // We want the input method to show, if possible, when dialog is displayed
+        return true;
     }
 
     @Override

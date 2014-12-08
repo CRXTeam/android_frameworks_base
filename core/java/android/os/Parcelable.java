@@ -28,13 +28,17 @@ package android.os;
  * <pre>
  * public class MyParcelable implements Parcelable {
  *     private int mData;
- *     
+ *
+ *     public int describeContents() {
+ *         return 0;
+ *     }
+ *
  *     public void writeToParcel(Parcel out, int flags) {
  *         out.writeInt(mData);
  *     }
  *
- *     public static final Parcelable.Creator<MyParcelable> CREATOR
- *             = new Parcelable.Creator<MyParcelable>() {
+ *     public static final Parcelable.Creator&lt;MyParcelable&gt; CREATOR
+ *             = new Parcelable.Creator&lt;MyParcelable&gt;() {
  *         public MyParcelable createFromParcel(Parcel in) {
  *             return new MyParcelable(in);
  *         }
@@ -42,7 +46,7 @@ package android.os;
  *         public MyParcelable[] newArray(int size) {
  *             return new MyParcelable[size];
  *         }
- *     }
+ *     };
  *     
  *     private MyParcelable(Parcel in) {
  *         mData = in.readInt();
@@ -108,5 +112,23 @@ public interface Parcelable {
          * initialized to null.
          */
         public T[] newArray(int size);
+    }
+
+    /**
+     * Specialization of {@link Creator} that allows you to receive the
+     * ClassLoader the object is being created in.
+     */
+    public interface ClassLoaderCreator<T> extends Creator<T> {
+        /**
+         * Create a new instance of the Parcelable class, instantiating it
+         * from the given Parcel whose data had previously been written by
+         * {@link Parcelable#writeToParcel Parcelable.writeToParcel()} and
+         * using the given ClassLoader.
+         *
+         * @param source The Parcel to read the object's data from.
+         * @param loader The ClassLoader that this object is being created in.
+         * @return Returns a new instance of the Parcelable class.
+         */
+        public T createFromParcel(Parcel source, ClassLoader loader);
     }
 }

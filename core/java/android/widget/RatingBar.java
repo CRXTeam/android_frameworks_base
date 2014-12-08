@@ -21,15 +21,21 @@ import android.content.res.TypedArray;
 import android.graphics.drawable.shapes.RectShape;
 import android.graphics.drawable.shapes.Shape;
 import android.util.AttributeSet;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 import com.android.internal.R;
 
 /**
  * A RatingBar is an extension of SeekBar and ProgressBar that shows a rating in
- * stars. The user can touch and/or drag to set the rating when using the
- * default size RatingBar. The smaller RatingBar style ({@link android.R.attr#ratingBarStyleSmall})
- * and the larger indicator-only style ({@link android.R.attr#ratingBarStyleIndicator})
- * do not support user interaction and should only be used as indicators.
+ * stars. The user can touch/drag or use arrow keys to set the rating when using
+ * the default size RatingBar. The smaller RatingBar style (
+ * {@link android.R.attr#ratingBarStyleSmall}) and the larger indicator-only
+ * style ({@link android.R.attr#ratingBarStyleIndicator}) do not support user
+ * interaction and should only be used as indicators.
+ * <p>
+ * When using a RatingBar that supports user interaction, placing widgets to the
+ * left or right of the RatingBar is discouraged.
  * <p>
  * The number of stars set (via {@link #setNumStars(int)} or in an XML layout)
  * will be shown when the layout width is set to wrap content (if another layout
@@ -44,17 +50,18 @@ import com.android.internal.R;
  * @attr ref android.R.styleable#RatingBar_isIndicator
  */
 public class RatingBar extends AbsSeekBar {
-    
+
     /**
-     * A callback that notifies clients when the rating has been changed. This 
-     * includes changes that were initiated by the user through a touch gesture as well
-     * as changes that were initiated programmatically.
+     * A callback that notifies clients when the rating has been changed. This
+     * includes changes that were initiated by the user through a touch gesture
+     * or arrow key/trackball as well as changes that were initiated
+     * programmatically.
      */
     public interface OnRatingBarChangeListener {
         
         /**
          * Notification that the rating has changed. Clients can use the
-         * fromTouch parameter to distinguish user-initiated changes from those
+         * fromUser parameter to distinguish user-initiated changes from those
          * that occurred programmatically. This will not be called continuously
          * while the user is dragging, only when the user finalizes a rating by
          * lifting the touch.
@@ -62,10 +69,10 @@ public class RatingBar extends AbsSeekBar {
          * @param ratingBar The RatingBar whose rating has changed.
          * @param rating The current rating. This will be in the range
          *            0..numStars.
-         * @param fromTouch True if the rating change was initiated by a user's
-         *            touch gesture.
+         * @param fromUser True if the rating change was initiated by a user's
+         *            touch gesture or arrow key/horizontal trackbell movement.
          */
-        void onRatingChanged(RatingBar ratingBar, float rating, boolean fromTouch);
+        void onRatingChanged(RatingBar ratingBar, float rating, boolean fromUser);
 
     }
 
@@ -75,11 +82,15 @@ public class RatingBar extends AbsSeekBar {
     
     private OnRatingBarChangeListener mOnRatingBarChangeListener;
     
-    public RatingBar(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
-        
-        TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.RatingBar,
-                defStyle, 0);
+    public RatingBar(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public RatingBar(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, R.styleable.RatingBar, defStyleAttr, defStyleRes);
         final int numStars = a.getInt(R.styleable.RatingBar_numStars, mNumStars);
         setIsIndicator(a.getBoolean(R.styleable.RatingBar_isIndicator, !mIsUserSeekable));
         final float rating = a.getFloat(R.styleable.RatingBar_rating, -1);
@@ -135,13 +146,18 @@ public class RatingBar extends AbsSeekBar {
      * by the user).
      * 
      * @param isIndicator Whether it should be an indicator.
+     *
+     * @attr ref android.R.styleable#RatingBar_isIndicator
      */
     public void setIsIndicator(boolean isIndicator) {
         mIsUserSeekable = !isIndicator;
+        setFocusable(!isIndicator);
     }
     
     /**
      * @return Whether this rating bar is only an indicator.
+     *
+     * @attr ref android.R.styleable#RatingBar_isIndicator
      */
     public boolean isIndicator() {
         return !mIsUserSeekable;
@@ -179,7 +195,7 @@ public class RatingBar extends AbsSeekBar {
      * @param rating The rating to set.
      */
     public void setRating(float rating) {
-        setProgress((int) (rating * getProgressPerStar()));
+        setProgress(Math.round(rating * getProgressPerStar()));
     }
 
     /**
@@ -235,14 +251,14 @@ public class RatingBar extends AbsSeekBar {
     }
 
     @Override
-    void onProgressRefresh(float scale, boolean fromTouch) {
-        super.onProgressRefresh(scale, fromTouch);
+    void onProgressRefresh(float scale, boolean fromUser) {
+        super.onProgressRefresh(scale, fromUser);
 
         // Keep secondary progress in sync with primary
         updateSecondaryProgress(getProgress());
         
-        if (!fromTouch) {
-            // Callback for non-touch rating changes
+        if (!fromUser) {
+            // Callback for non-user rating changes
             dispatchRatingChange(false);
         }
     }
@@ -271,7 +287,8 @@ public class RatingBar extends AbsSeekBar {
             // TODO: Once ProgressBar's TODOs are gone, this can be done more
             // cleanly than mSampleTile
             final int width = mSampleTile.getWidth() * mNumStars;
-            setMeasuredDimension(resolveSize(width, widthMeasureSpec), mMeasuredHeight);
+            setMeasuredDimension(resolveSizeAndState(width, widthMeasureSpec, 0),
+                    getMeasuredHeight());
         }
     }
 
@@ -290,11 +307,21 @@ public class RatingBar extends AbsSeekBar {
             dispatchRatingChange(true);
         }
     }
-    
-    void dispatchRatingChange(boolean fromTouch) {
+
+    @Override
+    void onKeyChange() {
+        super.onKeyChange();
+        dispatchRatingChange(true);
+    }
+
+    @Override
+    void animateSetProgress(int progress) {
+    }
+
+    void dispatchRatingChange(boolean fromUser) {
         if (mOnRatingBarChangeListener != null) {
             mOnRatingBarChangeListener.onRatingChanged(this, getRating(),
-                    fromTouch);
+                    fromUser);
         }
     }
 
@@ -308,4 +335,15 @@ public class RatingBar extends AbsSeekBar {
         super.setMax(max);
     }
     
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(RatingBar.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(RatingBar.class.getName());
+    }
 }

@@ -16,22 +16,42 @@
 
 package android.text.style;
 
+import android.os.Parcel;
+import android.text.ParcelableSpan;
 import android.text.TextPaint;
+import android.text.TextUtils;
 
-public class BackgroundColorSpan extends CharacterStyle {
+public class BackgroundColorSpan extends CharacterStyle
+        implements UpdateAppearance, ParcelableSpan {
 
-    private int mColor;
+    private final int mColor;
 
-	public BackgroundColorSpan(int color) {
-		mColor = color;
-	}
+    public BackgroundColorSpan(int color) {
+        mColor = color;
+    }
 
-	public int getBackgroundColor() {
-		return mColor;
-	}
+    public BackgroundColorSpan(Parcel src) {
+        mColor = src.readInt();
+    }
+    
+    public int getSpanTypeId() {
+        return TextUtils.BACKGROUND_COLOR_SPAN;
+    }
+    
+    public int describeContents() {
+        return 0;
+    }
 
-	@Override
-	public void updateDrawState(TextPaint ds) {
-		ds.bgColor = mColor;
-	}
+    public void writeToParcel(Parcel dest, int flags) {
+        dest.writeInt(mColor);
+    }
+
+    public int getBackgroundColor() {
+        return mColor;
+    }
+
+    @Override
+    public void updateDrawState(TextPaint ds) {
+        ds.bgColor = mColor;
+    }
 }

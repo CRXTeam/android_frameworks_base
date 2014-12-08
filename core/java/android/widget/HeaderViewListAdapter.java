@@ -28,17 +28,24 @@ import java.util.ArrayList;
  * associated data objects.
  *<p>This is intended as a base class; you will probably not need to
  * use this class directly in your own code.
- *
  */
 public class HeaderViewListAdapter implements WrapperListAdapter, Filterable {
 
-    private ListAdapter mAdapter;
+    private final ListAdapter mAdapter;
 
+    // These two ArrayList are assumed to NOT be null.
+    // They are indeed created when declared in ListView and then shared.
     ArrayList<ListView.FixedViewInfo> mHeaderViewInfos;
     ArrayList<ListView.FixedViewInfo> mFooterViewInfos;
+
+    // Used as a placeholder in case the provided info views are indeed null.
+    // Currently only used by some CTS tests, which may be removed.
+    static final ArrayList<ListView.FixedViewInfo> EMPTY_INFO_LIST =
+        new ArrayList<ListView.FixedViewInfo>();
+
     boolean mAreAllFixedViewsSelectable;
 
-    private boolean mIsFilterable;
+    private final boolean mIsFilterable;
 
     public HeaderViewListAdapter(ArrayList<ListView.FixedViewInfo> headerViewInfos,
                                  ArrayList<ListView.FixedViewInfo> footerViewInfos,
@@ -46,8 +53,17 @@ public class HeaderViewListAdapter implements WrapperListAdapter, Filterable {
         mAdapter = adapter;
         mIsFilterable = adapter instanceof Filterable;
 
-        mHeaderViewInfos = headerViewInfos;
-        mFooterViewInfos = footerViewInfos;
+        if (headerViewInfos == null) {
+            mHeaderViewInfos = EMPTY_INFO_LIST;
+        } else {
+            mHeaderViewInfos = headerViewInfos;
+        }
+
+        if (footerViewInfos == null) {
+            mFooterViewInfos = EMPTY_INFO_LIST;
+        } else {
+            mFooterViewInfos = footerViewInfos;
+        }
 
         mAreAllFixedViewsSelectable =
                 areAllListInfosSelectable(mHeaderViewInfos)
@@ -55,11 +71,11 @@ public class HeaderViewListAdapter implements WrapperListAdapter, Filterable {
     }
 
     public int getHeadersCount() {
-        return mHeaderViewInfos == null ? 0 : mHeaderViewInfos.size();
+        return mHeaderViewInfos.size();
     }
 
     public int getFootersCount() {
-        return mFooterViewInfos == null ? 0 : mFooterViewInfos.size();
+        return mFooterViewInfos.size();
     }
 
     public boolean isEmpty() {
@@ -128,43 +144,53 @@ public class HeaderViewListAdapter implements WrapperListAdapter, Filterable {
     }
 
     public boolean isEnabled(int position) {
+        // Header (negative positions will throw an IndexOutOfBoundsException)
         int numHeaders = getHeadersCount();
-        if (mAdapter != null && position >= numHeaders) {
-            int adjPosition = position - numHeaders;
-            int adapterCount = mAdapter.getCount();
-            if (adjPosition >= adapterCount && mFooterViewInfos != null) {
-                return mFooterViewInfos.get(adjPosition - adapterCount).isSelectable;
-            } else {
-                return mAdapter.isEnabled(adjPosition);
-            }
-        } else if (position < numHeaders && mHeaderViewInfos != null) {
+        if (position < numHeaders) {
             return mHeaderViewInfos.get(position).isSelectable;
         }
-        return true;
+
+        // Adapter
+        final int adjPosition = position - numHeaders;
+        int adapterCount = 0;
+        if (mAdapter != null) {
+            adapterCount = mAdapter.getCount();
+            if (adjPosition < adapterCount) {
+                return mAdapter.isEnabled(adjPosition);
+            }
+        }
+
+        // Footer (off-limits positions will throw an IndexOutOfBoundsException)
+        return mFooterViewInfos.get(adjPosition - adapterCount).isSelectable;
     }
 
     public Object getItem(int position) {
+        // Header (negative positions will throw an IndexOutOfBoundsException)
         int numHeaders = getHeadersCount();
-        if (mAdapter != null && position >= numHeaders) {
-            int adjPosition = position - numHeaders;
-            int adapterCount = mAdapter.getCount();
-            if (adjPosition >= adapterCount && mFooterViewInfos != null) {
-                return mFooterViewInfos.get(adjPosition - adapterCount).data;
-            } else {
-                return mAdapter.getItem(adjPosition);
-            }
-        } else if (position < numHeaders && mHeaderViewInfos != null) {
+        if (position < numHeaders) {
             return mHeaderViewInfos.get(position).data;
         }
-        return null;
+
+        // Adapter
+        final int adjPosition = position - numHeaders;
+        int adapterCount = 0;
+        if (mAdapter != null) {
+            adapterCount = mAdapter.getCount();
+            if (adjPosition < adapterCount) {
+                return mAdapter.getItem(adjPosition);
+            }
+        }
+
+        // Footer (off-limits positions will throw an IndexOutOfBoundsException)
+        return mFooterViewInfos.get(adjPosition - adapterCount).data;
     }
 
     public long getItemId(int position) {
         int numHeaders = getHeadersCount();
         if (mAdapter != null && position >= numHeaders) {
             int adjPosition = position - numHeaders;
-            int adapterCnt = mAdapter.getCount();
-            if (adjPosition < adapterCnt) {
+            int adapterCount = mAdapter.getCount();
+            if (adjPosition < adapterCount) {
                 return mAdapter.getItemId(adjPosition);
             }
         }
@@ -179,21 +205,24 @@ public class HeaderViewListAdapter implements WrapperListAdapter, Filterable {
     }
 
     public View getView(int position, View convertView, ViewGroup parent) {
+        // Header (negative positions will throw an IndexOutOfBoundsException)
         int numHeaders = getHeadersCount();
-        if (mAdapter != null && position >= numHeaders) {
-            int adjPosition = position - numHeaders;
-            int adapterCount = mAdapter.getCount();
-            if (adjPosition >= adapterCount) {
-                if (mFooterViewInfos != null) {
-                    return mFooterViewInfos.get(adjPosition - adapterCount).view;
-                }
-            } else {
-                return mAdapter.getView(adjPosition, convertView, parent);
-            }
-        } else if (position < numHeaders) {
+        if (position < numHeaders) {
             return mHeaderViewInfos.get(position).view;
         }
-        return null;
+
+        // Adapter
+        final int adjPosition = position - numHeaders;
+        int adapterCount = 0;
+        if (mAdapter != null) {
+            adapterCount = mAdapter.getCount();
+            if (adjPosition < adapterCount) {
+                return mAdapter.getView(adjPosition, convertView, parent);
+            }
+        }
+
+        // Footer (off-limits positions will throw an IndexOutOfBoundsException)
+        return mFooterViewInfos.get(adjPosition - adapterCount).view;
     }
 
     public int getItemViewType(int position) {

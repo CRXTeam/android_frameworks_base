@@ -16,9 +16,9 @@
 
 package android.app;
 
+import android.os.Trace;
+import android.util.ArrayMap;
 import dalvik.system.PathClassLoader;
-
-import java.util.HashMap;
 
 class ApplicationLoaders
 {
@@ -27,8 +27,7 @@ class ApplicationLoaders
         return gApplicationLoaders;
     }
 
-    public ClassLoader getClassLoader(String zip, String appDataDir,
-            ClassLoader parent)
+    public ClassLoader getClassLoader(String zip, String libPath, ClassLoader parent)
     {
         /*
          * This is the parent we use if they pass "null" in.  In theory
@@ -49,23 +48,28 @@ class ApplicationLoaders
              * new ClassLoader for the zip archive.
              */
             if (parent == baseParent) {
-                ClassLoader loader = (ClassLoader)mLoaders.get(zip);
+                ClassLoader loader = mLoaders.get(zip);
                 if (loader != null) {
                     return loader;
                 }
     
+                Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, zip);
                 PathClassLoader pathClassloader =
-                    new PathClassLoader(zip, appDataDir + "/lib", parent);
-                
+                    new PathClassLoader(zip, libPath, parent);
+                Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
+
                 mLoaders.put(zip, pathClassloader);
                 return pathClassloader;
             }
 
-            return new PathClassLoader(zip, parent);
+            Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, zip);
+            PathClassLoader pathClassloader = new PathClassLoader(zip, parent);
+            Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
+            return pathClassloader;
         }
     }
 
-    private final HashMap mLoaders = new HashMap();
+    private final ArrayMap<String, ClassLoader> mLoaders = new ArrayMap<String, ClassLoader>();
 
     private static final ApplicationLoaders gApplicationLoaders
         = new ApplicationLoaders();

@@ -19,6 +19,7 @@ package android.text.util;
 import android.widget.MultiAutoCompleteTextView;
 
 import java.util.ArrayList;
+import java.util.Collection;
 
 /**
  * This class works as a Tokenizer for MultiAutoCompleteTextView for
@@ -27,18 +28,21 @@ import java.util.ArrayList;
  * into a series of Rfc822Tokens.
  */
 public class Rfc822Tokenizer implements MultiAutoCompleteTextView.Tokenizer {
+
     /**
      * This constructor will try to take a string like
      * "Foo Bar (something) &lt;foo\@google.com&gt;,
      * blah\@google.com (something)"
-     * and convert it into one or more Rfc822Tokens.
+     * and convert it into one or more Rfc822Tokens, output into the supplied
+     * collection.
+     *
      * It does *not* decode MIME encoded-words; charset conversion
      * must already have taken place if necessary.
      * It will try to be tolerant of broken syntax instead of
      * returning an error.
+     *
      */
-    public static Rfc822Token[] tokenize(CharSequence text) {
-        ArrayList<Rfc822Token> out = new ArrayList<Rfc822Token>();
+    public static void tokenize(CharSequence text, Collection<Rfc822Token> out) {
         StringBuilder name = new StringBuilder();
         StringBuilder address = new StringBuilder();
         StringBuilder comment = new StringBuilder();
@@ -70,7 +74,7 @@ public class Rfc822Tokenizer implements MultiAutoCompleteTextView.Tokenizer {
 
                 name.setLength(0);
                 address.setLength(0);
-                address.setLength(0);
+                comment.setLength(0);
             } else if (c == '"') {
                 i++;
 
@@ -81,7 +85,9 @@ public class Rfc822Tokenizer implements MultiAutoCompleteTextView.Tokenizer {
                         i++;
                         break;
                     } else if (c == '\\') {
-                        name.append(text.charAt(i + 1));
+                        if (i + 1 < cursor) {
+                            name.append(text.charAt(i + 1));
+                        }
                         i += 2;
                     } else {
                         name.append(c);
@@ -107,7 +113,9 @@ public class Rfc822Tokenizer implements MultiAutoCompleteTextView.Tokenizer {
                         level++;
                         i++;
                     } else if (c == '\\') {
-                        comment.append(text.charAt(i + 1));
+                        if (i + 1 < cursor) {
+                            comment.append(text.charAt(i + 1));
+                        }
                         i += 2;
                     } else {
                         comment.append(c);
@@ -148,7 +156,21 @@ public class Rfc822Tokenizer implements MultiAutoCompleteTextView.Tokenizer {
                                     name.toString(),
                                     comment.toString()));
         }
+    }
 
+    /**
+     * This method will try to take a string like
+     * "Foo Bar (something) &lt;foo\@google.com&gt;,
+     * blah\@google.com (something)"
+     * and convert it into one or more Rfc822Tokens.
+     * It does *not* decode MIME encoded-words; charset conversion
+     * must already have taken place if necessary.
+     * It will try to be tolerant of broken syntax instead of
+     * returning an error.
+     */
+    public static Rfc822Token[] tokenize(CharSequence text) {
+        ArrayList<Rfc822Token> out = new ArrayList<Rfc822Token>();
+        tokenize(text, out);
         return out.toArray(new Rfc822Token[out.size()]);
     }
 
@@ -234,7 +256,7 @@ public class Rfc822Tokenizer implements MultiAutoCompleteTextView.Tokenizer {
                     if (c == '"') {
                         i++;
                         break;
-                    } else if (c == '\\') {
+                    } else if (c == '\\' && i + 1 < len) {
                         i += 2;
                     } else {
                         i++;
@@ -253,7 +275,7 @@ public class Rfc822Tokenizer implements MultiAutoCompleteTextView.Tokenizer {
                     } else if (c == '(') {
                         level++;
                         i++;
-                    } else if (c == '\\') {
+                    } else if (c == '\\' && i + 1 < len) {
                         i += 2;
                     } else {
                         i++;

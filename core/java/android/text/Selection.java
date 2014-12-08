@@ -16,6 +16,8 @@
 
 package android.text;
 
+import java.text.BreakIterator;
+
 
 /**
  * Utility class for manipulating cursors and selections in CharSequences.
@@ -38,7 +40,7 @@ public class Selection {
         else
             return -1;
     }
-   
+
     /**
      * Return the offset of the selection edge or cursor, or -1 if
      * there is no selection or cursor.
@@ -57,7 +59,7 @@ public class Selection {
     // private static int pin(int value, int min, int max) {
     //     return value < min ? 0 : (value > max ? max : value);
     // }
-   
+
     /**
      * Set the selection anchor to <code>start</code> and the selection edge
      * to <code>stop</code>.
@@ -69,10 +71,10 @@ public class Selection {
 
         int ostart = getSelectionStart(text);
         int oend = getSelectionEnd(text);
-    
+
         if (ostart != start || oend != stop) {
             text.setSpan(SELECTION_START, start, start,
-                         Spanned.SPAN_POINT_POINT);
+                         Spanned.SPAN_POINT_POINT|Spanned.SPAN_INTERMEDIATE);
             text.setSpan(SELECTION_END, stop, stop,
                          Spanned.SPAN_POINT_POINT);
         }
@@ -114,7 +116,8 @@ public class Selection {
 
     /**
      * Move the cursor to the buffer offset physically above the current
-     * offset, or return false if the cursor is already on the top line.
+     * offset, to the beginning if it is on the top line but not at the
+     * start, or return false if the cursor is already on the top line.
      */
     public static boolean moveUp(Spannable text, Layout layout) {
         int start = getSelectionStart(text);
@@ -147,6 +150,9 @@ public class Selection {
 
                 setSelection(text, move);
                 return true;
+            } else if (end != 0) {
+                setSelection(text, 0);
+                return true;
             }
         }
 
@@ -155,7 +161,9 @@ public class Selection {
 
     /**
      * Move the cursor to the buffer offset physically below the current
-     * offset, or return false if the cursor is already on the bottom line.
+     * offset, to the end of the buffer if it is on the bottom line but
+     * not at the end, or return false if the cursor is already at the
+     * end of the buffer.
      */
     public static boolean moveDown(Spannable text, Layout layout) {
         int start = getSelectionStart(text);
@@ -187,6 +195,9 @@ public class Selection {
                 }
 
                 setSelection(text, move);
+                return true;
+            } else if (end != text.length()) {
+                setSelection(text, text.length());
                 return true;
             }
         }
@@ -357,6 +368,42 @@ public class Selection {
         return true;
     }
 
+    /** {@hide} */
+    public static interface PositionIterator {
+        public static final int DONE = BreakIterator.DONE;
+
+        public int preceding(int position);
+        public int following(int position);
+    }
+
+    /** {@hide} */
+    public static boolean moveToPreceding(
+            Spannable text, PositionIterator iter, boolean extendSelection) {
+        final int offset = iter.preceding(getSelectionEnd(text));
+        if (offset != PositionIterator.DONE) {
+            if (extendSelection) {
+                extendSelection(text, offset);
+            } else {
+                setSelection(text, offset);
+            }
+        }
+        return true;
+    }
+
+    /** {@hide} */
+    public static boolean moveToFollowing(
+            Spannable text, PositionIterator iter, boolean extendSelection) {
+        final int offset = iter.following(getSelectionEnd(text));
+        if (offset != PositionIterator.DONE) {
+            if (extendSelection) {
+                extendSelection(text, offset);
+            } else {
+                setSelection(text, offset);
+            }
+        }
+        return true;
+    }
+
     private static int findEdge(Spannable text, Layout layout, int dir) {
         int pt = getSelectionEnd(text);
         int line = layout.getLineForOffset(pt);
@@ -417,10 +464,13 @@ public class Selection {
         }
     }
 
+    private static final class START implements NoCopySpan { }
+    private static final class END implements NoCopySpan { }
+
     /*
      * Public constants
      */
 
-    public static final Object SELECTION_START = new Object();
-    public static final Object SELECTION_END = new Object();
+    public static final Object SELECTION_START = new START();
+    public static final Object SELECTION_END = new END();
 }

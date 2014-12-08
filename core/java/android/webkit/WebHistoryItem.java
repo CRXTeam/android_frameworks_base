@@ -25,61 +25,24 @@ import android.graphics.Bitmap;
  * @see WebBackForwardList
  */
 public class WebHistoryItem implements Cloneable {
-    // Global identifier count.
-    private static int sNextId = 0;
-    // Unique identifier.
-    private final int mId;
-    // The title of this item's document.
-    private String mTitle;
-    // The base url of this item.
-    private String mUrl;
-    // The favicon for this item.
-    private Bitmap mFavicon;
-    // The pre-flattened data used for saving the state.
-    private byte[] mFlattenedData;
 
     /**
-     * Basic constructor that assigns a unique id to the item. Called by JNI
-     * only.
+     * @hide
      */
-    private WebHistoryItem() {
-        synchronized (WebHistoryItem.class) {
-            mId = sNextId++;
-        }
+    public WebHistoryItem() {
     }
-
-    /**
-     * Construct a new WebHistoryItem with initial flattened data.
-     * @param data The pre-flattened data coming from restoreState.
-     */
-    /*package*/ WebHistoryItem(byte[] data) {
-        mUrl = null; // This will be updated natively
-        mFlattenedData = data;
-        synchronized (WebHistoryItem.class) {
-            mId = sNextId++;
-        }
-    }
-
-    /**
-     * Construct a clone of a WebHistoryItem from the given item.
-     * @param item The history item to clone.
-     */
-    private WebHistoryItem(WebHistoryItem item) {
-        mUrl = item.mUrl;
-        mTitle = item.mTitle;
-        mFlattenedData = item.mFlattenedData;
-        mFavicon = item.mFavicon;
-        mId = item.mId;
-}
 
     /**
      * Return an identifier for this history item. If an item is a copy of
      * another item, the identifiers will be the same even if they are not the
      * same object.
      * @return The id for this item.
+     * @deprecated This method is now obsolete.
+     * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR1}
      */
+    @Deprecated
     public int getId() {
-        return mId;
+        throw new MustOverrideException();
     }
 
     /**
@@ -91,9 +54,19 @@ public class WebHistoryItem implements Cloneable {
      * to synchronize this method.
      */
     public String getUrl() {
-        return mUrl;
+        throw new MustOverrideException();
     }
 
+    /**
+     * Return the original url of this history item. This was the requested
+     * url, the final url may be different as there might have been 
+     * redirects while loading the site.
+     * @return The original url of this history item.
+     */
+    public String getOriginalUrl() {
+        throw new MustOverrideException();
+    }
+    
     /**
      * Return the document title of this history item.
      * @return The document title of this history item.
@@ -101,7 +74,7 @@ public class WebHistoryItem implements Cloneable {
      * to synchronize this method.
      */
     public String getTitle() {
-        return mTitle;
+        throw new MustOverrideException();
     }
 
     /**
@@ -111,53 +84,14 @@ public class WebHistoryItem implements Cloneable {
      * to synchronize this method.
      */
     public Bitmap getFavicon() {
-        return mFavicon;
-    }
-
-    /**
-     * Set the favicon.
-     * @param icon A Bitmap containing the favicon for this history item.
-     * Note: The VM ensures 32-bit atomic read/write operations so we don't have
-     * to synchronize this method.
-     */
-    /*package*/ void setFavicon(Bitmap icon) {
-        mFavicon = icon;
-    }
-
-    /**
-     * Get the pre-flattened data.
-     * Note: The VM ensures 32-bit atomic read/write operations so we don't have
-     * to synchronize this method.
-     */
-    /*package*/ byte[] getFlattenedData() {
-        return mFlattenedData;
-    }
-
-    /**
-     * Inflate this item.
-     * Note: The VM ensures 32-bit atomic read/write operations so we don't have
-     * to synchronize this method.
-     */
-    /*package*/ void inflate(int nativeFrame) {
-        inflate(nativeFrame, mFlattenedData);
+        throw new MustOverrideException();
     }
 
     /**
      * Clone the history item for use by clients of WebView.
      */
     protected synchronized WebHistoryItem clone() {
-        return new WebHistoryItem(this);
+        throw new MustOverrideException();
     }
 
-    /* Natively inflate this item, this method is called in the WebCore thread.
-     */
-    private native void inflate(int nativeFrame, byte[] data);
-
-    /* Called by jni when the item is updated */
-    private void update(String url, String title, Bitmap favicon, byte[] data) {
-        mUrl = url;
-        mTitle = title;
-        mFavicon = favicon;
-        mFlattenedData = data;
-    }
 }

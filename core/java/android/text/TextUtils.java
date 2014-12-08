@@ -16,46 +16,60 @@
 
 package android.text;
 
-import com.android.internal.R;
-
-import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.os.SystemProperties;
+import android.provider.Settings;
 import android.text.style.AbsoluteSizeSpan;
 import android.text.style.AlignmentSpan;
 import android.text.style.BackgroundColorSpan;
 import android.text.style.BulletSpan;
 import android.text.style.CharacterStyle;
+import android.text.style.EasyEditSpan;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.LeadingMarginSpan;
+import android.text.style.LocaleSpan;
 import android.text.style.MetricAffectingSpan;
 import android.text.style.QuoteSpan;
 import android.text.style.RelativeSizeSpan;
 import android.text.style.ReplacementSpan;
 import android.text.style.ScaleXSpan;
+import android.text.style.SpellCheckSpan;
 import android.text.style.StrikethroughSpan;
 import android.text.style.StyleSpan;
 import android.text.style.SubscriptSpan;
+import android.text.style.SuggestionRangeSpan;
+import android.text.style.SuggestionSpan;
 import android.text.style.SuperscriptSpan;
 import android.text.style.TextAppearanceSpan;
+import android.text.style.TtsSpan;
 import android.text.style.TypefaceSpan;
 import android.text.style.URLSpan;
 import android.text.style.UnderlineSpan;
+import android.util.Log;
+import android.util.Printer;
+import android.view.View;
+
+import com.android.internal.R;
 import com.android.internal.util.ArrayUtils;
 
-import java.util.regex.Pattern;
+import libcore.icu.ICU;
+
+import java.lang.reflect.Array;
 import java.util.Iterator;
+import java.util.Locale;
+import java.util.regex.Pattern;
 
-public class TextUtils
-{
+public class TextUtils {
+    private static final String TAG = "TextUtils";
+
+
     private TextUtils() { /* cannot be instantiated */ }
-
-    private static String[] EMPTY_STRING_ARRAY = new String[]{};
 
     public static void getChars(CharSequence s, int start, int end,
                                 char[] dest, int destoff) {
-        Class c = s.getClass();
+        Class<? extends CharSequence> c = s.getClass();
 
         if (c == String.class)
             ((String) s).getChars(start, end, dest, destoff);
@@ -76,7 +90,7 @@ public class TextUtils
     }
 
     public static int indexOf(CharSequence s, char ch, int start) {
-        Class c = s.getClass();
+        Class<? extends CharSequence> c = s.getClass();
 
         if (c == String.class)
             return ((String) s).indexOf(ch, start);
@@ -85,7 +99,7 @@ public class TextUtils
     }
 
     public static int indexOf(CharSequence s, char ch, int start, int end) {
-        Class c = s.getClass();
+        Class<? extends CharSequence> c = s.getClass();
 
         if (s instanceof GetChars || c == StringBuffer.class ||
             c == StringBuilder.class || c == String.class) {
@@ -126,7 +140,7 @@ public class TextUtils
     }
 
     public static int lastIndexOf(CharSequence s, char ch, int last) {
-        Class c = s.getClass();
+        Class<? extends CharSequence> c = s.getClass();
 
         if (c == String.class)
             return ((String) s).lastIndexOf(ch, last);
@@ -143,7 +157,7 @@ public class TextUtils
 
         int end = last + 1;
 
-        Class c = s.getClass();
+        Class<? extends CharSequence> c = s.getClass();
 
         if (s instanceof GetChars || c == StringBuffer.class ||
             c == StringBuilder.class || c == String.class) {
@@ -217,7 +231,12 @@ public class TextUtils
     public static boolean regionMatches(CharSequence one, int toffset,
                                         CharSequence two, int ooffset,
                                         int len) {
-        char[] temp = obtain(2 * len);
+        int tempLen = 2 * len;
+        if (tempLen < len) {
+            // Integer overflow; len is unreasonably large
+            throw new IndexOutOfBoundsException();
+        }
+        char[] temp = obtain(tempLen);
 
         getChars(one, toffset, toffset + len, temp, 0);
         getChars(two, ooffset, ooffset + len, temp, len);
@@ -234,6 +253,13 @@ public class TextUtils
         return match;
     }
 
+    /**
+     * Create a new String object containing the given range of characters
+     * from the source string.  This is different than simply calling
+     * {@link CharSequence#subSequence(int, int) CharSequence.subSequence}
+     * in that it does not preserve any style runs in the source sequence,
+     * allowing a more efficient implementation.
+     */
     public static String substring(CharSequence source, int start, int end) {
         if (source instanceof String)
             return ((String) source).substring(start, end);
@@ -248,6 +274,17 @@ public class TextUtils
         recycle(temp);
 
         return ret;
+    }
+
+    /**
+     * Returns list of multiple {@link CharSequence} joined into a single
+     * {@link CharSequence} separated by localized delimiter such as ", ".
+     *
+     * @hide
+     */
+    public static CharSequence join(Iterable<CharSequence> list) {
+        final CharSequence delimiter = Resources.getSystem().getText(R.string.list_delimeter);
+        return join(delimiter, list);
     }
 
     /**
@@ -445,13 +482,26 @@ public class TextUtils
 
     /**
      * Returns true if a and b are equal, including if they are both null.
-     *
+     * <p><i>Note: In platform versions 1.1 and earlier, this method only worked well if
+     * both the arguments were instances of String.</i></p>
      * @param a first CharSequence to check
      * @param b second CharSequence to check
      * @return true if a and b are equal
      */
     public static boolean equals(CharSequence a, CharSequence b) {
-        return a == b || (a != null && a.equals(b));
+        if (a == b) return true;
+        int length;
+        if (a != null && b != null && (length = a.length()) == b.length()) {
+            if (a instanceof String && b instanceof String) {
+                return a.equals(b);
+            } else {
+                for (int i = 0; i < length; i++) {
+                    if (a.charAt(i) != b.charAt(i)) return false;
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
     // XXX currently this only reverses chars, not spans
@@ -480,6 +530,7 @@ public class TextUtils
             return new String(buf);
         }
 
+        @Override
         public String toString() {
             return subSequence(0, length()).toString();
         }
@@ -508,24 +559,58 @@ public class TextUtils
         private int mEnd;
     }
 
-    private static final int ALIGNMENT_SPAN = 1;
-    private static final int FOREGROUND_COLOR_SPAN = 2;
-    private static final int RELATIVE_SIZE_SPAN = 3;
-    private static final int SCALE_X_SPAN = 4;
-    private static final int STRIKETHROUGH_SPAN = 5;
-    private static final int UNDERLINE_SPAN = 6;
-    private static final int STYLE_SPAN = 7;
-    private static final int BULLET_SPAN = 8;
-    private static final int QUOTE_SPAN = 9;
-    private static final int LEADING_MARGIN_SPAN = 10;
-    private static final int URL_SPAN = 11;
-    private static final int BACKGROUND_COLOR_SPAN = 12;
-    private static final int TYPEFACE_SPAN = 13;
-    private static final int SUPERSCRIPT_SPAN = 14;
-    private static final int SUBSCRIPT_SPAN = 15;
-    private static final int ABSOLUTE_SIZE_SPAN = 16;
-    private static final int TEXT_APPEARANCE_SPAN = 17;
-    private static final int ANNOTATION = 18;
+    /** @hide */
+    public static final int ALIGNMENT_SPAN = 1;
+    /** @hide */
+    public static final int FIRST_SPAN = ALIGNMENT_SPAN;
+    /** @hide */
+    public static final int FOREGROUND_COLOR_SPAN = 2;
+    /** @hide */
+    public static final int RELATIVE_SIZE_SPAN = 3;
+    /** @hide */
+    public static final int SCALE_X_SPAN = 4;
+    /** @hide */
+    public static final int STRIKETHROUGH_SPAN = 5;
+    /** @hide */
+    public static final int UNDERLINE_SPAN = 6;
+    /** @hide */
+    public static final int STYLE_SPAN = 7;
+    /** @hide */
+    public static final int BULLET_SPAN = 8;
+    /** @hide */
+    public static final int QUOTE_SPAN = 9;
+    /** @hide */
+    public static final int LEADING_MARGIN_SPAN = 10;
+    /** @hide */
+    public static final int URL_SPAN = 11;
+    /** @hide */
+    public static final int BACKGROUND_COLOR_SPAN = 12;
+    /** @hide */
+    public static final int TYPEFACE_SPAN = 13;
+    /** @hide */
+    public static final int SUPERSCRIPT_SPAN = 14;
+    /** @hide */
+    public static final int SUBSCRIPT_SPAN = 15;
+    /** @hide */
+    public static final int ABSOLUTE_SIZE_SPAN = 16;
+    /** @hide */
+    public static final int TEXT_APPEARANCE_SPAN = 17;
+    /** @hide */
+    public static final int ANNOTATION = 18;
+    /** @hide */
+    public static final int SUGGESTION_SPAN = 19;
+    /** @hide */
+    public static final int SPELL_CHECK_SPAN = 20;
+    /** @hide */
+    public static final int SUGGESTION_RANGE_SPAN = 21;
+    /** @hide */
+    public static final int EASY_EDIT_SPAN = 22;
+    /** @hide */
+    public static final int LOCALE_SPAN = 23;
+    /** @hide */
+    public static final int TTS_SPAN = 24;
+    /** @hide */
+    public static final int LAST_SPAN = TTS_SPAN;
 
     /**
      * Flatten a CharSequence and whatever styles can be copied across processes
@@ -553,137 +638,18 @@ public class TextUtils
                     prop = ((CharacterStyle) prop).getUnderlying();
                 }
 
-                if (prop instanceof AlignmentSpan) {
-                    p.writeInt(ALIGNMENT_SPAN);
-                    p.writeString(((AlignmentSpan) prop).getAlignment().name());
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof ForegroundColorSpan) {
-                    p.writeInt(FOREGROUND_COLOR_SPAN);
-                    p.writeInt(((ForegroundColorSpan) prop).getForegroundColor());
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof RelativeSizeSpan) {
-                    p.writeInt(RELATIVE_SIZE_SPAN);
-                    p.writeFloat(((RelativeSizeSpan) prop).getSizeChange());
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof ScaleXSpan) {
-                    p.writeInt(SCALE_X_SPAN);
-                    p.writeFloat(((ScaleXSpan) prop).getScaleX());
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof StrikethroughSpan) {
-                    p.writeInt(STRIKETHROUGH_SPAN);
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof UnderlineSpan) {
-                    p.writeInt(UNDERLINE_SPAN);
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof StyleSpan) {
-                    p.writeInt(STYLE_SPAN);
-                    p.writeInt(((StyleSpan) prop).getStyle());
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof LeadingMarginSpan) {
-                    if (prop instanceof BulletSpan) {
-                        p.writeInt(BULLET_SPAN);
-                        writeWhere(p, sp, o);
-                    } else if (prop instanceof QuoteSpan) {
-                        p.writeInt(QUOTE_SPAN);
-                        p.writeInt(((QuoteSpan) prop).getColor());
-                        writeWhere(p, sp, o);
+                if (prop instanceof ParcelableSpan) {
+                    ParcelableSpan ps = (ParcelableSpan)prop;
+                    int spanTypeId = ps.getSpanTypeId();
+                    if (spanTypeId < FIRST_SPAN || spanTypeId > LAST_SPAN) {
+                        Log.e(TAG, "external class \"" + ps.getClass().getSimpleName()
+                                + "\" is attempting to use the frameworks-only ParcelableSpan"
+                                + " interface");
                     } else {
-                        p.writeInt(LEADING_MARGIN_SPAN);
-                        p.writeInt(((LeadingMarginSpan) prop).
-                                           getLeadingMargin(true));
-                        p.writeInt(((LeadingMarginSpan) prop).
-                                           getLeadingMargin(false));
+                        p.writeInt(spanTypeId);
+                        ps.writeToParcel(p, parcelableFlags);
                         writeWhere(p, sp, o);
                     }
-                }
-
-                if (prop instanceof URLSpan) {
-                    p.writeInt(URL_SPAN);
-                    p.writeString(((URLSpan) prop).getURL());
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof BackgroundColorSpan) {
-                    p.writeInt(BACKGROUND_COLOR_SPAN);
-                    p.writeInt(((BackgroundColorSpan) prop).getBackgroundColor());
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof TypefaceSpan) {
-                    p.writeInt(TYPEFACE_SPAN);
-                    p.writeString(((TypefaceSpan) prop).getFamily());
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof SuperscriptSpan) {
-                    p.writeInt(SUPERSCRIPT_SPAN);
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof SubscriptSpan) {
-                    p.writeInt(SUBSCRIPT_SPAN);
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof AbsoluteSizeSpan) {
-                    p.writeInt(ABSOLUTE_SIZE_SPAN);
-                    p.writeInt(((AbsoluteSizeSpan) prop).getSize());
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof TextAppearanceSpan) {
-                    TextAppearanceSpan tas = (TextAppearanceSpan) prop;
-                    p.writeInt(TEXT_APPEARANCE_SPAN);
-
-                    String tf = tas.getFamily();
-                    if (tf != null) {
-                        p.writeInt(1);
-                        p.writeString(tf);
-                    } else {
-                        p.writeInt(0);
-                    }
-
-                    p.writeInt(tas.getTextSize());
-                    p.writeInt(tas.getTextStyle());
-
-                    ColorStateList csl = tas.getTextColor();
-                    if (csl == null) {
-                        p.writeInt(0);
-                    } else {
-                        p.writeInt(1);
-                        csl.writeToParcel(p, parcelableFlags);
-                    }
-
-                    csl = tas.getLinkTextColor();
-                    if (csl == null) {
-                        p.writeInt(0);
-                    } else {
-                        p.writeInt(1);
-                        csl.writeToParcel(p, parcelableFlags);
-                    }
-
-                    writeWhere(p, sp, o);
-                }
-
-                if (prop instanceof Annotation) {
-                    p.writeInt(ANNOTATION);
-                    p.writeString(((Annotation) prop).getKey());
-                    p.writeString(((Annotation) prop).getValue());
-                    writeWhere(p, sp, o);
                 }
             }
 
@@ -705,19 +671,24 @@ public class TextUtils
     }
 
     public static final Parcelable.Creator<CharSequence> CHAR_SEQUENCE_CREATOR
-            = new Parcelable.Creator<CharSequence>()
-    {
+            = new Parcelable.Creator<CharSequence>() {
         /**
          * Read and return a new CharSequence, possibly with styles,
          * from the parcel.
          */
-        public  CharSequence createFromParcel(Parcel p) {
+        public CharSequence createFromParcel(Parcel p) {
             int kind = p.readInt();
 
-            if (kind == 1)
-                return p.readString();
+            String string = p.readString();
+            if (string == null) {
+                return null;
+            }
 
-            SpannableString sp = new SpannableString(p.readString());
+            if (kind == 1) {
+                return string;
+            }
+
+            SpannableString sp = new SpannableString(string);
 
             while (true) {
                 kind = p.readInt();
@@ -727,89 +698,99 @@ public class TextUtils
 
                 switch (kind) {
                 case ALIGNMENT_SPAN:
-                    readSpan(p, sp, new AlignmentSpan.Standard(
-                            Layout.Alignment.valueOf(p.readString())));
+                    readSpan(p, sp, new AlignmentSpan.Standard(p));
                     break;
 
                 case FOREGROUND_COLOR_SPAN:
-                    readSpan(p, sp, new ForegroundColorSpan(p.readInt()));
+                    readSpan(p, sp, new ForegroundColorSpan(p));
                     break;
 
                 case RELATIVE_SIZE_SPAN:
-                    readSpan(p, sp, new RelativeSizeSpan(p.readFloat()));
+                    readSpan(p, sp, new RelativeSizeSpan(p));
                     break;
 
                 case SCALE_X_SPAN:
-                    readSpan(p, sp, new ScaleXSpan(p.readFloat()));
+                    readSpan(p, sp, new ScaleXSpan(p));
                     break;
 
                 case STRIKETHROUGH_SPAN:
-                    readSpan(p, sp, new StrikethroughSpan());
+                    readSpan(p, sp, new StrikethroughSpan(p));
                     break;
 
                 case UNDERLINE_SPAN:
-                    readSpan(p, sp, new UnderlineSpan());
+                    readSpan(p, sp, new UnderlineSpan(p));
                     break;
 
                 case STYLE_SPAN:
-                    readSpan(p, sp, new StyleSpan(p.readInt()));
+                    readSpan(p, sp, new StyleSpan(p));
                     break;
 
                 case BULLET_SPAN:
-                    readSpan(p, sp, new BulletSpan());
+                    readSpan(p, sp, new BulletSpan(p));
                     break;
 
                 case QUOTE_SPAN:
-                    readSpan(p, sp, new QuoteSpan(p.readInt()));
+                    readSpan(p, sp, new QuoteSpan(p));
                     break;
 
                 case LEADING_MARGIN_SPAN:
-                    readSpan(p, sp, new LeadingMarginSpan.Standard(p.readInt(),
-                                                                   p.readInt()));
+                    readSpan(p, sp, new LeadingMarginSpan.Standard(p));
                 break;
 
                 case URL_SPAN:
-                    readSpan(p, sp, new URLSpan(p.readString()));
+                    readSpan(p, sp, new URLSpan(p));
                     break;
 
                 case BACKGROUND_COLOR_SPAN:
-                    readSpan(p, sp, new BackgroundColorSpan(p.readInt()));
+                    readSpan(p, sp, new BackgroundColorSpan(p));
                     break;
 
                 case TYPEFACE_SPAN:
-                    readSpan(p, sp, new TypefaceSpan(p.readString()));
+                    readSpan(p, sp, new TypefaceSpan(p));
                     break;
 
                 case SUPERSCRIPT_SPAN:
-                    readSpan(p, sp, new SuperscriptSpan());
+                    readSpan(p, sp, new SuperscriptSpan(p));
                     break;
 
                 case SUBSCRIPT_SPAN:
-                    readSpan(p, sp, new SubscriptSpan());
+                    readSpan(p, sp, new SubscriptSpan(p));
                     break;
 
                 case ABSOLUTE_SIZE_SPAN:
-                    readSpan(p, sp, new AbsoluteSizeSpan(p.readInt()));
+                    readSpan(p, sp, new AbsoluteSizeSpan(p));
                     break;
 
                 case TEXT_APPEARANCE_SPAN:
-                    readSpan(p, sp, new TextAppearanceSpan(
-                        p.readInt() != 0
-                            ? p.readString()
-                            : null,
-                        p.readInt(),
-                        p.readInt(),
-                        p.readInt() != 0
-                            ? ColorStateList.CREATOR.createFromParcel(p)
-                            : null,
-                        p.readInt() != 0
-                            ? ColorStateList.CREATOR.createFromParcel(p)
-                            : null));
+                    readSpan(p, sp, new TextAppearanceSpan(p));
                     break;
 
                 case ANNOTATION:
-                    readSpan(p, sp,
-                             new Annotation(p.readString(), p.readString()));
+                    readSpan(p, sp, new Annotation(p));
+                    break;
+
+                case SUGGESTION_SPAN:
+                    readSpan(p, sp, new SuggestionSpan(p));
+                    break;
+
+                case SPELL_CHECK_SPAN:
+                    readSpan(p, sp, new SpellCheckSpan(p));
+                    break;
+
+                case SUGGESTION_RANGE_SPAN:
+                    readSpan(p, sp, new SuggestionRangeSpan(p));
+                    break;
+
+                case EASY_EDIT_SPAN:
+                    readSpan(p, sp, new EasyEditSpan(p));
+                    break;
+
+                case LOCALE_SPAN:
+                    readSpan(p, sp, new LocaleSpan(p));
+                    break;
+
+                case TTS_SPAN:
+                    readSpan(p, sp, new TtsSpan(p));
                     break;
 
                 default:
@@ -827,6 +808,30 @@ public class TextUtils
     };
 
     /**
+     * Debugging tool to print the spans in a CharSequence.  The output will
+     * be printed one span per line.  If the CharSequence is not a Spanned,
+     * then the entire string will be printed on a single line.
+     */
+    public static void dumpSpans(CharSequence cs, Printer printer, String prefix) {
+        if (cs instanceof Spanned) {
+            Spanned sp = (Spanned) cs;
+            Object[] os = sp.getSpans(0, cs.length(), Object.class);
+
+            for (int i = 0; i < os.length; i++) {
+                Object o = os[i];
+                printer.println(prefix + cs.subSequence(sp.getSpanStart(o),
+                        sp.getSpanEnd(o)) + ": "
+                        + Integer.toHexString(System.identityHashCode(o))
+                        + " " + o.getClass().getCanonicalName()
+                         + " (" + sp.getSpanStart(o) + "-" + sp.getSpanEnd(o)
+                         + ") fl=#" + sp.getSpanFlags(o));
+            }
+        } else {
+            printer.println(prefix + cs + ": (no spans)");
+        }
+    }
+
+    /**
      * Return a new CharSequence in which each of the source strings is
      * replaced by the corresponding element of the destinations.
      */
@@ -840,7 +845,7 @@ public class TextUtils
 
             if (where >= 0)
                 tb.setSpan(sources[i], where, where + sources[i].length(),
-                           Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+                           Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
 
         for (int i = 0; i < sources.length; i++) {
@@ -993,6 +998,17 @@ public class TextUtils
         sp.setSpan(o, p.readInt(), p.readInt(), p.readInt());
     }
 
+    /**
+     * Copies the spans from the region <code>start...end</code> in
+     * <code>source</code> to the region
+     * <code>destoff...destoff+end-start</code> in <code>dest</code>.
+     * Spans in <code>source</code> that begin before <code>start</code>
+     * or end after <code>end</code> but overlap this range are trimmed
+     * as if they began at <code>start</code> or ended at <code>end</code>.
+     *
+     * @throws IndexOutOfBoundsException if any of the copied spans
+     * are out of range in <code>dest</code>.
+     */
     public static void copySpansFrom(Spanned source, int start, int end,
                                      Class kind,
                                      Spannable dest, int destoff) {
@@ -1021,6 +1037,11 @@ public class TextUtils
         START,
         MIDDLE,
         END,
+        MARQUEE,
+        /**
+         * @hide
+         */
+        END_SMALL
     }
 
     public interface EllipsizeCallback {
@@ -1030,8 +1051,6 @@ public class TextUtils
          */
         public void ellipsized(int start, int end);
     }
-
-    private static String sEllipsis = null;
 
     /**
      * Returns the original text if it fits in the specified width
@@ -1048,33 +1067,57 @@ public class TextUtils
     /**
      * Returns the original text if it fits in the specified width
      * given the properties of the specified Paint,
-     * or, if it does not fit, a copy with ellipsis character added 
+     * or, if it does not fit, a copy with ellipsis character added
+     * at the specified edge or center.
+     * If <code>preserveLength</code> is specified, the returned copy
+     * will be padded with zero-width spaces to preserve the original
+     * length and offsets instead of truncating.
+     * If <code>callback</code> is non-null, it will be called to
+     * report the start and end of the ellipsized range.  TextDirection
+     * is determined by the first strong directional character.
+     */
+    public static CharSequence ellipsize(CharSequence text,
+                                         TextPaint paint,
+                                         float avail, TruncateAt where,
+                                         boolean preserveLength,
+                                         EllipsizeCallback callback) {
+
+        final String ellipsis = (where == TruncateAt.END_SMALL) ?
+                Resources.getSystem().getString(R.string.ellipsis_two_dots) :
+                Resources.getSystem().getString(R.string.ellipsis);
+
+        return ellipsize(text, paint, avail, where, preserveLength, callback,
+                TextDirectionHeuristics.FIRSTSTRONG_LTR,
+                ellipsis);
+    }
+
+    /**
+     * Returns the original text if it fits in the specified width
+     * given the properties of the specified Paint,
+     * or, if it does not fit, a copy with ellipsis character added
      * at the specified edge or center.
      * If <code>preserveLength</code> is specified, the returned copy
      * will be padded with zero-width spaces to preserve the original
      * length and offsets instead of truncating.
      * If <code>callback</code> is non-null, it will be called to
      * report the start and end of the ellipsized range.
+     *
+     * @hide
      */
     public static CharSequence ellipsize(CharSequence text,
-                                         TextPaint p,
-                                         float avail, TruncateAt where,
-                                         boolean preserveLength,
-                                         EllipsizeCallback callback) {
-        if (sEllipsis == null) {
-            Resources r = Resources.getSystem();
-            sEllipsis = r.getString(R.string.ellipsis);
-        }
+            TextPaint paint,
+            float avail, TruncateAt where,
+            boolean preserveLength,
+            EllipsizeCallback callback,
+            TextDirectionHeuristic textDir, String ellipsis) {
 
         int len = text.length();
 
-        // Use Paint.breakText() for the non-Spanned case to avoid having
-        // to allocate memory and accumulate the character widths ourselves.
+        MeasuredText mt = MeasuredText.obtain();
+        try {
+            float width = setPara(mt, paint, text, 0, text.length(), textDir);
 
-        if (!(text instanceof Spanned)) {
-            float wid = p.measureText(text, 0, len);
-
-            if (wid <= avail) {
+            if (width <= avail) {
                 if (callback != null) {
                     callback.ellipsized(0, 0);
                 }
@@ -1082,250 +1125,69 @@ public class TextUtils
                 return text;
             }
 
-            float ellipsiswid = p.measureText(sEllipsis);
+            // XXX assumes ellipsis string does not require shaping and
+            // is unaffected by style
+            float ellipsiswid = paint.measureText(ellipsis);
+            avail -= ellipsiswid;
 
-            if (ellipsiswid > avail) {
-                if (callback != null) {
-                    callback.ellipsized(0, len);
-                }
-
-                if (preserveLength) {
-                    char[] buf = obtain(len);
-                    for (int i = 0; i < len; i++) {
-                        buf[i] = '\uFEFF';
-                    }
-                    String ret = new String(buf, 0, len);
-                    recycle(buf);
-                    return ret;
-                } else {
-                    return "";
-                }
-            }
-
-            if (where == TruncateAt.START) {
-                int fit = p.breakText(text, 0, len, false,
-                                      avail - ellipsiswid, null);
-
-                if (callback != null) {
-                    callback.ellipsized(0, len - fit);
-                }
-
-                if (preserveLength) {
-                    return blank(text, 0, len - fit);
-                } else {
-                    return sEllipsis + text.toString().substring(len - fit, len);
-                }
-            } else if (where == TruncateAt.END) {
-                int fit = p.breakText(text, 0, len, true,
-                                      avail - ellipsiswid, null);
-
-                if (callback != null) {
-                    callback.ellipsized(fit, len);
-                }
-
-                if (preserveLength) {
-                    return blank(text, fit, len);
-                } else {
-                    return text.toString().substring(0, fit) + sEllipsis;
-                } 
-            } else /* where == TruncateAt.MIDDLE */ {
-                int right = p.breakText(text, 0, len, false,
-                                        (avail - ellipsiswid) / 2, null);
-                float used = p.measureText(text, len - right, len);
-                int left = p.breakText(text, 0, len - right, true,
-                                       avail - ellipsiswid - used, null);
-
-                if (callback != null) {
-                    callback.ellipsized(left, len - right);
-                }
-
-                if (preserveLength) {
-                    return blank(text, left, len - right);
-                } else {
-                    String s = text.toString();
-                    return s.substring(0, left) + sEllipsis +
-                           s.substring(len - right, len);
-                }
-            }
-        }
-
-        // But do the Spanned cases by hand, because it's such a pain
-        // to iterate the span transitions backwards and getTextWidths()
-        // will give us the information we need.
-
-        // getTextWidths() always writes into the start of the array,
-        // so measure each span into the first half and then copy the
-        // results into the second half to use later.
-
-        float[] wid = new float[len * 2];
-        TextPaint temppaint = new TextPaint();
-        Spanned sp = (Spanned) text;
-
-        int next;
-        for (int i = 0; i < len; i = next) {
-            next = sp.nextSpanTransition(i, len, MetricAffectingSpan.class);
-
-            Styled.getTextWidths(p, temppaint, sp, i, next, wid, null);
-            System.arraycopy(wid, 0, wid, len + i, next - i);
-        }
-
-        float sum = 0;
-        for (int i = 0; i < len; i++) {
-            sum += wid[len + i];
-        }
-
-        if (sum <= avail) {
-            if (callback != null) {
-                callback.ellipsized(0, 0);
-            }
-
-            return text;
-        }
-
-        float ellipsiswid = p.measureText(sEllipsis);
-
-        if (ellipsiswid > avail) {
-            if (callback != null) {
-                callback.ellipsized(0, len);
-            }
-
-            if (preserveLength) {
-                char[] buf = obtain(len);
-                for (int i = 0; i < len; i++) {
-                    buf[i] = '\uFEFF';
-                }
-                SpannableString ss = new SpannableString(new String(buf, 0, len));
-                recycle(buf);
-                copySpansFrom(sp, 0, len, Object.class, ss, 0);
-                return ss;
+            int left = 0;
+            int right = len;
+            if (avail < 0) {
+                // it all goes
+            } else if (where == TruncateAt.START) {
+                right = len - mt.breakText(len, false, avail);
+            } else if (where == TruncateAt.END || where == TruncateAt.END_SMALL) {
+                left = mt.breakText(len, true, avail);
             } else {
-                return "";
-            }
-        }
-
-        if (where == TruncateAt.START) {
-            sum = 0;
-            int i;
-
-            for (i = len; i >= 0; i--) {
-                float w = wid[len + i - 1];
-
-                if (w + sum + ellipsiswid > avail) {
-                    break;
-                }
-
-                sum += w;
-            }
-
-            if (callback != null) {
-                callback.ellipsized(0, i);
-            }
-
-            if (preserveLength) {
-                SpannableString ss = new SpannableString(blank(text, 0, i));
-                copySpansFrom(sp, 0, len, Object.class, ss, 0);
-                return ss;
-            } else {
-                SpannableStringBuilder out = new SpannableStringBuilder(sEllipsis);
-                out.insert(1, text, i, len);
-
-                return out;
-            }
-        } else if (where == TruncateAt.END) {
-            sum = 0;
-            int i;
-
-            for (i = 0; i < len; i++) {
-                float w = wid[len + i];
-
-                if (w + sum + ellipsiswid > avail) {
-                    break;
-                }
-
-                sum += w;
-            }
-
-            if (callback != null) {
-                callback.ellipsized(i, len);
-            }
-
-            if (preserveLength) {
-                SpannableString ss = new SpannableString(blank(text, i, len));
-                copySpansFrom(sp, 0, len, Object.class, ss, 0);
-                return ss;
-            } else {
-                SpannableStringBuilder out = new SpannableStringBuilder(sEllipsis);
-                out.insert(0, text, 0, i);
-
-                return out;
-            }
-        } else /* where = TruncateAt.MIDDLE */ {
-            float lsum = 0, rsum = 0;
-            int left = 0, right = len;
-
-            float ravail = (avail - ellipsiswid) / 2;
-            for (right = len; right >= 0; right--) {
-                float w = wid[len + right - 1];
-
-                if (w + rsum > ravail) {
-                    break;
-                }
-
-                rsum += w;
-            }
-
-            float lavail = avail - ellipsiswid - rsum;
-            for (left = 0; left < right; left++) {
-                float w = wid[len + left];
-
-                if (w + lsum > lavail) {
-                    break;
-                }
-
-                lsum += w;
+                right = len - mt.breakText(len, false, avail / 2);
+                avail -= mt.measure(right, len);
+                left = mt.breakText(right, true, avail);
             }
 
             if (callback != null) {
                 callback.ellipsized(left, right);
             }
 
+            char[] buf = mt.mChars;
+            Spanned sp = text instanceof Spanned ? (Spanned) text : null;
+
+            int remaining = len - (right - left);
             if (preserveLength) {
-                SpannableString ss = new SpannableString(blank(text, left, right));
+                if (remaining > 0) { // else eliminate the ellipsis too
+                    buf[left++] = ellipsis.charAt(0);
+                }
+                for (int i = left; i < right; i++) {
+                    buf[i] = ZWNBS_CHAR;
+                }
+                String s = new String(buf, 0, len);
+                if (sp == null) {
+                    return s;
+                }
+                SpannableString ss = new SpannableString(s);
                 copySpansFrom(sp, 0, len, Object.class, ss, 0);
                 return ss;
-            } else {
-                SpannableStringBuilder out = new SpannableStringBuilder(sEllipsis);
-                out.insert(0, text, 0, left);
-                out.insert(out.length(), text, right, len);
-
-                return out;
             }
-        }
-    }
 
-    private static String blank(CharSequence source, int start, int end) {
-        int len = source.length();
-        char[] buf = obtain(len);
-
-        if (start != 0) {
-            getChars(source, 0, start, buf, 0);
-        }
-        if (end != len) {
-            getChars(source, end, len, buf, end);
-        }
-
-        if (start != end) {
-            buf[start] = '\u2026';
-
-            for (int i = start + 1; i < end; i++) {
-                buf[i] = '\uFEFF';
+            if (remaining == 0) {
+                return "";
             }
-        }
-    
-        String ret = new String(buf, 0, len);
-        recycle(buf);
 
-        return ret;
+            if (sp == null) {
+                StringBuilder sb = new StringBuilder(remaining + ellipsis.length());
+                sb.append(buf, 0, left);
+                sb.append(ellipsis);
+                sb.append(buf, right, len - right);
+                return sb.toString();
+            }
+
+            SpannableStringBuilder ssb = new SpannableStringBuilder();
+            ssb.append(text, 0, left);
+            ssb.append(ellipsis);
+            ssb.append(text, right, len);
+            return ssb;
+        } finally {
+            MeasuredText.recycle(mt);
+        }
     }
 
     /**
@@ -1343,78 +1205,124 @@ public class TextUtils
                                               TextPaint p, float avail,
                                               String oneMore,
                                               String more) {
-        int len = text.length();
-        char[] buf = new char[len];
-        TextUtils.getChars(text, 0, len, buf, 0);
+        return commaEllipsize(text, p, avail, oneMore, more,
+                TextDirectionHeuristics.FIRSTSTRONG_LTR);
+    }
 
-        int commaCount = 0;
-        for (int i = 0; i < len; i++) {
-            if (buf[i] == ',') {
-                commaCount++;
-            }
-        }
+    /**
+     * @hide
+     */
+    public static CharSequence commaEllipsize(CharSequence text, TextPaint p,
+         float avail, String oneMore, String more, TextDirectionHeuristic textDir) {
 
-        float[] wid;
-
-        if (text instanceof Spanned) {
-            Spanned sp = (Spanned) text;
-            TextPaint temppaint = new TextPaint();
-            wid = new float[len * 2];
-
-            int next;
-            for (int i = 0; i < len; i = next) {
-                next = sp.nextSpanTransition(i, len, MetricAffectingSpan.class);
-
-                Styled.getTextWidths(p, temppaint, sp, i, next, wid, null);
-                System.arraycopy(wid, 0, wid, len + i, next - i);
+        MeasuredText mt = MeasuredText.obtain();
+        try {
+            int len = text.length();
+            float width = setPara(mt, p, text, 0, len, textDir);
+            if (width <= avail) {
+                return text;
             }
 
-            System.arraycopy(wid, len, wid, 0, len);
-        } else {
-            wid = new float[len];
-            p.getTextWidths(text, 0, len, wid);
-        }
+            char[] buf = mt.mChars;
 
-        int ok = 0;
-        int okRemaining = commaCount + 1;
-        String okFormat = "";
-
-        int w = 0;
-        int count = 0;
-
-        for (int i = 0; i < len; i++) {
-            w += wid[i];
-
-            if (buf[i] == ',') {
-                count++;
-
-                int remaining = commaCount - count + 1;
-                float moreWid;
-                String format;
-
-                if (remaining == 1) {
-                    format = " " + oneMore;
-                } else {
-                    format = " " + String.format(more, remaining);
-                }
-
-                moreWid = p.measureText(format);
-
-                if (w + moreWid <= avail) {
-                    ok = i + 1;
-                    okRemaining = remaining;
-                    okFormat = format;
+            int commaCount = 0;
+            for (int i = 0; i < len; i++) {
+                if (buf[i] == ',') {
+                    commaCount++;
                 }
             }
-        }
 
-        if (w <= avail) {
-            return text;
-        } else {
+            int remaining = commaCount + 1;
+
+            int ok = 0;
+            String okFormat = "";
+
+            int w = 0;
+            int count = 0;
+            float[] widths = mt.mWidths;
+
+            MeasuredText tempMt = MeasuredText.obtain();
+            for (int i = 0; i < len; i++) {
+                w += widths[i];
+
+                if (buf[i] == ',') {
+                    count++;
+
+                    String format;
+                    // XXX should not insert spaces, should be part of string
+                    // XXX should use plural rules and not assume English plurals
+                    if (--remaining == 1) {
+                        format = " " + oneMore;
+                    } else {
+                        format = " " + String.format(more, remaining);
+                    }
+
+                    // XXX this is probably ok, but need to look at it more
+                    tempMt.setPara(format, 0, format.length(), textDir);
+                    float moreWid = tempMt.addStyleRun(p, tempMt.mLen, null);
+
+                    if (w + moreWid <= avail) {
+                        ok = i + 1;
+                        okFormat = format;
+                    }
+                }
+            }
+            MeasuredText.recycle(tempMt);
+
             SpannableStringBuilder out = new SpannableStringBuilder(okFormat);
             out.insert(0, text, 0, ok);
             return out;
+        } finally {
+            MeasuredText.recycle(mt);
         }
+    }
+
+    private static float setPara(MeasuredText mt, TextPaint paint,
+            CharSequence text, int start, int end, TextDirectionHeuristic textDir) {
+
+        mt.setPara(text, start, end, textDir);
+
+        float width;
+        Spanned sp = text instanceof Spanned ? (Spanned) text : null;
+        int len = end - start;
+        if (sp == null) {
+            width = mt.addStyleRun(paint, len, null);
+        } else {
+            width = 0;
+            int spanEnd;
+            for (int spanStart = 0; spanStart < len; spanStart = spanEnd) {
+                spanEnd = sp.nextSpanTransition(spanStart, len,
+                        MetricAffectingSpan.class);
+                MetricAffectingSpan[] spans = sp.getSpans(
+                        spanStart, spanEnd, MetricAffectingSpan.class);
+                spans = TextUtils.removeEmptySpans(spans, sp, MetricAffectingSpan.class);
+                width += mt.addStyleRun(paint, spans, spanEnd - spanStart, null);
+            }
+        }
+
+        return width;
+    }
+
+    private static final char FIRST_RIGHT_TO_LEFT = '\u0590';
+
+    /* package */
+    static boolean doesNotNeedBidi(CharSequence s, int start, int end) {
+        for (int i = start; i < end; i++) {
+            if (s.charAt(i) >= FIRST_RIGHT_TO_LEFT) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /* package */
+    static boolean doesNotNeedBidi(char[] text, int start, int len) {
+        for (int i = start, e = i + len; i < e; i++) {
+            if (text[i] >= FIRST_RIGHT_TO_LEFT) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /* package */ static char[] obtain(int len) {
@@ -1426,7 +1334,7 @@ public class TextUtils
         }
 
         if (buf == null || buf.length < len)
-            buf = new char[ArrayUtils.idealCharArraySize(len)];
+            buf = ArrayUtils.newUnpaddedCharArray(len);
 
         return buf;
     }
@@ -1460,8 +1368,12 @@ public class TextUtils
             case '&':
                 sb.append("&amp;"); //$NON-NLS-1$
                 break;
-            case '\\':
-                sb.append("&apos;"); //$NON-NLS-1$
+            case '\'':
+                //http://www.w3.org/TR/xhtml1
+                // The named character reference &apos; (the apostrophe, U+0027) was introduced in
+                // XML 1.0 but does not appear in HTML. Authors should therefore use &#39; instead
+                // of &apos; to work as expected in HTML 4 user agents.
+                sb.append("&#39;"); //$NON-NLS-1$
                 break;
             case '"':
                 sb.append("&quot;"); //$NON-NLS-1$
@@ -1565,6 +1477,327 @@ public class TextUtils
         return true;
     }
 
+    /**
+     * @hide
+     */
+    public static boolean isPrintableAscii(final char c) {
+        final int asciiFirst = 0x20;
+        final int asciiLast = 0x7E;  // included
+        return (asciiFirst <= c && c <= asciiLast) || c == '\r' || c == '\n';
+    }
+
+    /**
+     * @hide
+     */
+    public static boolean isPrintableAsciiOnly(final CharSequence str) {
+        final int len = str.length();
+        for (int i = 0; i < len; i++) {
+            if (!isPrintableAscii(str.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Capitalization mode for {@link #getCapsMode}: capitalize all
+     * characters.  This value is explicitly defined to be the same as
+     * {@link InputType#TYPE_TEXT_FLAG_CAP_CHARACTERS}.
+     */
+    public static final int CAP_MODE_CHARACTERS
+            = InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS;
+
+    /**
+     * Capitalization mode for {@link #getCapsMode}: capitalize the first
+     * character of all words.  This value is explicitly defined to be the same as
+     * {@link InputType#TYPE_TEXT_FLAG_CAP_WORDS}.
+     */
+    public static final int CAP_MODE_WORDS
+            = InputType.TYPE_TEXT_FLAG_CAP_WORDS;
+
+    /**
+     * Capitalization mode for {@link #getCapsMode}: capitalize the first
+     * character of each sentence.  This value is explicitly defined to be the same as
+     * {@link InputType#TYPE_TEXT_FLAG_CAP_SENTENCES}.
+     */
+    public static final int CAP_MODE_SENTENCES
+            = InputType.TYPE_TEXT_FLAG_CAP_SENTENCES;
+
+    /**
+     * Determine what caps mode should be in effect at the current offset in
+     * the text.  Only the mode bits set in <var>reqModes</var> will be
+     * checked.  Note that the caps mode flags here are explicitly defined
+     * to match those in {@link InputType}.
+     *
+     * @param cs The text that should be checked for caps modes.
+     * @param off Location in the text at which to check.
+     * @param reqModes The modes to be checked: may be any combination of
+     * {@link #CAP_MODE_CHARACTERS}, {@link #CAP_MODE_WORDS}, and
+     * {@link #CAP_MODE_SENTENCES}.
+     *
+     * @return Returns the actual capitalization modes that can be in effect
+     * at the current position, which is any combination of
+     * {@link #CAP_MODE_CHARACTERS}, {@link #CAP_MODE_WORDS}, and
+     * {@link #CAP_MODE_SENTENCES}.
+     */
+    public static int getCapsMode(CharSequence cs, int off, int reqModes) {
+        if (off < 0) {
+            return 0;
+        }
+
+        int i;
+        char c;
+        int mode = 0;
+
+        if ((reqModes&CAP_MODE_CHARACTERS) != 0) {
+            mode |= CAP_MODE_CHARACTERS;
+        }
+        if ((reqModes&(CAP_MODE_WORDS|CAP_MODE_SENTENCES)) == 0) {
+            return mode;
+        }
+
+        // Back over allowed opening punctuation.
+
+        for (i = off; i > 0; i--) {
+            c = cs.charAt(i - 1);
+
+            if (c != '"' && c != '\'' &&
+                Character.getType(c) != Character.START_PUNCTUATION) {
+                break;
+            }
+        }
+
+        // Start of paragraph, with optional whitespace.
+
+        int j = i;
+        while (j > 0 && ((c = cs.charAt(j - 1)) == ' ' || c == '\t')) {
+            j--;
+        }
+        if (j == 0 || cs.charAt(j - 1) == '\n') {
+            return mode | CAP_MODE_WORDS;
+        }
+
+        // Or start of word if we are that style.
+
+        if ((reqModes&CAP_MODE_SENTENCES) == 0) {
+            if (i != j) mode |= CAP_MODE_WORDS;
+            return mode;
+        }
+
+        // There must be a space if not the start of paragraph.
+
+        if (i == j) {
+            return mode;
+        }
+
+        // Back over allowed closing punctuation.
+
+        for (; j > 0; j--) {
+            c = cs.charAt(j - 1);
+
+            if (c != '"' && c != '\'' &&
+                Character.getType(c) != Character.END_PUNCTUATION) {
+                break;
+            }
+        }
+
+        if (j > 0) {
+            c = cs.charAt(j - 1);
+
+            if (c == '.' || c == '?' || c == '!') {
+                // Do not capitalize if the word ends with a period but
+                // also contains a period, in which case it is an abbreviation.
+
+                if (c == '.') {
+                    for (int k = j - 2; k >= 0; k--) {
+                        c = cs.charAt(k);
+
+                        if (c == '.') {
+                            return mode;
+                        }
+
+                        if (!Character.isLetter(c)) {
+                            break;
+                        }
+                    }
+                }
+
+                return mode | CAP_MODE_SENTENCES;
+            }
+        }
+
+        return mode;
+    }
+
+    /**
+     * Does a comma-delimited list 'delimitedString' contain a certain item?
+     * (without allocating memory)
+     *
+     * @hide
+     */
+    public static boolean delimitedStringContains(
+            String delimitedString, char delimiter, String item) {
+        if (isEmpty(delimitedString) || isEmpty(item)) {
+            return false;
+        }
+        int pos = -1;
+        int length = delimitedString.length();
+        while ((pos = delimitedString.indexOf(item, pos + 1)) != -1) {
+            if (pos > 0 && delimitedString.charAt(pos - 1) != delimiter) {
+                continue;
+            }
+            int expectedDelimiterPos = pos + item.length();
+            if (expectedDelimiterPos == length) {
+                // Match at end of string.
+                return true;
+            }
+            if (delimitedString.charAt(expectedDelimiterPos) == delimiter) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Removes empty spans from the <code>spans</code> array.
+     *
+     * When parsing a Spanned using {@link Spanned#nextSpanTransition(int, int, Class)}, empty spans
+     * will (correctly) create span transitions, and calling getSpans on a slice of text bounded by
+     * one of these transitions will (correctly) include the empty overlapping span.
+     *
+     * However, these empty spans should not be taken into account when layouting or rendering the
+     * string and this method provides a way to filter getSpans' results accordingly.
+     *
+     * @param spans A list of spans retrieved using {@link Spanned#getSpans(int, int, Class)} from
+     * the <code>spanned</code>
+     * @param spanned The Spanned from which spans were extracted
+     * @return A subset of spans where empty spans ({@link Spanned#getSpanStart(Object)}  ==
+     * {@link Spanned#getSpanEnd(Object)} have been removed. The initial order is preserved
+     * @hide
+     */
+    @SuppressWarnings("unchecked")
+    public static <T> T[] removeEmptySpans(T[] spans, Spanned spanned, Class<T> klass) {
+        T[] copy = null;
+        int count = 0;
+
+        for (int i = 0; i < spans.length; i++) {
+            final T span = spans[i];
+            final int start = spanned.getSpanStart(span);
+            final int end = spanned.getSpanEnd(span);
+
+            if (start == end) {
+                if (copy == null) {
+                    copy = (T[]) Array.newInstance(klass, spans.length - 1);
+                    System.arraycopy(spans, 0, copy, 0, i);
+                    count = i;
+                }
+            } else {
+                if (copy != null) {
+                    copy[count] = span;
+                    count++;
+                }
+            }
+        }
+
+        if (copy != null) {
+            T[] result = (T[]) Array.newInstance(klass, count);
+            System.arraycopy(copy, 0, result, 0, count);
+            return result;
+        } else {
+            return spans;
+        }
+    }
+
+    /**
+     * Pack 2 int values into a long, useful as a return value for a range
+     * @see #unpackRangeStartFromLong(long)
+     * @see #unpackRangeEndFromLong(long)
+     * @hide
+     */
+    public static long packRangeInLong(int start, int end) {
+        return (((long) start) << 32) | end;
+    }
+
+    /**
+     * Get the start value from a range packed in a long by {@link #packRangeInLong(int, int)}
+     * @see #unpackRangeEndFromLong(long)
+     * @see #packRangeInLong(int, int)
+     * @hide
+     */
+    public static int unpackRangeStartFromLong(long range) {
+        return (int) (range >>> 32);
+    }
+
+    /**
+     * Get the end value from a range packed in a long by {@link #packRangeInLong(int, int)}
+     * @see #unpackRangeStartFromLong(long)
+     * @see #packRangeInLong(int, int)
+     * @hide
+     */
+    public static int unpackRangeEndFromLong(long range) {
+        return (int) (range & 0x00000000FFFFFFFFL);
+    }
+
+    /**
+     * Return the layout direction for a given Locale
+     *
+     * @param locale the Locale for which we want the layout direction. Can be null.
+     * @return the layout direction. This may be one of:
+     * {@link android.view.View#LAYOUT_DIRECTION_LTR} or
+     * {@link android.view.View#LAYOUT_DIRECTION_RTL}.
+     *
+     * Be careful: this code will need to be updated when vertical scripts will be supported
+     */
+    public static int getLayoutDirectionFromLocale(Locale locale) {
+        if (locale != null && !locale.equals(Locale.ROOT)) {
+            final String scriptSubtag = ICU.addLikelySubtags(locale).getScript();
+            if (scriptSubtag == null) return getLayoutDirectionFromFirstChar(locale);
+
+            if (scriptSubtag.equalsIgnoreCase(ARAB_SCRIPT_SUBTAG) ||
+                    scriptSubtag.equalsIgnoreCase(HEBR_SCRIPT_SUBTAG)) {
+                return View.LAYOUT_DIRECTION_RTL;
+            }
+        }
+        // If forcing into RTL layout mode, return RTL as default, else LTR
+        return SystemProperties.getBoolean(Settings.Global.DEVELOPMENT_FORCE_RTL, false)
+                ? View.LAYOUT_DIRECTION_RTL
+                : View.LAYOUT_DIRECTION_LTR;
+    }
+
+    /**
+     * Fallback algorithm to detect the locale direction. Rely on the fist char of the
+     * localized locale name. This will not work if the localized locale name is in English
+     * (this is the case for ICU 4.4 and "Urdu" script)
+     *
+     * @param locale
+     * @return the layout direction. This may be one of:
+     * {@link View#LAYOUT_DIRECTION_LTR} or
+     * {@link View#LAYOUT_DIRECTION_RTL}.
+     *
+     * Be careful: this code will need to be updated when vertical scripts will be supported
+     *
+     * @hide
+     */
+    private static int getLayoutDirectionFromFirstChar(Locale locale) {
+        switch(Character.getDirectionality(locale.getDisplayName(locale).charAt(0))) {
+            case Character.DIRECTIONALITY_RIGHT_TO_LEFT:
+            case Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC:
+                return View.LAYOUT_DIRECTION_RTL;
+
+            case Character.DIRECTIONALITY_LEFT_TO_RIGHT:
+            default:
+                return View.LAYOUT_DIRECTION_LTR;
+        }
+    }
+
     private static Object sLock = new Object();
+
     private static char[] sTemp = null;
+
+    private static String[] EMPTY_STRING_ARRAY = new String[]{};
+
+    private static final char ZWNBS_CHAR = '\uFEFF';
+
+    private static String ARAB_SCRIPT_SUBTAG = "Arab";
+    private static String HEBR_SCRIPT_SUBTAG = "Hebr";
 }

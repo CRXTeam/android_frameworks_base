@@ -16,32 +16,46 @@
 
 package android.graphics.drawable;
 
+import android.content.res.Resources;
+import android.content.res.Resources.Theme;
 import android.graphics.Canvas;
 import android.os.SystemClock;
 
 /**
- * Transition drawables are an extension of LayerDrawables and are intended to cross fade between
- * the first and second layers. To start the transition, call {@link #startTransition(int)}. To
- * display just the first layer, call {@link #resetTransition()}
+ * An extension of LayerDrawables that is intended to cross-fade between
+ * the first and second layer. To start the transition, call {@link #startTransition(int)}. To
+ * display just the first layer, call {@link #resetTransition()}.
+ * <p>
+ * It can be defined in an XML file with the <code>&lt;transition></code> element.
+ * Each Drawable in the transition is defined in a nested <code>&lt;item></code>. For more
+ * information, see the guide to <a
+ * href="{@docRoot}guide/topics/resources/drawable-resource.html">Drawable Resources</a>.</p>
+ *
+ * @attr ref android.R.styleable#LayerDrawableItem_left
+ * @attr ref android.R.styleable#LayerDrawableItem_top
+ * @attr ref android.R.styleable#LayerDrawableItem_right
+ * @attr ref android.R.styleable#LayerDrawableItem_bottom
+ * @attr ref android.R.styleable#LayerDrawableItem_drawable
+ * @attr ref android.R.styleable#LayerDrawableItem_id
  *
  */
 public class TransitionDrawable extends LayerDrawable implements Drawable.Callback {
 
     /**
-     * A transition is about to start. 
+     * A transition is about to start.
      */
     private static final int TRANSITION_STARTING = 0;
-    
+
     /**
      * The transition has started and the animation is in progress
      */
     private static final int TRANSITION_RUNNING = 1;
-   
+
     /**
      * No transition will be applied
      */
     private static final int TRANSITION_NONE = 2;
-   
+
     /**
      * The current state of the transition. One of {@link #TRANSITION_STARTING},
      * {@link #TRANSITION_RUNNING} and {@link #TRANSITION_NONE}
@@ -53,42 +67,61 @@ public class TransitionDrawable extends LayerDrawable implements Drawable.Callba
     private int mFrom;
     private int mTo;
     private int mDuration;
-    private TransitionState mState;
+    private int mOriginalDuration;
+    private int mAlpha = 0;
+    private boolean mCrossFade;
 
+    /**
+     * Create a new transition drawable with the specified list of layers. At least
+     * 2 layers are required for this drawable to work properly.
+     */
+    public TransitionDrawable(Drawable[] layers) {
+        this(new TransitionState(null, null, null), layers);
+    }
+
+    /**
+     * Create a new transition drawable with no layer. To work correctly, at least 2
+     * layers must be added to this drawable.
+     *
+     * @see #TransitionDrawable(Drawable[])
+     */
     TransitionDrawable() {
-        this(new TransitionState(null, null));
+        this(new TransitionState(null, null, null), null, null);
     }
-    
-    private TransitionDrawable(TransitionState state) {
-        super(state);
-        mState = state;
+
+    private TransitionDrawable(TransitionState state, Resources res, Theme theme) {
+        super(state, res, theme);
     }
-    
+
+    private TransitionDrawable(TransitionState state, Drawable[] layers) {
+        super(layers, state);
+    }
+
     @Override
-    LayerState createConstantState(LayerState state) {
-        return new TransitionState((TransitionState)state, this);
+    LayerState createConstantState(LayerState state, Resources res) {
+        return new TransitionState((TransitionState) state, this, res);
     }
-    
+
     /**
      * Begin the second layer on top of the first layer.
-     * 
+     *
      * @param durationMillis The length of the transition in milliseconds
      */
     public void startTransition(int durationMillis) {
         mFrom = 0;
         mTo = 255;
-        mState.mAlpha = 0;
-        mState.mDuration = mDuration = durationMillis;
+        mAlpha = 0;
+        mDuration = mOriginalDuration = durationMillis;
         mReverse = false;
         mTransitionState = TRANSITION_STARTING;
         invalidateSelf();
     }
-    
+
     /**
      * Show only the first layer.
      */
     public void resetTransition() {
-        mState.mAlpha = 0;
+        mAlpha = 0;
         mTransitionState = TRANSITION_NONE;
         invalidateSelf();
     }
@@ -104,36 +137,35 @@ public class TransitionDrawable extends LayerDrawable implements Drawable.Callba
     public void reverseTransition(int duration) {
         final long time = SystemClock.uptimeMillis();
         // Animation is over
-        if (time - mStartTimeMillis > mState.mDuration) {
-            if (mState.mAlpha == 0) {
+        if (time - mStartTimeMillis > mDuration) {
+            if (mTo == 0) {
                 mFrom = 0;
                 mTo = 255;
-                mState.mAlpha = 0;
+                mAlpha = 0;
                 mReverse = false;
             } else {
                 mFrom = 255;
                 mTo = 0;
-                mState.mAlpha = 255;
+                mAlpha = 255;
                 mReverse = true;
             }
-            mDuration = mState.mDuration = duration;
+            mDuration = mOriginalDuration = duration;
             mTransitionState = TRANSITION_STARTING;
             invalidateSelf();
             return;
         }
 
         mReverse = !mReverse;
-        mFrom = mState.mAlpha;
+        mFrom = mAlpha;
         mTo = mReverse ? 0 : 255;
         mDuration = (int) (mReverse ? time - mStartTimeMillis :
-                mState.mDuration - (time - mStartTimeMillis));
+                mOriginalDuration - (time - mStartTimeMillis));
         mTransitionState = TRANSITION_STARTING;
     }
 
     @Override
     public void draw(Canvas canvas) {
         boolean done = true;
-        final TransitionState state = mState;
 
         switch (mTransitionState) {
             case TRANSITION_STARTING:
@@ -148,16 +180,28 @@ public class TransitionDrawable extends LayerDrawable implements Drawable.Callba
                             (SystemClock.uptimeMillis() - mStartTimeMillis) / mDuration;
                     done = normalized >= 1.0f;
                     normalized = Math.min(normalized, 1.0f);
-                    state.mAlpha = (int) (mFrom  + (mTo - mFrom) * normalized);
+                    mAlpha = (int) (mFrom  + (mTo - mFrom) * normalized);
                 }
                 break;
         }
-      
-        final int alpha = state.mAlpha;
-        final boolean crossFade = state.mCrossFade;
-        final Rec[] array = mLayerState.mArray;
-        Drawable d;
 
+        final int alpha = mAlpha;
+        final boolean crossFade = mCrossFade;
+        final ChildDrawable[] array = mLayerState.mChildren;
+
+        if (done) {
+            // the setAlpha() calls below trigger invalidation and redraw. If we're done, just draw
+            // the appropriate drawable[s] and return
+            if (!crossFade || alpha == 0) {
+                array[0].mDrawable.draw(canvas);
+            }
+            if (alpha == 0xFF) {
+                array[1].mDrawable.draw(canvas);
+            }
+            return;
+        }
+
+        Drawable d;
         d = array[0].mDrawable;
         if (crossFade) {
             d.setAlpha(255 - alpha);
@@ -173,7 +217,7 @@ public class TransitionDrawable extends LayerDrawable implements Drawable.Callba
             d.draw(canvas);
             d.setAlpha(0xFF);
         }
-        
+
         if (!done) {
             invalidateSelf();
         }
@@ -183,12 +227,12 @@ public class TransitionDrawable extends LayerDrawable implements Drawable.Callba
      * Enables or disables the cross fade of the drawables. When cross fade
      * is disabled, the first drawable is always drawn opaque. With cross
      * fade enabled, the first drawable is drawn with the opposite alpha of
-     * the second drawable.
+     * the second drawable. Cross fade is disabled by default.
      *
      * @param enabled True to enable cross fading, false otherwise.
      */
     public void setCrossFadeEnabled(boolean enabled) {
-        mState.mCrossFade = enabled;
+        mCrossFade = enabled;
     }
 
     /**
@@ -197,23 +241,30 @@ public class TransitionDrawable extends LayerDrawable implements Drawable.Callba
      * @return True if cross fading is enabled, false otherwise.
      */
     public boolean isCrossFadeEnabled() {
-        return mState.mCrossFade;
+        return mCrossFade;
     }
 
     static class TransitionState extends LayerState {
-        int mAlpha = 0;
-        int mDuration;
-        boolean mCrossFade;
-
-        TransitionState(TransitionState orig, TransitionDrawable owner) {
-            super(orig, owner);
+        TransitionState(TransitionState orig, TransitionDrawable owner,
+                Resources res) {
+            super(orig, owner, res);
         }
 
         @Override
         public Drawable newDrawable() {
-            return new TransitionDrawable(this);
+            return new TransitionDrawable(this, null, null);
         }
-        
+
+        @Override
+        public Drawable newDrawable(Resources res) {
+            return new TransitionDrawable(this, res, null);
+        }
+
+        @Override
+        public Drawable newDrawable(Resources res, Theme theme) {
+            return new TransitionDrawable(this, res, theme);
+        }
+
         @Override
         public int getChangingConfigurations() {
             return mChangingConfigurations;

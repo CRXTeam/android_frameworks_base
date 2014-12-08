@@ -16,17 +16,21 @@
 
 package android.app;
 
+import com.android.internal.R;
+
 import android.content.Context;
+import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.text.Spannable;
+import android.text.SpannableString;
+import android.text.style.StyleSpan;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-
-import com.android.internal.R;
 
 import java.text.NumberFormat;
 
@@ -38,7 +42,7 @@ import java.text.NumberFormat;
  */
 public class ProgressDialog extends AlertDialog {
     
-    /** Creates a ProgressDialog with a ciruclar, spinning progress
+    /** Creates a ProgressDialog with a circular, spinning progress
      * bar. This is the default.
      */
     public static final int STYLE_SPINNER = 0;
@@ -52,6 +56,7 @@ public class ProgressDialog extends AlertDialog {
     
     private int mProgressStyle = STYLE_SPINNER;
     private TextView mProgressNumber;
+    private String mProgressNumberFormat;
     private TextView mProgressPercent;
     private NumberFormat mProgressPercentFormat;
     
@@ -69,13 +74,21 @@ public class ProgressDialog extends AlertDialog {
     private Handler mViewUpdateHandler;
     
     public ProgressDialog(Context context) {
-        this(context, com.android.internal.R.style.Theme_Dialog_Alert);
+        super(context);
+        initFormats();
     }
 
     public ProgressDialog(Context context, int theme) {
         super(context, theme);
+        initFormats();
     }
 
+    private void initFormats() {
+        mProgressNumberFormat = "%1d/%2d";
+        mProgressPercentFormat = NumberFormat.getPercentInstance();
+        mProgressPercentFormat.setMaximumFractionDigits(0);
+    }
+    
     public static ProgressDialog show(Context context, CharSequence title,
             CharSequence message) {
         return show(context, title, message, false);
@@ -107,6 +120,9 @@ public class ProgressDialog extends AlertDialog {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         LayoutInflater inflater = LayoutInflater.from(mContext);
+        TypedArray a = mContext.obtainStyledAttributes(null,
+                com.android.internal.R.styleable.AlertDialog,
+                com.android.internal.R.attr.alertDialogStyle, 0);
         if (mProgressStyle == STYLE_HORIZONTAL) {
             
             /* Use a separate handler to update the text views as they
@@ -120,24 +136,39 @@ public class ProgressDialog extends AlertDialog {
                     /* Update the number and percent */
                     int progress = mProgress.getProgress();
                     int max = mProgress.getMax();
-                    double percent = (double) progress / (double) max;
-                    mProgressNumber.setText(progress + "/" + max);
-                    mProgressPercent.setText(mProgressPercentFormat.format(percent));
+                    if (mProgressNumberFormat != null) {
+                        String format = mProgressNumberFormat;
+                        mProgressNumber.setText(String.format(format, progress, max));
+                    } else {
+                        mProgressNumber.setText("");
+                    }
+                    if (mProgressPercentFormat != null) {
+                        double percent = (double) progress / (double) max;
+                        SpannableString tmp = new SpannableString(mProgressPercentFormat.format(percent));
+                        tmp.setSpan(new StyleSpan(android.graphics.Typeface.BOLD),
+                                0, tmp.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        mProgressPercent.setText(tmp);
+                    } else {
+                        mProgressPercent.setText("");
+                    }
                 }
             };
-            View view = inflater.inflate(R.layout.alert_dialog_progress, null);
+            View view = inflater.inflate(a.getResourceId(
+                    com.android.internal.R.styleable.AlertDialog_horizontalProgressLayout,
+                    R.layout.alert_dialog_progress), null);
             mProgress = (ProgressBar) view.findViewById(R.id.progress);
             mProgressNumber = (TextView) view.findViewById(R.id.progress_number);
             mProgressPercent = (TextView) view.findViewById(R.id.progress_percent);
-            mProgressPercentFormat = NumberFormat.getPercentInstance();
-            mProgressPercentFormat.setMaximumFractionDigits(0);
             setView(view);
         } else {
-            View view = inflater.inflate(R.layout.progress_dialog, null);
+            View view = inflater.inflate(a.getResourceId(
+                    com.android.internal.R.styleable.AlertDialog_progressLayout,
+                    R.layout.progress_dialog), null);
             mProgress = (ProgressBar) view.findViewById(R.id.progress);
             mMessageView = (TextView) view.findViewById(R.id.message);
             setView(view);
         }
+        a.recycle();
         if (mMax > 0) {
             setMax(mMax);
         }
@@ -262,7 +293,7 @@ public class ProgressDialog extends AlertDialog {
     }
 
     public void setIndeterminate(boolean indeterminate) {
-        if (mHasStarted && (isIndeterminate() != indeterminate)) {
+        if (mProgress != null) {
             mProgress.setIndeterminate(indeterminate);
         } else {
             mIndeterminate = indeterminate;
@@ -293,9 +324,37 @@ public class ProgressDialog extends AlertDialog {
         mProgressStyle = style;
     }
 
+    /**
+     * Change the format of the small text showing current and maximum units
+     * of progress.  The default is "%1d/%2d".
+     * Should not be called during the number is progressing.
+     * @param format A string passed to {@link String#format String.format()};
+     * use "%1d" for the current number and "%2d" for the maximum.  If null,
+     * nothing will be shown.
+     */
+    public void setProgressNumberFormat(String format) {
+        mProgressNumberFormat = format;
+        onProgressChanged();
+    }
+
+    /**
+     * Change the format of the small text showing the percentage of progress.
+     * The default is
+     * {@link NumberFormat#getPercentInstance() NumberFormat.getPercentageInstnace().}
+     * Should not be called during the number is progressing.
+     * @param format An instance of a {@link NumberFormat} to generate the
+     * percentage text.  If null, nothing will be shown.
+     */
+    public void setProgressPercentFormat(NumberFormat format) {
+        mProgressPercentFormat = format;
+        onProgressChanged();
+    }
+    
     private void onProgressChanged() {
         if (mProgressStyle == STYLE_HORIZONTAL) {
-            mViewUpdateHandler.sendEmptyMessage(0);
+            if (mViewUpdateHandler != null && !mViewUpdateHandler.hasMessages(0)) {
+                mViewUpdateHandler.sendEmptyMessage(0);
+            }
         }
     }
 }

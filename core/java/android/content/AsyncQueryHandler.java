@@ -24,6 +24,8 @@ import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
 
+import java.lang.ref.WeakReference;
+
 /**
  * A helper class to help make handling asynchronous {@link ContentResolver}
  * queries easier.
@@ -36,8 +38,8 @@ public abstract class AsyncQueryHandler extends Handler {
     private static final int EVENT_ARG_INSERT = 2;
     private static final int EVENT_ARG_UPDATE = 3;
     private static final int EVENT_ARG_DELETE = 4;
-    
-    /* package */ ContentResolver mResolver;
+
+    /* package */ final WeakReference<ContentResolver> mResolver;
 
     private static Looper sLooper = null;
 
@@ -62,19 +64,28 @@ public abstract class AsyncQueryHandler extends Handler {
 
         @Override
         public void handleMessage(Message msg) {
+            final ContentResolver resolver = mResolver.get();
+            if (resolver == null) return;
+
             WorkerArgs args = (WorkerArgs) msg.obj;
 
             int token = msg.what;
             int event = msg.arg1;
-            
+
             switch (event) {
                 case EVENT_ARG_QUERY:
                     Cursor cursor;
                     try {
-                        cursor = mResolver.query(args.uri, args.projection,
+                        cursor = resolver.query(args.uri, args.projection,
                                 args.selection, args.selectionArgs,
                                 args.orderBy);
+                        // Calling getCount() causes the cursor window to be filled,
+                        // which will make the first access on the main thread a lot faster.
+                        if (cursor != null) {
+                            cursor.getCount();
+                        }
                     } catch (Exception e) {
+                        Log.w(TAG, "Exception thrown during handling EVENT_ARG_QUERY", e);
                         cursor = null;
                     }
 
@@ -82,20 +93,17 @@ public abstract class AsyncQueryHandler extends Handler {
                     break;
 
                 case EVENT_ARG_INSERT:
-                    args.result = mResolver.insert(args.uri, args.values);
+                    args.result = resolver.insert(args.uri, args.values);
                     break;
 
                 case EVENT_ARG_UPDATE:
-                    int r = mResolver.update(args.uri, args.values, args.selection,
+                    args.result = resolver.update(args.uri, args.values, args.selection,
                             args.selectionArgs);
-                    args.result = new Integer(r);
                     break;
 
                 case EVENT_ARG_DELETE:
-                    int r2 = mResolver.delete(args.uri, args.selection, args.selectionArgs);
-                    args.result = new Integer(r2);
+                    args.result = resolver.delete(args.uri, args.selection, args.selectionArgs);
                     break;
-
             }
 
             // passing the original token value back to the caller
@@ -115,12 +123,12 @@ public abstract class AsyncQueryHandler extends Handler {
 
     public AsyncQueryHandler(ContentResolver cr) {
         super();
-        mResolver = cr;
+        mResolver = new WeakReference<ContentResolver>(cr);
         synchronized (AsyncQueryHandler.class) {
             if (sLooper == null) {
                 HandlerThread thread = new HandlerThread("AsyncQueryWorker");
                 thread.start();
-                
+
                 sLooper = thread.getLooper();
             }
         }
@@ -138,6 +146,20 @@ public abstract class AsyncQueryHandler extends Handler {
      * @param token A token passed into {@link #onQueryComplete} to identify
      *  the query.
      * @param cookie An object that gets passed into {@link #onQueryComplete}
+     * @param uri The URI, using the content:// scheme, for the content to
+     *         retrieve.
+     * @param projection A list of which columns to return. Passing null will
+     *         return all columns, which is discouraged to prevent reading data
+     *         from storage that isn't going to be used.
+     * @param selection A filter declaring which rows to return, formatted as an
+     *         SQL WHERE clause (excluding the WHERE itself). Passing null will
+     *         return all rows for the given URI.
+     * @param selectionArgs You may include ?s in selection, which will be
+     *         replaced by the values from selectionArgs, in the order that they
+     *         appear in the selection. The values will be bound as Strings.
+     * @param orderBy How to order the rows, formatted as an SQL ORDER BY
+     *         clause (excluding the ORDER BY itself). Passing null will use the
+     *         default sort order, which may be unordered.
      */
     public void startQuery(int token, Object cookie, Uri uri,
             String[] projection, String selection, String[] selectionArgs,
@@ -257,8 +279,8 @@ public abstract class AsyncQueryHandler extends Handler {
      * Called when an asynchronous query is completed.
      *
      * @param token the token to identify the query, passed in from
-     *        {@link #startQuery}.
-     * @param cookie the cookie object that's passed in from {@link #startQuery}.
+     *            {@link #startQuery}.
+     * @param cookie the cookie object passed in from {@link #startQuery}.
      * @param cursor The cursor holding the results from the query.
      */
     protected void onQueryComplete(int token, Object cookie, Cursor cursor) {
@@ -315,7 +337,7 @@ public abstract class AsyncQueryHandler extends Handler {
 
         int token = msg.what;
         int event = msg.arg1;
-        
+
         // pass token back to caller on each callback.
         switch (event) {
             case EVENT_ARG_QUERY:

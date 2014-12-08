@@ -26,14 +26,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.net.ConnectivityManager;
-import android.net.NetworkConnectivityListener;
 import android.net.NetworkInfo;
 import android.net.Proxy;
 import android.net.WebAddress;
-import android.os.Handler;
-import android.os.Message;
-import android.os.SystemProperties;
-import android.text.TextUtils;
 import android.util.Log;
 
 import java.io.InputStream;
@@ -50,152 +45,20 @@ import org.apache.http.HttpHost;
  */
 public class RequestQueue implements RequestFeeder {
 
-    private Context mContext;
 
     /**
      * Requests, indexed by HttpHost (scheme, host, port)
      */
-    private LinkedHashMap<HttpHost, LinkedList<Request>> mPending;
-
-    /* Support for notifying a client when queue is empty */
-    private boolean mClientWaiting = false;
-
-    /** true if connected */
-    boolean mNetworkConnected = true;
+    private final LinkedHashMap<HttpHost, LinkedList<Request>> mPending;
+    private final Context mContext;
+    private final ActivePool mActivePool;
+    private final ConnectivityManager mConnectivityManager;
 
     private HttpHost mProxyHost = null;
     private BroadcastReceiver mProxyChangeReceiver;
 
-    private ActivePool mActivePool;
-
     /* default simultaneous connection count */
     private static final int CONNECTION_COUNT = 4;
-
-    /**
-     * This intent broadcast when http is paused or unpaused due to
-     * net availability toggling
-     */
-    public final static String HTTP_NETWORK_STATE_CHANGED_INTENT =
-            "android.net.http.NETWORK_STATE";
-    public final static String HTTP_NETWORK_STATE_UP = "up";
-
-    /**
-     * Listen to platform network state.  On a change,
-     * (1) kick stack on or off as appropriate
-     * (2) send an intent to my host app telling
-     *     it what I've done
-     */
-    private NetworkStateTracker mNetworkStateTracker;
-    class NetworkStateTracker {
-
-        final static int EVENT_DATA_STATE_CHANGED = 100;
-
-        Context mContext;
-        NetworkConnectivityListener mConnectivityListener;
-        NetworkInfo.State mLastNetworkState = NetworkInfo.State.CONNECTED;
-        int mCurrentNetworkType;
-
-        NetworkStateTracker(Context context) {
-            mContext = context;
-        }
-
-        /**
-         * register for updates
-         */
-        protected void enable() {
-            if (mConnectivityListener == null) {
-                /*
-                 * Initializing the network type is really unnecessary,
-                 * since as soon as we register with the NCL, we'll
-                 * get a CONNECTED event for the active network, and
-                 * we'll configure the HTTP proxy accordingly. However,
-                 * as a fallback in case that doesn't happen for some
-                 * reason, initializing to type WIFI would mean that
-                 * we'd start out without a proxy. This seems better
-                 * than thinking we have a proxy (which is probably
-                 * private to the carrier network and therefore
-                 * unreachable outside of that network) when we really
-                 * shouldn't.
-                 */
-                mCurrentNetworkType = ConnectivityManager.TYPE_WIFI;
-                mConnectivityListener = new NetworkConnectivityListener();
-                mConnectivityListener.registerHandler(mHandler, EVENT_DATA_STATE_CHANGED);
-                mConnectivityListener.startListening(mContext);
-            }
-        }
-
-        protected void disable() {
-            if (mConnectivityListener != null) {
-                mConnectivityListener.unregisterHandler(mHandler);
-                mConnectivityListener.stopListening();
-                mConnectivityListener = null;
-            }
-        }
-
-        private Handler mHandler = new Handler() {
-            public void handleMessage(Message msg) {
-                switch (msg.what) {
-                    case EVENT_DATA_STATE_CHANGED:
-                        networkStateChanged();
-                        break;
-                }
-            }
-        };
-
-        int getCurrentNetworkType() {
-            return mCurrentNetworkType;
-        }
-
-        void networkStateChanged() {
-            if (mConnectivityListener == null)
-                return;
-
-            
-            NetworkConnectivityListener.State connectivityState = mConnectivityListener.getState();
-            NetworkInfo info = mConnectivityListener.getNetworkInfo();
-            if (info == null) {
-                /**
-                 * We've been seeing occasional NPEs here. I believe recent changes
-                 * have made this impossible, but in the interest of being totally
-                 * paranoid, check and log this here.
-                 */
-                HttpLog.v("NetworkStateTracker: connectivity broadcast"
-                    + " has null network info - ignoring");
-                return;
-            }
-            NetworkInfo.State state = info.getState();
-
-            if (HttpLog.LOGV) {
-                HttpLog.v("NetworkStateTracker " + info.getTypeName() +
-                " state= " + state + " last= " + mLastNetworkState +
-                " connectivityState= " + connectivityState.toString());
-            }
-
-            boolean newConnection =
-                state != mLastNetworkState && state == NetworkInfo.State.CONNECTED;
-
-            if (state == NetworkInfo.State.CONNECTED) {
-                mCurrentNetworkType = info.getType();
-                setProxyConfig();
-            }
-
-            mLastNetworkState = state;
-            if (connectivityState == NetworkConnectivityListener.State.NOT_CONNECTED) {
-                setNetworkState(false);
-                broadcastState(false);
-            } else if (newConnection) {
-                setNetworkState(true);
-                broadcastState(true);
-            }
-
-        }
-
-        void broadcastState(boolean connected) {
-            Intent intent = new Intent(HTTP_NETWORK_STATE_CHANGED_INTENT);
-            intent.putExtra(HTTP_NETWORK_STATE_UP, connected);
-            mContext.sendBroadcast(intent);
-        }
-    }
 
     /**
      * This class maintains active connection threads
@@ -233,10 +96,6 @@ public class RequestQueue implements RequestFeeder {
             }
         }
 
-        public boolean isNetworkConnected() {
-            return mNetworkConnected;
-        }
-
         void startConnectionThread() {
             synchronized (RequestQueue.this) {
                 RequestQueue.this.notify();
@@ -245,7 +104,9 @@ public class RequestQueue implements RequestFeeder {
 
         public void startTiming() {
             for (int i = 0; i < mConnectionCount; i++) {
-                mThreads[i].mStartThreadTime = mThreads[i].mCurrentThreadTime;
+                ConnectionThread rt = mThreads[i];
+                rt.mCurrentThreadTime = -1;
+                rt.mTotalThreadTime = 0;
             }
             mTotalRequest = 0;
             mTotalConnection = 0;
@@ -255,12 +116,14 @@ public class RequestQueue implements RequestFeeder {
             int totalTime = 0;
             for (int i = 0; i < mConnectionCount; i++) {
                 ConnectionThread rt = mThreads[i];
-                totalTime += (rt.mCurrentThreadTime - rt.mStartThreadTime);
-                rt.mStartThreadTime = -1;
+                if (rt.mCurrentThreadTime != -1) {
+                    totalTime += rt.mTotalThreadTime;
+                }
+                rt.mCurrentThreadTime = 0;
             }
             Log.d("Http", "Http thread used " + totalTime + " ms " + " for "
                     + mTotalRequest + " requests and " + mTotalConnection
-                    + " connections");
+                    + " new connections");
         }
 
         void logState() {
@@ -304,16 +167,17 @@ public class RequestQueue implements RequestFeeder {
         }
 
         public Connection getConnection(Context context, HttpHost host) {
+            host = RequestQueue.this.determineHost(host);
             Connection con = mIdleCache.getConnection(host);
             if (con == null) {
                 mTotalConnection++;
-                con = Connection.getConnection(
-                        mContext, host, this, RequestQueue.this);
+                con = Connection.getConnection(mContext, host, mProxyHost,
+                        RequestQueue.this);
             }
             return con;
         }
-        public boolean recycleConnection(HttpHost host, Connection connection) {
-            return mIdleCache.cacheConnection(host, connection);
+        public boolean recycleConnection(Connection connection) {
+            return mIdleCache.cacheConnection(connection.getHost(), connection);
         }
 
     }
@@ -348,6 +212,9 @@ public class RequestQueue implements RequestFeeder {
 
         mActivePool = new ActivePool(connectionCount);
         mActivePool.startup();
+
+        mConnectivityManager = (ConnectivityManager)
+                context.getSystemService(Context.CONNECTIVITY_SERVICE);
     }
 
     /**
@@ -367,18 +234,8 @@ public class RequestQueue implements RequestFeeder {
             mContext.registerReceiver(mProxyChangeReceiver,
                                       new IntentFilter(Proxy.PROXY_CHANGE_ACTION));
         }
-
-        /* Network state notification is broken on the simulator
-           don't register for notifications on SIM */
-        String device = SystemProperties.get("ro.product.device");
-        boolean simulation = TextUtils.isEmpty(device);
-
-        if (!simulation) {
-            if (mNetworkStateTracker == null) {
-                mNetworkStateTracker = new NetworkStateTracker(mContext);
-            }
-            mNetworkStateTracker.enable();
-        }
+        // we need to resample the current proxy setup
+        setProxyConfig();
     }
 
     /**
@@ -387,10 +244,6 @@ public class RequestQueue implements RequestFeeder {
      */
     public synchronized void disablePlatformNotifications() {
         if (HttpLog.LOGV) HttpLog.v("RequestQueue.disablePlatformNotifications() network");
-
-        if (mNetworkStateTracker != null) {
-            mNetworkStateTracker.disable();
-        }
 
         if (mProxyChangeReceiver != null) {
             mContext.unregisterReceiver(mProxyChangeReceiver);
@@ -403,7 +256,8 @@ public class RequestQueue implements RequestFeeder {
      * synchronize setting the proxy
      */
     private synchronized void setProxyConfig() {
-        if (mNetworkStateTracker.getCurrentNetworkType() == ConnectivityManager.TYPE_WIFI) {
+        NetworkInfo info = mConnectivityManager.getActiveNetworkInfo();
+        if (info != null && info.getType() == ConnectivityManager.TYPE_WIFI) {
             mProxyHost = null;
         } else {
             String host = Proxy.getHost(mContext);
@@ -434,16 +288,14 @@ public class RequestQueue implements RequestFeeder {
      * data.  Callbacks will be made on the supplied instance.
      * @param bodyProvider InputStream providing HTTP body, null if none
      * @param bodyLength length of body, must be 0 if bodyProvider is null
-     * @param highPriority If true, queues before low priority
-     *     requests if possible
      */
     public RequestHandle queueRequest(
             String url, String method,
             Map<String, String> headers, EventHandler eventHandler,
-            InputStream bodyProvider, int bodyLength, boolean highPriority) {
+            InputStream bodyProvider, int bodyLength) {
         WebAddress uri = new WebAddress(url);
         return queueRequest(url, uri, method, headers, eventHandler,
-                            bodyProvider, bodyLength, highPriority);
+                            bodyProvider, bodyLength);
     }
 
     /**
@@ -456,14 +308,11 @@ public class RequestQueue implements RequestFeeder {
      * data.  Callbacks will be made on the supplied instance.
      * @param bodyProvider InputStream providing HTTP body, null if none
      * @param bodyLength length of body, must be 0 if bodyProvider is null
-     * @param highPriority If true, queues before low priority
-     *     requests if possible
      */
     public RequestHandle queueRequest(
             String url, WebAddress uri, String method, Map<String, String> headers,
             EventHandler eventHandler,
-            InputStream bodyProvider, int bodyLength,
-            boolean highPriority) {
+            InputStream bodyProvider, int bodyLength) {
 
         if (HttpLog.LOGV) HttpLog.v("RequestQueue.queueRequest " + uri);
 
@@ -474,13 +323,13 @@ public class RequestQueue implements RequestFeeder {
 
         /* Create and queue request */
         Request req;
-        HttpHost httpHost = new HttpHost(uri.mHost, uri.mPort, uri.mScheme);
+        HttpHost httpHost = new HttpHost(uri.getHost(), uri.getPort(), uri.getScheme());
 
         // set up request
-        req = new Request(method, httpHost, mProxyHost, uri.mPath, bodyProvider,
-                          bodyLength, eventHandler, headers, highPriority);
+        req = new Request(method, httpHost, mProxyHost, uri.getPath(), bodyProvider,
+                          bodyLength, eventHandler, headers);
 
-        queueRequest(req, highPriority);
+        queueRequest(req, false);
 
         mActivePool.mTotalRequest++;
 
@@ -492,17 +341,64 @@ public class RequestQueue implements RequestFeeder {
                 req);
     }
 
-    /**
-     * Called by the NetworkStateTracker -- updates when network connectivity
-     * is lost/restored.
-     *
-     * If isNetworkConnected is true, start processing requests
-     */
-    public void setNetworkState(boolean isNetworkConnected) {
-        if (HttpLog.LOGV) HttpLog.v("RequestQueue.setNetworkState() " + isNetworkConnected);
-        mNetworkConnected = isNetworkConnected;
-        if (isNetworkConnected)
-            mActivePool.startConnectionThread();
+    private static class SyncFeeder implements RequestFeeder {
+        // This is used in the case where the request fails and needs to be
+        // requeued into the RequestFeeder.
+        private Request mRequest;
+        SyncFeeder() {
+        }
+        public Request getRequest() {
+            Request r = mRequest;
+            mRequest = null;
+            return r;
+        }
+        public Request getRequest(HttpHost host) {
+            return getRequest();
+        }
+        public boolean haveRequest(HttpHost host) {
+            return mRequest != null;
+        }
+        public void requeueRequest(Request r) {
+            mRequest = r;
+        }
+    }
+
+    public RequestHandle queueSynchronousRequest(String url, WebAddress uri,
+            String method, Map<String, String> headers,
+            EventHandler eventHandler, InputStream bodyProvider,
+            int bodyLength) {
+        if (HttpLog.LOGV) {
+            HttpLog.v("RequestQueue.dispatchSynchronousRequest " + uri);
+        }
+
+        HttpHost host = new HttpHost(uri.getHost(), uri.getPort(), uri.getScheme());
+
+        Request req = new Request(method, host, mProxyHost, uri.getPath(),
+                bodyProvider, bodyLength, eventHandler, headers);
+
+        // Open a new connection that uses our special RequestFeeder
+        // implementation.
+        host = determineHost(host);
+        Connection conn = Connection.getConnection(mContext, host, mProxyHost,
+                new SyncFeeder());
+
+        // TODO: I would like to process the request here but LoadListener
+        // needs a RequestHandle to process some messages.
+        return new RequestHandle(this, url, uri, method, headers, bodyProvider,
+                bodyLength, req, conn);
+
+    }
+
+    // Chooses between the proxy and the request's host.
+    private HttpHost determineHost(HttpHost host) {
+        // There used to be a comment in ConnectionThread about t-mob's proxy
+        // being really bad about https. But, HttpsConnection actually looks
+        // for a proxy and connects through it anyway. I think that this check
+        // is still valid because if a site is https, we will use
+        // HttpsConnection rather than HttpConnection if the proxy address is
+        // not secure.
+        return (mProxyHost == null || "https".equals(host.getSchemeName()))
+                ? host : mProxyHost;
     }
 
     /**
@@ -550,7 +446,7 @@ public class RequestQueue implements RequestFeeder {
     public synchronized Request getRequest() {
         Request ret = null;
 
-        if (mNetworkConnected && !mPending.isEmpty()) {
+        if (!mPending.isEmpty()) {
             ret = removeFirst(mPending);
         }
         if (HttpLog.LOGV) HttpLog.v("RequestQueue.getRequest() => " + ret);
@@ -563,7 +459,7 @@ public class RequestQueue implements RequestFeeder {
     public synchronized Request getRequest(HttpHost host) {
         Request ret = null;
 
-        if (mNetworkConnected && mPending.containsKey(host)) {
+        if (mPending.containsKey(host)) {
             LinkedList<Request> reqList = mPending.get(host);
             ret = reqList.removeFirst();
             if (reqList.isEmpty()) {
@@ -596,7 +492,7 @@ public class RequestQueue implements RequestFeeder {
     }
 
     protected synchronized void queueRequest(Request request, boolean head) {
-        HttpHost host = request.mHost;
+        HttpHost host = request.mProxyHost == null ? request.mHost : request.mProxyHost;
         LinkedList<Request> reqList;
         if (mPending.containsKey(host)) {
             reqList = mPending.get(host);
@@ -639,9 +535,8 @@ public class RequestQueue implements RequestFeeder {
      * This interface is exposed to each connection
      */
     interface ConnectionManager {
-        boolean isNetworkConnected();
         HttpHost getProxyHost();
         Connection getConnection(Context context, HttpHost host);
-        boolean recycleConnection(HttpHost host, Connection connection);
+        boolean recycleConnection(Connection connection);
     }
 }

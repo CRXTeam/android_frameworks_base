@@ -18,6 +18,12 @@ package com.android.internal.telephony;
 
 import android.os.Bundle;
 import android.telephony.ServiceState;
+import android.telephony.SignalStrength;
+import android.telephony.CellInfo;
+import android.telephony.DataConnectionRealTimeInfo;
+import android.telephony.PreciseCallState;
+import android.telephony.PreciseDataConnectionState;
+import android.telephony.VoLteServiceState;
 
 oneway interface IPhoneStateListener {
     void onServiceStateChanged(in ServiceState serviceState);
@@ -28,7 +34,15 @@ oneway interface IPhoneStateListener {
     // we use bundle here instead of CellLocation so it can get the right subclass
     void onCellLocationChanged(in Bundle location);
     void onCallStateChanged(int state, String incomingNumber);
-    void onDataConnectionStateChanged(int state);
+    void onDataConnectionStateChanged(int state, int networkType);
     void onDataActivity(int direction);
+    void onSignalStrengthsChanged(in SignalStrength signalStrength);
+    void onOtaspChanged(in int otaspMode);
+    void onCellInfoChanged(in List<CellInfo> cellInfo);
+    void onPreciseCallStateChanged(in PreciseCallState callState);
+    void onPreciseDataConnectionStateChanged(in PreciseDataConnectionState dataConnectionState);
+    void onDataConnectionRealTimeInfoChanged(in DataConnectionRealTimeInfo dcRtInfo);
+    void onVoLteServiceStateChanged(in VoLteServiceState lteState);
+    void onOemHookRawEvent(in byte[] rawData);
 }
 

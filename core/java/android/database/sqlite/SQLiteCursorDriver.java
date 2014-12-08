@@ -39,9 +39,7 @@ public interface SQLiteCursorDriver {
     void cursorDeactivated();
 
     /**
-     * Called by a SQLiteCursor when it is requeryed.
-     * 
-     * @return The new count value.
+     * Called by a SQLiteCursor when it is requeried.
      */
     void cursorRequeried(Cursor cursor);
 

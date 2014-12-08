@@ -16,6 +16,8 @@
 
 package android.os;
 
+import java.util.ArrayList;
+
 
 /**
  * Gives access to the system properties store.  The system properties
@@ -28,9 +30,15 @@ public class SystemProperties
     public static final int PROP_NAME_MAX = 31;
     public static final int PROP_VALUE_MAX = 91;
 
+    private static final ArrayList<Runnable> sChangeCallbacks = new ArrayList<Runnable>();
+
     private static native String native_get(String key);
     private static native String native_get(String key, String def);
+    private static native int native_get_int(String key, int def);
+    private static native long native_get_long(String key, long def);
+    private static native boolean native_get_boolean(String key, boolean def);
     private static native void native_set(String key, String def);
+    private static native void native_add_change_callback();
 
     /**
      * Get the value for the given key.
@@ -65,11 +73,10 @@ public class SystemProperties
      * @throws IllegalArgumentException if the key exceeds 32 characters
      */
     public static int getInt(String key, int def) {
-        try {
-            return Integer.parseInt(get(key));
-        } catch (NumberFormatException e) {
-            return def;
+        if (key.length() > PROP_NAME_MAX) {
+            throw new IllegalArgumentException("key.length > " + PROP_NAME_MAX);
         }
+        return native_get_int(key, def);
     }
 
     /**
@@ -81,18 +88,17 @@ public class SystemProperties
      * @throws IllegalArgumentException if the key exceeds 32 characters
      */
     public static long getLong(String key, long def) {
-        try {
-            return Long.parseLong(get(key));
-        } catch (NumberFormatException e) {
-            return def;
+        if (key.length() > PROP_NAME_MAX) {
+            throw new IllegalArgumentException("key.length > " + PROP_NAME_MAX);
         }
+        return native_get_long(key, def);
     }
 
     /**
      * Get the value for the given key, returned as a boolean.
      * Values 'n', 'no', '0', 'false' or 'off' are considered false.
      * Values 'y', 'yes', '1', 'true' or 'on' are considered true.
-     * (case insensitive).
+     * (case sensitive).
      * If the key does not exist, or has any other value, then the default
      * result is returned.
      * @param key the key to lookup
@@ -102,27 +108,10 @@ public class SystemProperties
      * @throws IllegalArgumentException if the key exceeds 32 characters
      */
     public static boolean getBoolean(String key, boolean def) {
-        String value = get(key);
-        // Deal with these quick cases first: not found, 0 and 1
-        if (value.equals("")) {
-            return def;
-        } else if (value.equals("0")) {
-            return false;
-        } else if (value.equals("1")) {
-            return true;
-        // now for slower (and hopefully less common) cases
-        } else if (value.equalsIgnoreCase("n") ||
-                   value.equalsIgnoreCase("no") ||
-                   value.equalsIgnoreCase("false") ||
-                   value.equalsIgnoreCase("off")) {
-            return false;
-        } else if (value.equalsIgnoreCase("y") ||
-                   value.equalsIgnoreCase("yes") ||
-                   value.equalsIgnoreCase("true") ||
-                   value.equalsIgnoreCase("on")) {
-            return true;
+        if (key.length() > PROP_NAME_MAX) {
+            throw new IllegalArgumentException("key.length > " + PROP_NAME_MAX);
         }
-        return def;
+        return native_get_boolean(key, def);
     }
 
     /**
@@ -139,5 +128,27 @@ public class SystemProperties
                 PROP_VALUE_MAX);
         }
         native_set(key, val);
+    }
+
+    public static void addChangeCallback(Runnable callback) {
+        synchronized (sChangeCallbacks) {
+            if (sChangeCallbacks.size() == 0) {
+                native_add_change_callback();
+            }
+            sChangeCallbacks.add(callback);
+        }
+    }
+
+    static void callChangeCallbacks() {
+        synchronized (sChangeCallbacks) {
+            //Log.i("foo", "Calling " + sChangeCallbacks.size() + " change callbacks!");
+            if (sChangeCallbacks.size() == 0) {
+                return;
+            }
+            ArrayList<Runnable> callbacks = new ArrayList<Runnable>(sChangeCallbacks);
+            for (int i=0; i<callbacks.size(); i++) {
+                callbacks.get(i).run();
+            }
+        }
     }
 }

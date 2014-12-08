@@ -83,11 +83,10 @@ public class MatrixCursor extends AbstractCursor {
      *  row
      */
     public RowBuilder newRow() {
-        rowCount++;
-        int endIndex = rowCount * columnCount;
+        final int row = rowCount++;
+        final int endIndex = rowCount * columnCount;
         ensureCapacity(endIndex);
-        int start = endIndex - columnCount;
-        return new RowBuilder(start, endIndex);
+        return new RowBuilder(row);
     }
 
     /**
@@ -180,18 +179,29 @@ public class MatrixCursor extends AbstractCursor {
     }
 
     /**
-     * Builds a row, starting from the left-most column and adding one column
-     * value at a time. Follows the same ordering as the column names specified
-     * at cursor construction time.
+     * Builds a row of values using either of these approaches:
+     * <ul>
+     * <li>Values can be added with explicit column ordering using
+     * {@link #add(Object)}, which starts from the left-most column and adds one
+     * column value at a time. This follows the same ordering as the column
+     * names specified at cursor construction time.
+     * <li>Column and value pairs can be offered for possible inclusion using
+     * {@link #add(String, Object)}. If the cursor includes the given column,
+     * the value will be set for that column, otherwise the value is ignored.
+     * This approach is useful when matching data to a custom projection.
+     * </ul>
+     * Undefined values are left as {@code null}.
      */
     public class RowBuilder {
-
-        private int index;
+        private final int row;
         private final int endIndex;
 
-        RowBuilder(int index, int endIndex) {
-            this.index = index;
-            this.endIndex = endIndex;
+        private int index;
+
+        RowBuilder(int row) {
+            this.row = row;
+            this.index = row * columnCount;
+            this.endIndex = index + columnCount;
         }
 
         /**
@@ -210,57 +220,94 @@ public class MatrixCursor extends AbstractCursor {
             data[index++] = columnValue;
             return this;
         }
+
+        /**
+         * Offer value for possible inclusion if this cursor defines the given
+         * column. Columns not defined by the cursor are silently ignored.
+         *
+         * @return this builder to support chaining
+         */
+        public RowBuilder add(String columnName, Object value) {
+            for (int i = 0; i < columnNames.length; i++) {
+                if (columnName.equals(columnNames[i])) {
+                    data[(row * columnCount) + i] = value;
+                }
+            }
+            return this;
+        }
     }
 
     // AbstractCursor implementation.
 
+    @Override
     public int getCount() {
         return rowCount;
     }
 
+    @Override
     public String[] getColumnNames() {
         return columnNames;
     }
 
+    @Override
     public String getString(int column) {
-        return String.valueOf(get(column));
+        Object value = get(column);
+        if (value == null) return null;
+        return value.toString();
     }
 
+    @Override
     public short getShort(int column) {
         Object value = get(column);
-        return (value instanceof String)
-                ? Short.valueOf((String) value)
-                : ((Number) value).shortValue();
+        if (value == null) return 0;
+        if (value instanceof Number) return ((Number) value).shortValue();
+        return Short.parseShort(value.toString());
     }
 
+    @Override
     public int getInt(int column) {
         Object value = get(column);
-        return (value instanceof String)
-                ? Integer.valueOf((String) value)
-                : ((Number) value).intValue();
+        if (value == null) return 0;
+        if (value instanceof Number) return ((Number) value).intValue();
+        return Integer.parseInt(value.toString());
     }
 
+    @Override
     public long getLong(int column) {
         Object value = get(column);
-        return (value instanceof String)
-                ? Long.valueOf((String) value)
-                : ((Number) value).longValue();
+        if (value == null) return 0;
+        if (value instanceof Number) return ((Number) value).longValue();
+        return Long.parseLong(value.toString());
     }
 
+    @Override
     public float getFloat(int column) {
         Object value = get(column);
-        return (value instanceof String)
-                ? Float.valueOf((String) value)
-                : ((Number) value).floatValue();
+        if (value == null) return 0.0f;
+        if (value instanceof Number) return ((Number) value).floatValue();
+        return Float.parseFloat(value.toString());
     }
 
+    @Override
     public double getDouble(int column) {
         Object value = get(column);
-        return (value instanceof String)
-                ? Double.valueOf((String) value)
-                : ((Number) value).doubleValue();
+        if (value == null) return 0.0d;
+        if (value instanceof Number) return ((Number) value).doubleValue();
+        return Double.parseDouble(value.toString());
     }
 
+    @Override
+    public byte[] getBlob(int column) {
+        Object value = get(column);
+        return (byte[]) value;
+    }
+
+    @Override
+    public int getType(int column) {
+        return DatabaseUtils.getTypeOfObject(get(column));
+    }
+
+    @Override
     public boolean isNull(int column) {
         return get(column) == null;
     }

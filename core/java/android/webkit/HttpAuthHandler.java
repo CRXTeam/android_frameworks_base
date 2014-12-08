@@ -16,171 +16,57 @@
 
 package android.webkit;
 
-import android.os.Bundle;
 import android.os.Handler;
-import android.os.Message;
-
-import java.util.ListIterator;
-import java.util.LinkedList;
 
 /**
- * HTTP authentication handler: local handler that takes care
- * of HTTP authentication requests. This class is passed as a
- * parameter to BrowserCallback.displayHttpAuthDialog and is
- * meant to receive the user's response.
+ * Represents a request for HTTP authentication. Instances of this class are
+ * created by the WebView and passed to
+ * {@link WebViewClient#onReceivedHttpAuthRequest}. The host application must
+ * call either {@link #proceed} or {@link #cancel} to set the WebView's
+ * response to the request.
  */
 public class HttpAuthHandler extends Handler {
-    /* It is important that the handler is in Network, because
-     * we want to share it accross multiple loaders and windows
-     * (like our subwindow and the main window).
-     */
-
-    private static final String LOGTAG = "network";
 
     /**
-     * Network.
+     * @hide Only for use by WebViewProvider implementations.
      */
-    private Network mNetwork;
+    public HttpAuthHandler() {
+    }
 
     /**
-     * Loader queue.
-     */
-    private LinkedList<LoadListener> mLoaderQueue;
-
-
-    // Message id for handling the user response
-    private final int AUTH_PROCEED = 100;
-    private final int AUTH_CANCEL = 200;
-
-    /**
-     * Creates a new HTTP authentication handler with an empty
-     * loader queue
+     * Gets whether the credentials stored for the current host (i.e. the host
+     * for which {@link WebViewClient#onReceivedHttpAuthRequest} was called)
+     * are suitable for use. Credentials are not suitable if they have
+     * previously been rejected by the server for the current request.
      *
-     * @param network The parent network object
-     */
-    /* package */ HttpAuthHandler(Network network) {
-        mNetwork = network;
-        mLoaderQueue = new LinkedList<LoadListener>();
-    }
-
-
-    @Override
-    public void handleMessage(Message msg) {
-        LoadListener loader = null;
-        synchronized (mLoaderQueue) {
-            loader = mLoaderQueue.poll();
-        }
-
-        switch (msg.what) {
-            case AUTH_PROCEED:
-                String username = msg.getData().getString("username");
-                String password = msg.getData().getString("password");
-
-                loader.handleAuthResponse(username, password);
-                break;
-
-            case AUTH_CANCEL:
-
-                mNetwork.resetHandlersAndStopLoading(loader.getFrame());
-                break;
-        }
-
-        processNextLoader();
-    }
-
-
-    /**
-     * Proceed with the authorization with the given credentials
-     *
-     * @param username The username to use for authentication
-     * @param password The password to use for authentication
-     */
-    public void proceed(String username, String password) {
-        Message msg = obtainMessage(AUTH_PROCEED);
-        msg.getData().putString("username", username);
-        msg.getData().putString("password", password);
-        sendMessage(msg);
-    }
-
-    /**
-     * Cancel the authorization request
-     */
-    public void cancel() {
-        sendMessage(obtainMessage(AUTH_CANCEL));
-    }
-
-    /**
-     * @return True if we can use user credentials on record
-     * (ie, if we did not fail trying to use them last time)
+     * @return whether the credentials are suitable for use
+     * @see WebView#getHttpAuthUsernamePassword
      */
     public boolean useHttpAuthUsernamePassword() {
-        LoadListener loader = null;
-        synchronized (mLoaderQueue) {
-            loader = mLoaderQueue.peek();
-        }
-        if (loader != null) {
-            return !loader.authCredentialsInvalid();
-        }
-
         return false;
     }
 
     /**
-     * Resets the HTTP-authentication request handler, removes
-     * all loaders that share the same BrowserFrame
-     *
-     * @param frame The browser frame
+     * Instructs the WebView to cancel the authentication request.
      */
-    /* package */ void reset(BrowserFrame frame) {
-        synchronized (mLoaderQueue) {
-            ListIterator<LoadListener> i = mLoaderQueue.listIterator(0);
-            while (i.hasNext()) {
-                LoadListener loader = i.next();
-                if (frame == loader.getFrame()) {
-                    i.remove();
-                }
-            }
-        }
+    public void cancel() {
     }
 
     /**
-     * Enqueues the loader, if the loader is the only element
-     * in the queue, starts processing the loader
-     *
-     * @param loader The loader that resulted in this http
-     * authentication request
+     * Instructs the WebView to proceed with the authentication with the given
+     * credentials. Credentials for use with this method can be retrieved from
+     * the WebView's store using {@link WebView#getHttpAuthUsernamePassword}.
      */
-    /* package */ void handleAuthRequest(LoadListener loader) {
-        boolean processNext = false;
-
-        synchronized (mLoaderQueue) {
-            mLoaderQueue.offer(loader);
-            processNext =
-                (mLoaderQueue.size() == 1);
-        }
-
-        if (processNext) {
-            processNextLoader();
-        }
+    public void proceed(String username, String password) {
     }
 
     /**
-     * Process the next loader in the queue (helper method)
+     * Gets whether the prompt dialog should be suppressed.
+     *
+     * @return whether the prompt dialog should be suppressed
+     * @hide
      */
-    private void processNextLoader() {
-        LoadListener loader = null;
-        synchronized (mLoaderQueue) {
-            loader = mLoaderQueue.peek();
-        }
-        if (loader != null) {
-            CallbackProxy proxy = loader.getFrame().getCallbackProxy();
-
-            String hostname = loader.proxyAuthenticate() ?
-                mNetwork.getProxyHostname() : loader.host();
-
-            String realm = loader.realm();
-
-            proxy.onReceivedHttpAuthRequest(this, hostname, realm);
-        }
+    public boolean suppressDialog() {
+        return false;
     }
 }

@@ -20,25 +20,39 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.DialogInterface.OnClickListener;
 import android.os.Bundle;
-import android.pim.DateFormat;
+import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.widget.Button;
 import android.widget.TimePicker;
 import android.widget.TimePicker.OnTimeChangedListener;
+import android.widget.TimePicker.ValidationCallback;
 
 import com.android.internal.R;
 
-import java.util.Calendar;
-
 /**
  * A dialog that prompts the user for the time of day using a {@link TimePicker}.
+ *
+ * <p>See the <a href="{@docRoot}guide/topics/ui/controls/pickers.html">Pickers</a>
+ * guide.</p>
  */
-public class TimePickerDialog extends AlertDialog implements OnClickListener, 
+public class TimePickerDialog extends AlertDialog implements OnClickListener,
         OnTimeChangedListener {
+
+    private static final String HOUR = "hour";
+    private static final String MINUTE = "minute";
+    private static final String IS_24_HOUR = "is24hour";
+
+    private final TimePicker mTimePicker;
+    private final OnTimeSetListener mTimeSetCallback;
+
+    private final int mInitialHourOfDay;
+    private final int mInitialMinute;
+    private final boolean mIs24HourView;
 
     /**
      * The callback interface used to indicate the user is done filling in
-     * the time (they clicked on the 'Set' button).
+     * the time (they clicked on the 'Done' button).
      */
     public interface OnTimeSetListener {
 
@@ -50,19 +64,6 @@ public class TimePickerDialog extends AlertDialog implements OnClickListener,
         void onTimeSet(TimePicker view, int hourOfDay, int minute);
     }
 
-    private static final String HOUR = "hour";
-    private static final String MINUTE = "minute";
-    private static final String IS_24_HOUR = "is24hour";
-    
-    private final TimePicker mTimePicker;
-    private final OnTimeSetListener mCallback;
-    private final Calendar mCalendar;
-    private final java.text.DateFormat mDateFormat;
-    
-    int mInitialHourOfDay;
-    int mInitialMinute;
-    boolean mIs24HourView;
-
     /**
      * @param context Parent.
      * @param callBack How parent is notified.
@@ -73,8 +74,17 @@ public class TimePickerDialog extends AlertDialog implements OnClickListener,
     public TimePickerDialog(Context context,
             OnTimeSetListener callBack,
             int hourOfDay, int minute, boolean is24HourView) {
-        this(context, com.android.internal.R.style.Theme_Dialog_Alert,
-                callBack, hourOfDay, minute, is24HourView);
+        this(context, 0, callBack, hourOfDay, minute, is24HourView);
+    }
+
+    static int resolveDialogTheme(Context context, int resid) {
+        if (resid == 0) {
+            final TypedValue outValue = new TypedValue();
+            context.getTheme().resolveAttribute(R.attr.timePickerDialogTheme, outValue, true);
+            return outValue.resourceId;
+        } else {
+            return resid;
+        }
     }
 
     /**
@@ -85,78 +95,85 @@ public class TimePickerDialog extends AlertDialog implements OnClickListener,
      * @param minute The initial minute.
      * @param is24HourView Whether this is a 24 hour view, or AM/PM.
      */
-    public TimePickerDialog(Context context,
-            int theme,
-            OnTimeSetListener callBack,
-            int hourOfDay, int minute, boolean is24HourView) {
-        super(context, theme);
-        mCallback = callBack;
+    public TimePickerDialog(Context context, int theme, OnTimeSetListener callBack, int hourOfDay,
+            int minute, boolean is24HourView) {
+        super(context, resolveDialogTheme(context, theme));
+
+        mTimeSetCallback = callBack;
         mInitialHourOfDay = hourOfDay;
         mInitialMinute = minute;
         mIs24HourView = is24HourView;
 
-        mDateFormat = DateFormat.getTimeFormat(context);
-        mCalendar = Calendar.getInstance();
-        updateTitle(mInitialHourOfDay, mInitialMinute);
-        
-        setButton(context.getText(R.string.date_time_set), this);
-        setButton2(context.getText(R.string.cancel), (OnClickListener) null);
-        setIcon(R.drawable.ic_dialog_time);
-        
-        LayoutInflater inflater = 
-                (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-        View view = inflater.inflate(R.layout.time_picker_dialog, null);
+        final Context themeContext = getContext();
+        final LayoutInflater inflater = LayoutInflater.from(themeContext);
+        final View view = inflater.inflate(R.layout.time_picker_dialog, null);
         setView(view);
-        mTimePicker = (TimePicker) view.findViewById(R.id.timePicker);
+        setButton(BUTTON_POSITIVE, themeContext.getString(R.string.ok), this);
+        setButton(BUTTON_NEGATIVE, themeContext.getString(R.string.cancel), this);
+        setButtonPanelLayoutHint(LAYOUT_HINT_SIDE);
 
-        // initialize state
+        mTimePicker = (TimePicker) view.findViewById(R.id.timePicker);
+        mTimePicker.setIs24HourView(mIs24HourView);
         mTimePicker.setCurrentHour(mInitialHourOfDay);
         mTimePicker.setCurrentMinute(mInitialMinute);
-        mTimePicker.setIs24HourView(mIs24HourView);
         mTimePicker.setOnTimeChangedListener(this);
+        mTimePicker.setValidationCallback(mValidationCallback);
     }
-    
+
+    @Override
+    public void onTimeChanged(TimePicker view, int hourOfDay, int minute) {
+        /* do nothing */
+    }
+
+    @Override
     public void onClick(DialogInterface dialog, int which) {
-        if (mCallback != null) {
-            mTimePicker.clearFocus();
-            mCallback.onTimeSet(mTimePicker, mTimePicker.getCurrentHour(), 
-                    mTimePicker.getCurrentMinute());
+        switch (which) {
+            case BUTTON_POSITIVE:
+                if (mTimeSetCallback != null) {
+                    mTimeSetCallback.onTimeSet(mTimePicker, mTimePicker.getCurrentHour(),
+                            mTimePicker.getCurrentMinute());
+                }
+                break;
         }
     }
 
-    public void onTimeChanged(TimePicker view, int hourOfDay, int minute) {
-        updateTitle(hourOfDay, minute);
-    }
-    
-    public void updateTime(int hourOfDay, int minutOfHour) {
+    /**
+     * Sets the current time.
+     *
+     * @param hourOfDay The current hour within the day.
+     * @param minuteOfHour The current minute within the hour.
+     */
+    public void updateTime(int hourOfDay, int minuteOfHour) {
         mTimePicker.setCurrentHour(hourOfDay);
-        mTimePicker.setCurrentMinute(minutOfHour);
+        mTimePicker.setCurrentMinute(minuteOfHour);
     }
 
-    private void updateTitle(int hour, int minute) {
-        mCalendar.set(Calendar.HOUR_OF_DAY, hour);
-        mCalendar.set(Calendar.MINUTE, minute);
-        setTitle(mDateFormat.format(mCalendar.getTime()));
-    }
-    
     @Override
     public Bundle onSaveInstanceState() {
-        Bundle state = super.onSaveInstanceState();
+        final Bundle state = super.onSaveInstanceState();
         state.putInt(HOUR, mTimePicker.getCurrentHour());
         state.putInt(MINUTE, mTimePicker.getCurrentMinute());
         state.putBoolean(IS_24_HOUR, mTimePicker.is24HourView());
         return state;
     }
-    
+
     @Override
     public void onRestoreInstanceState(Bundle savedInstanceState) {
         super.onRestoreInstanceState(savedInstanceState);
-        int hour = savedInstanceState.getInt(HOUR);
-        int minute = savedInstanceState.getInt(MINUTE);
+        final int hour = savedInstanceState.getInt(HOUR);
+        final int minute = savedInstanceState.getInt(MINUTE);
+        mTimePicker.setIs24HourView(savedInstanceState.getBoolean(IS_24_HOUR));
         mTimePicker.setCurrentHour(hour);
         mTimePicker.setCurrentMinute(minute);
-        mTimePicker.setIs24HourView(savedInstanceState.getBoolean(IS_24_HOUR));
-        mTimePicker.setOnTimeChangedListener(this);
-        updateTitle(hour, minute);
     }
+
+    private final ValidationCallback mValidationCallback = new ValidationCallback() {
+        @Override
+        public void onValidationChanged(boolean valid) {
+            final Button positive = getButton(BUTTON_POSITIVE);
+            if (positive != null) {
+                positive.setEnabled(valid);
+            }
+        }
+    };
 }

@@ -17,15 +17,20 @@
 package com.android.internal.logging;
 
 import android.util.Log;
+import com.android.internal.util.FastPrintWriter;
+import dalvik.system.DalvikLogging;
+import dalvik.system.DalvikLogHandler;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.logging.Formatter;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
-import java.util.logging.SimpleFormatter;
+import java.util.logging.Logger;
 
 /**
- * Implements a {@link java.util.Logger} handler that writes to the Android log. The
+ * Implements a {@link java.util.logging.Logger} handler that writes to the Android log. The
  * implementation is rather straightforward. The name of the logger serves as
  * the log tag. Only the log levels need to be converted appropriately. For
  * this purpose, the following mapping is being used:
@@ -77,12 +82,28 @@ import java.util.logging.SimpleFormatter;
  *   </tr>
  * </table>
  */
-public class AndroidHandler extends Handler {
+public class AndroidHandler extends Handler implements DalvikLogHandler {
     /**
      * Holds the formatter for all Android log handlers.
      */
-    private static final Formatter THE_FORMATTER = new SimpleFormatter();
-    
+    private static final Formatter THE_FORMATTER = new Formatter() {
+        @Override
+        public String format(LogRecord r) {
+            Throwable thrown = r.getThrown();
+            if (thrown != null) {
+                StringWriter sw = new StringWriter();
+                PrintWriter pw = new FastPrintWriter(sw, false, 256);
+                sw.write(r.getMessage());
+                sw.write("\n");
+                thrown.printStackTrace(pw);
+                pw.flush();
+                return sw.toString();
+            } else {
+                return r.getMessage();
+            }
+        }
+    };
+
     /**
      * Constructs a new instance of the Android log handler.
      */
@@ -102,49 +123,51 @@ public class AndroidHandler extends Handler {
 
     @Override
     public void publish(LogRecord record) {
-        try {
-            int level = getAndroidLevel(record.getLevel());
-            String tag = record.getLoggerName();
+        int level = getAndroidLevel(record.getLevel());
+        String tag = DalvikLogging.loggerNameToTag(record.getLoggerName());
+        if (!Log.isLoggable(tag, level)) {
+            return;
+        }
 
-            if (!Log.isLoggable(tag, level)) {
-                return;
-            }
-        
-            String msg;
-            try {
-                msg = getFormatter().format(record);
-            } catch (RuntimeException e) {
-                Log.e("AndroidHandler", "Error formatting log record", e);
-                msg = record.getMessage();
-            }
-            Log.println(level, tag, msg);
+        try {
+            String message = getFormatter().format(record);
+            Log.println(level, tag, message);
         } catch (RuntimeException e) {
-            Log.e("AndroidHandler", "Error publishing log record", e);
+            Log.e("AndroidHandler", "Error logging message.", e);
         }
     }
-    
+
+    public void publish(Logger source, String tag, Level level, String message) {
+        // TODO: avoid ducking into native 2x; we aren't saving any formatter calls
+        int priority = getAndroidLevel(level);
+        if (!Log.isLoggable(tag, priority)) {
+            return;
+        }
+
+        try {
+            Log.println(priority, tag, message);
+        } catch (RuntimeException e) {
+            Log.e("AndroidHandler", "Error logging message.", e);
+        }
+    }
+
     /**
-     * Converts a {@link java.util.Logger} logging level into an Android one.
-     * 
-     * @param level The {@link java.util.Logger} logging level.
-     * 
-     * @return The resulting Android logging level. 
+     * Converts a {@link java.util.logging.Logger} logging level into an Android one.
+     *
+     * @param level The {@link java.util.logging.Logger} logging level.
+     *
+     * @return The resulting Android logging level.
      */
-    static int getAndroidLevel(Level level)
-    {
+    static int getAndroidLevel(Level level) {
         int value = level.intValue();
-        
-        if (value >= Level.SEVERE.intValue()) {
+        if (value >= 1000) { // SEVERE
             return Log.ERROR;
-        } else if (value >= Level.WARNING.intValue()) {
+        } else if (value >= 900) { // WARNING
             return Log.WARN;
-        } else if (value >= Level.INFO.intValue()) {
+        } else if (value >= 800) { // INFO
             return Log.INFO;
-        } else if (value >= Level.CONFIG.intValue()) {
+        } else {
             return Log.DEBUG;
-        }  else {
-            return Log.VERBOSE;
         }
     }
-    
 }

@@ -20,6 +20,9 @@ import android.graphics.Paint;
 import android.text.style.UpdateLayout;
 import android.text.style.WrapTogetherSpan;
 
+import com.android.internal.util.ArrayUtils;
+import com.android.internal.util.GrowingArrayUtils;
+
 import java.lang.ref.WeakReference;
 
 /**
@@ -30,10 +33,10 @@ import java.lang.ref.WeakReference;
  * {@link android.graphics.Canvas#drawText(java.lang.CharSequence, int, int, float, float, android.graphics.Paint)
  *  Canvas.drawText()} directly.</p>
  */
-public class DynamicLayout
-extends Layout
+public class DynamicLayout extends Layout
 {
     private static final int PRIORITY = 128;
+    private static final int BLOCK_MINIMUM_CHARACTER_LENGTH = 400;
 
     /**
      * Make a layout for the specified text that will be updated as
@@ -75,12 +78,31 @@ extends Layout
                          float spacingmult, float spacingadd,
                          boolean includepad,
                          TextUtils.TruncateAt ellipsize, int ellipsizedWidth) {
-        super((ellipsize == null) 
-                ? display 
-                : (display instanceof Spanned) 
-                    ? new SpannedEllipsizer(display) 
+        this(base, display, paint, width, align, TextDirectionHeuristics.FIRSTSTRONG_LTR,
+                spacingmult, spacingadd, includepad, ellipsize, ellipsizedWidth);
+    }
+
+    /**
+     * Make a layout for the transformed text (password transformation
+     * being the primary example of a transformation)
+     * that will be updated as the base text is changed.
+     * If ellipsize is non-null, the Layout will ellipsize the text
+     * down to ellipsizedWidth.
+     * *
+     * *@hide
+     */
+    public DynamicLayout(CharSequence base, CharSequence display,
+                         TextPaint paint,
+                         int width, Alignment align, TextDirectionHeuristic textDir,
+                         float spacingmult, float spacingadd,
+                         boolean includepad,
+                         TextUtils.TruncateAt ellipsize, int ellipsizedWidth) {
+        super((ellipsize == null)
+                ? display
+                : (display instanceof Spanned)
+                    ? new SpannedEllipsizer(display)
                     : new Ellipsizer(display),
-              paint, width, align, spacingmult, spacingadd);
+              paint, width, align, textDir, spacingmult, spacingadd);
 
         mBase = base;
         mDisplay = display;
@@ -92,7 +114,7 @@ extends Layout
         } else {
             mInts = new PackedIntVector(COLUMNS_NORMAL);
             mEllipsizedWidth = width;
-            mEllipsizeAt = ellipsize;
+            mEllipsizeAt = null;
         }
 
         mObjects = new PackedObjectVector<Directions>(1);
@@ -146,7 +168,6 @@ extends Layout
         mObjects.insertAt(0, dirs);
 
         // Update from 0 characters to whatever the real text is
-
         reflow(base, 0, 0, base.length());
 
         if (base instanceof Spannable) {
@@ -255,26 +276,26 @@ extends Layout
             sStaticLayout = null;
         }
 
-        if (reflowed == null)
-            reflowed = new StaticLayout(true);
+        if (reflowed == null) {
+            reflowed = new StaticLayout(null);
+        } else {
+            reflowed.prepare();
+        }
 
         reflowed.generate(text, where, where + after,
-                                      getPaint(), getWidth(), getAlignment(),
-                                      getSpacingMultiplier(), getSpacingAdd(),
-                                      false, true, mEllipsize,
-                                      mEllipsizedWidth, mEllipsizeAt);
+                getPaint(), getWidth(), getTextDirectionHeuristic(), getSpacingMultiplier(),
+                getSpacingAdd(), false,
+                true, mEllipsizedWidth, mEllipsizeAt);
         int n = reflowed.getLineCount();
 
         // If the new layout has a blank line at the end, but it is not
         // the very end of the buffer, then we already have a line that
         // starts there, so disregard the blank line.
 
-        if (where + after != len &&
-            reflowed.getLineStart(n - 1) == where + after)
+        if (where + after != len && reflowed.getLineStart(n - 1) == where + after)
             n--;
 
         // remove affected lines from old layout
-
         mInts.deleteAt(startline, endline - startline);
         mObjects.deleteAt(startline, endline - startline);
 
@@ -310,7 +331,6 @@ extends Layout
 
         Directions[] objects = new Directions[1];
 
-
         for (int i = 0; i < n; i++) {
             ints[START] = reflowed.getLineStart(i) |
                           (reflowed.getParagraphDirection(i) << DIR_SHIFT) |
@@ -337,60 +357,267 @@ extends Layout
             mObjects.insertAt(startline + i, objects);
         }
 
+        updateBlocks(startline, endline - 1, n);
+
         synchronized (sLock) {
             sStaticLayout = reflowed;
+            reflowed.finish();
         }
     }
 
-    private void dump(boolean show) {
-        int n = getLineCount();
+    /**
+     * Create the initial block structure, cutting the text into blocks of at least
+     * BLOCK_MINIMUM_CHARACTER_SIZE characters, aligned on the ends of paragraphs.
+     */
+    private void createBlocks() {
+        int offset = BLOCK_MINIMUM_CHARACTER_LENGTH;
+        mNumberOfBlocks = 0;
+        final CharSequence text = mDisplay;
 
-        for (int i = 0; i < n; i++) {
-            System.out.print("line " + i + ": " + getLineStart(i) + " to " + getLineEnd(i) + " ");
-
-            if (show) {
-                System.out.print(getText().subSequence(getLineStart(i),
-                                                       getLineEnd(i)));
+        while (true) {
+            offset = TextUtils.indexOf(text, '\n', offset);
+            if (offset < 0) {
+                addBlockAtOffset(text.length());
+                break;
+            } else {
+                addBlockAtOffset(offset);
+                offset += BLOCK_MINIMUM_CHARACTER_LENGTH;
             }
-
-            System.out.println("");
         }
 
-        System.out.println("");
+        // mBlockIndices and mBlockEndLines should have the same length
+        mBlockIndices = new int[mBlockEndLines.length];
+        for (int i = 0; i < mBlockEndLines.length; i++) {
+            mBlockIndices[i] = INVALID_BLOCK_INDEX;
+        }
     }
 
+    /**
+     * Create a new block, ending at the specified character offset.
+     * A block will actually be created only if has at least one line, i.e. this offset is
+     * not on the end line of the previous block.
+     */
+    private void addBlockAtOffset(int offset) {
+        final int line = getLineForOffset(offset);
+
+        if (mBlockEndLines == null) {
+            // Initial creation of the array, no test on previous block ending line
+            mBlockEndLines = ArrayUtils.newUnpaddedIntArray(1);
+            mBlockEndLines[mNumberOfBlocks] = line;
+            mNumberOfBlocks++;
+            return;
+        }
+
+        final int previousBlockEndLine = mBlockEndLines[mNumberOfBlocks - 1];
+        if (line > previousBlockEndLine) {
+            mBlockEndLines = GrowingArrayUtils.append(mBlockEndLines, mNumberOfBlocks, line);
+            mNumberOfBlocks++;
+        }
+    }
+
+    /**
+     * This method is called every time the layout is reflowed after an edition.
+     * It updates the internal block data structure. The text is split in blocks
+     * of contiguous lines, with at least one block for the entire text.
+     * When a range of lines is edited, new blocks (from 0 to 3 depending on the
+     * overlap structure) will replace the set of overlapping blocks.
+     * Blocks are listed in order and are represented by their ending line number.
+     * An index is associated to each block (which will be used by display lists),
+     * this class simply invalidates the index of blocks overlapping a modification.
+     *
+     * This method is package private and not private so that it can be tested.
+     *
+     * @param startLine the first line of the range of modified lines
+     * @param endLine the last line of the range, possibly equal to startLine, lower
+     * than getLineCount()
+     * @param newLineCount the number of lines that will replace the range, possibly 0
+     *
+     * @hide
+     */
+    void updateBlocks(int startLine, int endLine, int newLineCount) {
+        if (mBlockEndLines == null) {
+            createBlocks();
+            return;
+        }
+
+        int firstBlock = -1;
+        int lastBlock = -1;
+        for (int i = 0; i < mNumberOfBlocks; i++) {
+            if (mBlockEndLines[i] >= startLine) {
+                firstBlock = i;
+                break;
+            }
+        }
+        for (int i = firstBlock; i < mNumberOfBlocks; i++) {
+            if (mBlockEndLines[i] >= endLine) {
+                lastBlock = i;
+                break;
+            }
+        }
+        final int lastBlockEndLine = mBlockEndLines[lastBlock];
+
+        boolean createBlockBefore = startLine > (firstBlock == 0 ? 0 :
+                mBlockEndLines[firstBlock - 1] + 1);
+        boolean createBlock = newLineCount > 0;
+        boolean createBlockAfter = endLine < mBlockEndLines[lastBlock];
+
+        int numAddedBlocks = 0;
+        if (createBlockBefore) numAddedBlocks++;
+        if (createBlock) numAddedBlocks++;
+        if (createBlockAfter) numAddedBlocks++;
+
+        final int numRemovedBlocks = lastBlock - firstBlock + 1;
+        final int newNumberOfBlocks = mNumberOfBlocks + numAddedBlocks - numRemovedBlocks;
+
+        if (newNumberOfBlocks == 0) {
+            // Even when text is empty, there is actually one line and hence one block
+            mBlockEndLines[0] = 0;
+            mBlockIndices[0] = INVALID_BLOCK_INDEX;
+            mNumberOfBlocks = 1;
+            return;
+        }
+
+        if (newNumberOfBlocks > mBlockEndLines.length) {
+            int[] blockEndLines = ArrayUtils.newUnpaddedIntArray(
+                    Math.max(mBlockEndLines.length * 2, newNumberOfBlocks));
+            int[] blockIndices = new int[blockEndLines.length];
+            System.arraycopy(mBlockEndLines, 0, blockEndLines, 0, firstBlock);
+            System.arraycopy(mBlockIndices, 0, blockIndices, 0, firstBlock);
+            System.arraycopy(mBlockEndLines, lastBlock + 1,
+                    blockEndLines, firstBlock + numAddedBlocks, mNumberOfBlocks - lastBlock - 1);
+            System.arraycopy(mBlockIndices, lastBlock + 1,
+                    blockIndices, firstBlock + numAddedBlocks, mNumberOfBlocks - lastBlock - 1);
+            mBlockEndLines = blockEndLines;
+            mBlockIndices = blockIndices;
+        } else {
+            System.arraycopy(mBlockEndLines, lastBlock + 1,
+                    mBlockEndLines, firstBlock + numAddedBlocks, mNumberOfBlocks - lastBlock - 1);
+            System.arraycopy(mBlockIndices, lastBlock + 1,
+                    mBlockIndices, firstBlock + numAddedBlocks, mNumberOfBlocks - lastBlock - 1);
+        }
+
+        mNumberOfBlocks = newNumberOfBlocks;
+        int newFirstChangedBlock;
+        final int deltaLines = newLineCount - (endLine - startLine + 1);
+        if (deltaLines != 0) {
+            // Display list whose index is >= mIndexFirstChangedBlock is valid
+            // but it needs to update its drawing location.
+            newFirstChangedBlock = firstBlock + numAddedBlocks;
+            for (int i = newFirstChangedBlock; i < mNumberOfBlocks; i++) {
+                mBlockEndLines[i] += deltaLines;
+            }
+        } else {
+            newFirstChangedBlock = mNumberOfBlocks;
+        }
+        mIndexFirstChangedBlock = Math.min(mIndexFirstChangedBlock, newFirstChangedBlock);
+
+        int blockIndex = firstBlock;
+        if (createBlockBefore) {
+            mBlockEndLines[blockIndex] = startLine - 1;
+            mBlockIndices[blockIndex] = INVALID_BLOCK_INDEX;
+            blockIndex++;
+        }
+
+        if (createBlock) {
+            mBlockEndLines[blockIndex] = startLine + newLineCount - 1;
+            mBlockIndices[blockIndex] = INVALID_BLOCK_INDEX;
+            blockIndex++;
+        }
+
+        if (createBlockAfter) {
+            mBlockEndLines[blockIndex] = lastBlockEndLine + deltaLines;
+            mBlockIndices[blockIndex] = INVALID_BLOCK_INDEX;
+        }
+    }
+
+    /**
+     * This package private method is used for test purposes only
+     * @hide
+     */
+    void setBlocksDataForTest(int[] blockEndLines, int[] blockIndices, int numberOfBlocks) {
+        mBlockEndLines = new int[blockEndLines.length];
+        mBlockIndices = new int[blockIndices.length];
+        System.arraycopy(blockEndLines, 0, mBlockEndLines, 0, blockEndLines.length);
+        System.arraycopy(blockIndices, 0, mBlockIndices, 0, blockIndices.length);
+        mNumberOfBlocks = numberOfBlocks;
+    }
+
+    /**
+     * @hide
+     */
+    public int[] getBlockEndLines() {
+        return mBlockEndLines;
+    }
+
+    /**
+     * @hide
+     */
+    public int[] getBlockIndices() {
+        return mBlockIndices;
+    }
+
+    /**
+     * @hide
+     */
+    public int getNumberOfBlocks() {
+        return mNumberOfBlocks;
+    }
+
+    /**
+     * @hide
+     */
+    public int getIndexFirstChangedBlock() {
+        return mIndexFirstChangedBlock;
+    }
+
+    /**
+     * @hide
+     */
+    public void setIndexFirstChangedBlock(int i) {
+        mIndexFirstChangedBlock = i;
+    }
+
+    @Override
     public int getLineCount() {
         return mInts.size() - 1;
     }
 
+    @Override
     public int getLineTop(int line) {
         return mInts.getValue(line, TOP);
     }
 
+    @Override
     public int getLineDescent(int line) {
         return mInts.getValue(line, DESCENT);
     }
 
+    @Override
     public int getLineStart(int line) {
         return mInts.getValue(line, START) & START_MASK;
     }
 
+    @Override
     public boolean getLineContainsTab(int line) {
         return (mInts.getValue(line, TAB) & TAB_MASK) != 0;
     }
 
+    @Override
     public int getParagraphDirection(int line) {
         return mInts.getValue(line, DIR) >> DIR_SHIFT;
     }
 
+    @Override
     public final Directions getLineDirections(int line) {
         return mObjects.getValue(line, 0);
     }
 
+    @Override
     public int getTopPadding() {
         return mTopPadding;
     }
 
+    @Override
     public int getBottomPadding() {
         return mBottomPadding;
     }
@@ -400,15 +627,13 @@ extends Layout
         return mEllipsizedWidth;
     }
 
-    private static class ChangeWatcher
-    implements TextWatcher, SpanWatcher
-    {
+    private static class ChangeWatcher implements TextWatcher, SpanWatcher {
         public ChangeWatcher(DynamicLayout layout) {
-            mLayout = new WeakReference(layout);
+            mLayout = new WeakReference<DynamicLayout>(layout);
         }
 
         private void reflow(CharSequence s, int where, int before, int after) {
-            DynamicLayout ml = (DynamicLayout) mLayout.get();
+            DynamicLayout ml = mLayout.get();
 
             if (ml != null)
                 ml.reflow(s, where, before, after);
@@ -416,18 +641,16 @@ extends Layout
                 ((Spannable) s).removeSpan(this);
         }
 
-        public void beforeTextChanged(CharSequence s,
-                                      int where, int before, int after) {
-            ;
+        public void beforeTextChanged(CharSequence s, int where, int before, int after) {
+            // Intentionally empty
         }
 
-        public void onTextChanged(CharSequence s,
-                                  int where, int before, int after) {
+        public void onTextChanged(CharSequence s, int where, int before, int after) {
             reflow(s, where, before, after);
         }
 
         public void afterTextChanged(Editable s) {
-            ;
+            // Intentionally empty
         }
 
         public void onSpanAdded(Spannable s, Object o, int start, int end) {
@@ -440,17 +663,17 @@ extends Layout
                 reflow(s, start, end - start, end - start);
         }
 
-        public void onSpanChanged(Spannable s, Object o, int start, int end,
-                                  int nstart, int nend) {
+        public void onSpanChanged(Spannable s, Object o, int start, int end, int nstart, int nend) {
             if (o instanceof UpdateLayout) {
                 reflow(s, start, end - start, end - start);
                 reflow(s, nstart, nend - nstart, nend - nstart);
             }
         }
 
-        private WeakReference mLayout;
+        private WeakReference<DynamicLayout> mLayout;
     }
 
+    @Override
     public int getEllipsisStart(int line) {
         if (mEllipsizeAt == null) {
             return 0;
@@ -459,6 +682,7 @@ extends Layout
         return mInts.getValue(line, ELLIPSIS_START);
     }
 
+    @Override
     public int getEllipsisCount(int line) {
         if (mEllipsizeAt == null) {
             return 0;
@@ -478,10 +702,27 @@ extends Layout
     private PackedIntVector mInts;
     private PackedObjectVector<Directions> mObjects;
 
+    /**
+     * Value used in mBlockIndices when a block has been created or recycled and indicating that its
+     * display list needs to be re-created.
+     * @hide
+     */
+    public static final int INVALID_BLOCK_INDEX = -1;
+    // Stores the line numbers of the last line of each block (inclusive)
+    private int[] mBlockEndLines;
+    // The indices of this block's display list in TextView's internal display list array or
+    // INVALID_BLOCK_INDEX if this block has been invalidated during an edition
+    private int[] mBlockIndices;
+    // Number of items actually currently being used in the above 2 arrays
+    private int mNumberOfBlocks;
+    // The first index of the blocks whose locations are changed
+    private int mIndexFirstChangedBlock;
+
     private int mTopPadding, mBottomPadding;
 
-    private static StaticLayout sStaticLayout = new StaticLayout(true);
-    private static Object sLock = new Object();
+    private static StaticLayout sStaticLayout = new StaticLayout(null);
+
+    private static final Object[] sLock = new Object[0];
 
     private static final int START = 0;
     private static final int DIR = START;
@@ -495,7 +736,6 @@ extends Layout
     private static final int COLUMNS_ELLIPSIZE = 5;
 
     private static final int START_MASK = 0x1FFFFFFF;
-    private static final int DIR_MASK   = 0xC0000000;
     private static final int DIR_SHIFT  = 30;
     private static final int TAB_MASK   = 0x20000000;
 

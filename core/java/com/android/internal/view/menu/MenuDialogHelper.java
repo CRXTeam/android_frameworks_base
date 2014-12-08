@@ -22,18 +22,22 @@ import android.content.DialogInterface;
 import android.os.IBinder;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.Window;
 import android.view.WindowManager;
-import android.widget.ListAdapter;
 
 /**
  * Helper for menus that appear as Dialogs (context and submenus).
  * 
  * @hide
  */
-public class MenuDialogHelper implements DialogInterface.OnKeyListener, DialogInterface.OnClickListener {
+public class MenuDialogHelper implements DialogInterface.OnKeyListener,
+        DialogInterface.OnClickListener,
+        DialogInterface.OnDismissListener,
+        MenuPresenter.Callback {
     private MenuBuilder mMenu;
-    private ListAdapter mAdapter;
     private AlertDialog mDialog;
+    ListMenuPresenter mPresenter;
+    private MenuPresenter.Callback mPresenterCallback;
     
     public MenuDialogHelper(MenuBuilder menu) {
         mMenu = menu;
@@ -48,12 +52,15 @@ public class MenuDialogHelper implements DialogInterface.OnKeyListener, DialogIn
         // Many references to mMenu, create local reference
         final MenuBuilder menu = mMenu;
         
-        // Get an adapter for the menu item views
-        mAdapter = menu.getMenuAdapter(MenuBuilder.TYPE_DIALOG);
-        
         // Get the builder for the dialog
-        final AlertDialog.Builder builder = new AlertDialog.Builder(menu.getContext())
-                .setAdapter(mAdapter, this); 
+        final AlertDialog.Builder builder = new AlertDialog.Builder(menu.getContext());
+
+        mPresenter = new ListMenuPresenter(builder.getContext(),
+                com.android.internal.R.layout.list_menu_item_layout);
+
+        mPresenter.setCallback(this);
+        mMenu.addMenuPresenter(mPresenter);
+        builder.setAdapter(mPresenter.getAdapter(), this);
 
         // Set the title
         final View headerView = menu.getHeaderView();
@@ -70,37 +77,56 @@ public class MenuDialogHelper implements DialogInterface.OnKeyListener, DialogIn
         
         // Show the menu
         mDialog = builder.create();
+        mDialog.setOnDismissListener(this);
         
         WindowManager.LayoutParams lp = mDialog.getWindow().getAttributes();
-        lp.type = WindowManager.LayoutParams.TYPE_APPLICATION_PANEL;
+        lp.type = WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG;
         if (windowToken != null) {
             lp.token = windowToken;
         }
+        lp.flags |= WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
         
         mDialog.show();
     }
     
     public boolean onKey(DialogInterface dialog, int keyCode, KeyEvent event) {
-        /*
-         * Close menu on key down (more responsive, and there's no way to cancel
-         * a key press so no point having it on key up. Note: This is also
-         * needed because when a top-level menu item that shows a submenu is
-         * invoked by chording, this onKey method will be called with the menu
-         * up event.
-         */
-        if (event.getAction() == KeyEvent.ACTION_DOWN && (keyCode == KeyEvent.KEYCODE_MENU)
-                || (keyCode == KeyEvent.KEYCODE_BACK)) {
-            mMenu.close(true);
-            dialog.dismiss();
-            return true;
+        if (keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN
+                    && event.getRepeatCount() == 0) {
+                Window win = mDialog.getWindow();
+                if (win != null) {
+                    View decor = win.getDecorView();
+                    if (decor != null) {
+                        KeyEvent.DispatcherState ds = decor.getKeyDispatcherState();
+                        if (ds != null) {
+                            ds.startTracking(event, this);
+                            return true;
+                        }
+                    }
+                }
+            } else if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) {
+                Window win = mDialog.getWindow();
+                if (win != null) {
+                    View decor = win.getDecorView();
+                    if (decor != null) {
+                        KeyEvent.DispatcherState ds = decor.getKeyDispatcherState();
+                        if (ds != null && ds.isTracking(event)) {
+                            mMenu.close(true);
+                            dialog.dismiss();
+                            return true;
+                        }
+                    }
+                }
+            }
         }
 
         // Menu shortcut matching
-        if (mMenu.performShortcut(keyCode, event, 0)) {
-            return true;
-        }
-        
-        return false;
+        return mMenu.performShortcut(keyCode, event, 0);
+
+    }
+
+    public void setPresenterCallback(MenuPresenter.Callback cb) {
+        mPresenterCallback = cb;
     }
 
     /**
@@ -113,9 +139,31 @@ public class MenuDialogHelper implements DialogInterface.OnKeyListener, DialogIn
             mDialog.dismiss();
         }
     }
-    
-    public void onClick(DialogInterface dialog, int which) {
-        mMenu.performItemAction((MenuItemImpl) mAdapter.getItem(which), 0);
+
+    @Override
+    public void onDismiss(DialogInterface dialog) {
+        mPresenter.onCloseMenu(mMenu, true);
     }
-    
+
+    @Override
+    public void onCloseMenu(MenuBuilder menu, boolean allMenusAreClosing) {
+        if (allMenusAreClosing || menu == mMenu) {
+            dismiss();
+        }
+        if (mPresenterCallback != null) {
+            mPresenterCallback.onCloseMenu(menu, allMenusAreClosing);
+        }
+    }
+
+    @Override
+    public boolean onOpenSubMenu(MenuBuilder subMenu) {
+        if (mPresenterCallback != null) {
+            return mPresenterCallback.onOpenSubMenu(subMenu);
+        }
+        return false;
+    }
+
+    public void onClick(DialogInterface dialog, int which) {
+        mMenu.performItemAction((MenuItemImpl) mPresenter.getAdapter().getItem(which), 0);
+    }
 }

@@ -17,31 +17,21 @@
 package android.widget;
 
 import android.content.Context;
-import android.content.res.TypedArray;
-import android.graphics.Rect;
-import android.graphics.drawable.Drawable;
 import android.text.Editable;
-import android.text.Selection;
-import android.text.Spanned;
-import android.text.Spannable;
 import android.text.SpannableString;
+import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.method.QwertyKeyListener;
 import android.util.AttributeSet;
-import android.util.Log;
-import android.view.KeyEvent;
-import android.view.LayoutInflater;
-import android.view.View;
-import android.view.ViewGroup;
-
-import com.android.internal.R;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 /**
  * An editable text view, extending {@link AutoCompleteTextView}, that
  * can show completion suggestions for the substring of the text where
  * the user is typing instead of necessarily for the entire thing.
  * <p>
- * You must must provide a {@link Tokenizer} to distinguish the
+ * You must provide a {@link Tokenizer} to distinguish the
  * various substrings.
  *
  * <p>The following code snippet shows how to create a text view which suggests
@@ -52,7 +42,7 @@ import com.android.internal.R;
  *     protected void onCreate(Bundle savedInstanceState) {
  *         super.onCreate(savedInstanceState);
  *         setContentView(R.layout.autocomplete_7);
- * 
+ *
  *         ArrayAdapter&lt;String&gt; adapter = new ArrayAdapter&lt;String&gt;(this,
  *                 android.R.layout.simple_dropdown_item_1line, COUNTRIES);
  *         MultiAutoCompleteTextView textView = (MultiAutoCompleteTextView) findViewById(R.id.edit);
@@ -77,8 +67,13 @@ public class MultiAutoCompleteTextView extends AutoCompleteTextView {
         this(context, attrs, com.android.internal.R.attr.autoCompleteTextViewStyle);
     }
 
-    public MultiAutoCompleteTextView(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public MultiAutoCompleteTextView(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public MultiAutoCompleteTextView(
+            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
     }
 
     /* package */ void finishInit() { }
@@ -126,7 +121,7 @@ public class MultiAutoCompleteTextView extends AutoCompleteTextView {
         Editable text = getText();
 
         int end = getSelectionEnd();
-        if (end < 0) {
+        if (end < 0 || mTokenizer == null) {
             return false;
         }
 
@@ -143,11 +138,11 @@ public class MultiAutoCompleteTextView extends AutoCompleteTextView {
      * Instead of validating the entire text, this subclass method validates
      * each token of the text individually.  Empty tokens are removed.
      */
-    @Override 
+    @Override
     public void performValidation() {
         Validator v = getValidator();
 
-        if (v == null) {
+        if (v == null || mTokenizer == null) {
             return;
         }
 
@@ -195,6 +190,8 @@ public class MultiAutoCompleteTextView extends AutoCompleteTextView {
      */
     @Override
     protected void replaceText(CharSequence text) {
+        clearComposingText();
+
         int end = getSelectionEnd();
         int start = mTokenizer.findTokenStart(getText(), end);
 
@@ -203,6 +200,18 @@ public class MultiAutoCompleteTextView extends AutoCompleteTextView {
 
         QwertyKeyListener.markAsReplaced(editable, start, end, original);
         editable.replace(start, end, mTokenizer.terminateToken(text));
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(MultiAutoCompleteTextView.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(MultiAutoCompleteTextView.class.getName());
     }
 
     public static interface Tokenizer {

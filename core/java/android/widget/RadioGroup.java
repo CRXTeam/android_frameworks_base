@@ -23,6 +23,8 @@ import android.content.res.TypedArray;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 
 /**
@@ -122,6 +124,23 @@ public class RadioGroup extends LinearLayout {
         }
     }
 
+    @Override
+    public void addView(View child, int index, ViewGroup.LayoutParams params) {
+        if (child instanceof RadioButton) {
+            final RadioButton button = (RadioButton) child;
+            if (button.isChecked()) {
+                mProtectFromCheckedChange = true;
+                if (mCheckedId != -1) {
+                    setCheckedStateForView(mCheckedId, false);
+                }
+                mProtectFromCheckedChange = false;
+                setCheckedId(button.getId());
+            }
+        }
+
+        super.addView(child, index, params);
+    }
+
     /**
      * <p>Sets the selection to the radio button whose identifier is passed in
      * parameter. Using -1 as the selection identifier clears the selection;
@@ -171,6 +190,8 @@ public class RadioGroup extends LinearLayout {
      *
      * @see #check(int)
      * @see #clearCheck()
+     *
+     * @attr ref android.R.styleable#RadioGroup_checkedButton
      */
     public int getCheckedRadioButtonId() {
         return mCheckedId;
@@ -217,6 +238,18 @@ public class RadioGroup extends LinearLayout {
     @Override
     protected LinearLayout.LayoutParams generateDefaultLayoutParams() {
         return new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(RadioGroup.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(RadioGroup.class.getName());
     }
 
     /**
@@ -343,7 +376,7 @@ public class RadioGroup extends LinearLayout {
                 int id = child.getId();
                 // generates an id if it's missing
                 if (id == View.NO_ID) {
-                    id = child.hashCode();
+                    id = View.generateViewId();
                     child.setId(id);
                 }
                 ((RadioButton) child).setOnCheckedChangeWidgetListener(

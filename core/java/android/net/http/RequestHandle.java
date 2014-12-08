@@ -18,7 +18,6 @@ package android.net.http;
 
 import android.net.ParseException;
 import android.net.WebAddress;
-import android.security.Md5MessageDigest;
 import junit.framework.Assert;
 import android.webkit.CookieManager;
 
@@ -26,6 +25,8 @@ import org.apache.commons.codec.binary.Base64;
 
 import java.io.InputStream;
 import java.lang.Math;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
@@ -42,20 +43,18 @@ public class RequestHandle {
     private WebAddress    mUri;
     private String        mMethod;
     private Map<String, String> mHeaders;
-
     private RequestQueue  mRequestQueue;
-
     private Request       mRequest;
-
     private InputStream   mBodyProvider;
     private int           mBodyLength;
-
     private int           mRedirectCount = 0;
+    // Used only with synchronous requests.
+    private Connection    mConnection;
 
     private final static String AUTHORIZATION_HEADER = "Authorization";
     private final static String PROXY_AUTHORIZATION_HEADER = "Proxy-Authorization";
 
-    private final static int MAX_REDIRECT_COUNT = 16;
+    public final static int MAX_REDIRECT_COUNT = 16;
 
     /**
      * Creates a new request session.
@@ -81,11 +80,34 @@ public class RequestHandle {
     }
 
     /**
+     * Creates a new request session with a given Connection. This connection
+     * is used during a synchronous load to handle this request.
+     */
+    public RequestHandle(RequestQueue requestQueue, String url, WebAddress uri,
+            String method, Map<String, String> headers,
+            InputStream bodyProvider, int bodyLength, Request request,
+            Connection conn) {
+        this(requestQueue, url, uri, method, headers, bodyProvider, bodyLength,
+                request);
+        mConnection = conn;
+    }
+
+    /**
      * Cancels this request
      */
     public void cancel() {
         if (mRequest != null) {
             mRequest.cancel();
+        }
+    }
+
+    /**
+     * Pauses the loading of this request. For example, called from the WebCore thread
+     * when the plugin can take no more data.
+     */
+    public void pauseRequest(boolean pause) {
+        if (mRequest != null) {
+            mRequest.setLoadingPaused(pause);
         }
     }
 
@@ -106,6 +128,14 @@ public class RequestHandle {
         return mRedirectCount >= MAX_REDIRECT_COUNT;
     }
 
+    public int getRedirectCount() {
+        return mRedirectCount;
+    }
+
+    public void setRedirectCount(int count) {
+        mRedirectCount = count;
+    }
+
     /**
      * Create and queue a redirect request.
      *
@@ -113,7 +143,7 @@ public class RequestHandle {
      * @param statusCode HTTP status code returned from original request
      * @param cacheHeaders Cache header for redirect URL
      * @return true if setup succeeds, false otherwise (redirect loop
-     * count exceeded)
+     * count exceeded, body provider unable to rewind on 307 redirect)
      */
     public boolean setupRedirect(String redirectTo, int statusCode,
             Map<String, String> cacheHeaders) {
@@ -151,11 +181,11 @@ public class RequestHandle {
             e.printStackTrace();
         }
 
-        // update the "cookie" header based on the redirected url
-        mHeaders.remove("cookie");
+        // update the "Cookie" header based on the redirected url
+        mHeaders.remove("Cookie");
         String cookie = CookieManager.getInstance().getCookie(mUri);
         if (cookie != null && cookie.length() > 0) {
-            mHeaders.put("cookie", cookie);
+            mHeaders.put("Cookie", cookie);
         }
 
         if ((statusCode == 302 || statusCode == 303) && mMethod.equals("POST")) {
@@ -164,8 +194,22 @@ public class RequestHandle {
             }
             mMethod = "GET";
         }
-        mHeaders.remove("Content-Type");
-        mBodyProvider = null;
+        /* Only repost content on a 307.  If 307, reset the body
+           provider so we can replay the body */
+        if (statusCode == 307) {
+            try {
+                if (mBodyProvider != null) mBodyProvider.reset();
+            } catch (java.io.IOException ex) {
+                if (HttpLog.LOGV) {
+                    HttpLog.v("setupRedirect() failed to reset body provider");
+                }
+                return false;
+            }
+
+        } else {
+            mHeaders.remove("Content-Type");
+            mBodyProvider = null;
+        }
 
         // Update the cache headers for this URL
         mHeaders.putAll(cacheHeaders);
@@ -240,6 +284,12 @@ public class RequestHandle {
         mRequest.waitUntilComplete();
     }
 
+    public void processRequest() {
+        if (mConnection != null) {
+            mConnection.processRequests(mRequest);
+        }
+    }
+
     /**
      * @return Digest-scheme authentication response.
      */
@@ -259,7 +309,7 @@ public class RequestHandle {
         String A2 = mMethod  + ":" + mUrl;
 
         // because we do not preemptively send authorization headers, nc is always 1
-        String nc = "000001";
+        String nc = "00000001";
         String cnonce = computeCnonce();
         String digest = computeDigest(A1, A2, nonce, QOP, nc, cnonce);
 
@@ -328,11 +378,15 @@ public class RequestHandle {
      */
     private String H(String param) {
         if (param != null) {
-            Md5MessageDigest md5 = new Md5MessageDigest();
+            try {
+                MessageDigest md5 = MessageDigest.getInstance("MD5");
 
-            byte[] d = md5.digest(param.getBytes());
-            if (d != null) {
-                return bufferToHex(d);
+                byte[] d = md5.digest(param.getBytes());
+                if (d != null) {
+                    return bufferToHex(d);
+                }
+            } catch (NoSuchAlgorithmException e) {
+                throw new RuntimeException(e);
             }
         }
 
@@ -394,9 +448,19 @@ public class RequestHandle {
      * Creates and queues new request.
      */
     private void createAndQueueNewRequest() {
+        // mConnection is non-null if and only if the requests are synchronous.
+        if (mConnection != null) {
+            RequestHandle newHandle = mRequestQueue.queueSynchronousRequest(
+                    mUrl, mUri, mMethod, mHeaders, mRequest.mEventHandler,
+                    mBodyProvider, mBodyLength);
+            mRequest = newHandle.mRequest;
+            mConnection = newHandle.mConnection;
+            newHandle.processRequest();
+            return;
+        }
         mRequest = mRequestQueue.queueRequest(
                 mUrl, mUri, mMethod, mHeaders, mRequest.mEventHandler,
                 mBodyProvider,
-                mBodyLength, mRequest.mHighPriority).mRequest;
+                mBodyLength).mRequest;
     }
 }

@@ -16,30 +16,48 @@
 
 package android.os;
 
+import com.android.internal.util.FastPrintWriter;
+import com.android.internal.util.TypedProperties;
+
+import android.util.Log;
+
+import java.io.FileDescriptor;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
-import java.io.OutputStreamWriter;
+import java.io.FileReader;
+import java.io.IOException;
 import java.io.PrintWriter;
+import java.io.Reader;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.lang.annotation.Target;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 import org.apache.harmony.dalvik.ddmc.Chunk;
 import org.apache.harmony.dalvik.ddmc.ChunkHandler;
 import org.apache.harmony.dalvik.ddmc.DdmServer;
 
-import dalvik.bytecode.Opcodes;
+import dalvik.bytecode.OpcodeInfo;
 import dalvik.system.VMDebug;
 
 
-/** Provides various debugging functions for Android applications, including
+/**
+ * Provides various debugging methods for Android applications, including
  * tracing and allocation counts.
  * <p><strong>Logging Trace Files</strong></p>
  * <p>Debug can create log files that give details about an application, such as
  * a call stack and start/stop times for any running methods. See <a
-href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Program</a> for
+href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Log Viewer</a> for
  * information about reading trace files. To start logging trace files, call one
  * of the startMethodTracing() methods. To stop tracing, call
  * {@link #stopMethodTracing()}.
  */
 public final class Debug
 {
+    private static final String TAG = "Debug";
+
     /**
      * Flags for startMethodTracing().  These can be ORed together.
      *
@@ -75,7 +93,8 @@ public final class Debug
     /**
      * Default trace file path and file
      */
-    private static final String DEFAULT_TRACE_PATH_PREFIX = "/sdcard/";
+    private static final String DEFAULT_TRACE_PATH_PREFIX =
+        Environment.getLegacyExternalStorageDirectory().getPath() + "/";
     private static final String DEFAULT_TRACE_BODY = "dmtrace";
     private static final String DEFAULT_TRACE_EXTENSION = ".trace";
     private static final String DEFAULT_TRACE_FILE_PATH =
@@ -87,27 +106,283 @@ public final class Debug
      * This class is used to retrieved various statistics about the memory mappings for this
      * process. The returns info broken down by dalvik, native, and other. All results are in kB.
      */
-    public static class MemoryInfo {
-        /** The proportional set size for dalvik. */
+    public static class MemoryInfo implements Parcelable {
+        /** The proportional set size for dalvik heap.  (Doesn't include other Dalvik overhead.) */
         public int dalvikPss;
-        /** The private dirty pages used by dalvik. */
+        /** The proportional set size that is swappable for dalvik heap. */
+        /** @hide We may want to expose this, eventually. */
+        public int dalvikSwappablePss;
+        /** The private dirty pages used by dalvik heap. */
         public int dalvikPrivateDirty;
-        /** The shared dirty pages used by dalvik. */
+        /** The shared dirty pages used by dalvik heap. */
         public int dalvikSharedDirty;
+        /** The private clean pages used by dalvik heap. */
+        /** @hide We may want to expose this, eventually. */
+        public int dalvikPrivateClean;
+        /** The shared clean pages used by dalvik heap. */
+        /** @hide We may want to expose this, eventually. */
+        public int dalvikSharedClean;
+        /** The dirty dalvik pages that have been swapped out. */
+        /** @hide We may want to expose this, eventually. */
+        public int dalvikSwappedOut;
 
         /** The proportional set size for the native heap. */
         public int nativePss;
+        /** The proportional set size that is swappable for the native heap. */
+        /** @hide We may want to expose this, eventually. */
+        public int nativeSwappablePss;
         /** The private dirty pages used by the native heap. */
         public int nativePrivateDirty;
         /** The shared dirty pages used by the native heap. */
         public int nativeSharedDirty;
+        /** The private clean pages used by the native heap. */
+        /** @hide We may want to expose this, eventually. */
+        public int nativePrivateClean;
+        /** The shared clean pages used by the native heap. */
+        /** @hide We may want to expose this, eventually. */
+        public int nativeSharedClean;
+        /** The dirty native pages that have been swapped out. */
+        /** @hide We may want to expose this, eventually. */
+        public int nativeSwappedOut;
 
         /** The proportional set size for everything else. */
         public int otherPss;
+        /** The proportional set size that is swappable for everything else. */
+        /** @hide We may want to expose this, eventually. */
+        public int otherSwappablePss;
         /** The private dirty pages used by everything else. */
         public int otherPrivateDirty;
         /** The shared dirty pages used by everything else. */
         public int otherSharedDirty;
+        /** The private clean pages used by everything else. */
+        /** @hide We may want to expose this, eventually. */
+        public int otherPrivateClean;
+        /** The shared clean pages used by everything else. */
+        /** @hide We may want to expose this, eventually. */
+        public int otherSharedClean;
+        /** The dirty pages used by anyting else that have been swapped out. */
+        /** @hide We may want to expose this, eventually. */
+        public int otherSwappedOut;
+
+        /** @hide */
+        public static final int NUM_OTHER_STATS = 16;
+
+        /** @hide */
+        public static final int NUM_DVK_STATS = 5;
+
+        /** @hide */
+        public static final int NUM_CATEGORIES = 7;
+
+        /** @hide */
+        public static final int offsetPss = 0;
+        /** @hide */
+        public static final int offsetSwappablePss = 1;
+        /** @hide */
+        public static final int offsetPrivateDirty = 2;
+        /** @hide */
+        public static final int offsetSharedDirty = 3;
+        /** @hide */
+        public static final int offsetPrivateClean = 4;
+        /** @hide */
+        public static final int offsetSharedClean = 5;
+        /** @hide */
+        public static final int offsetSwappedOut = 6;
+
+        private int[] otherStats = new int[(NUM_OTHER_STATS+NUM_DVK_STATS)*NUM_CATEGORIES];
+
+        public MemoryInfo() {
+        }
+
+        /**
+         * Return total PSS memory usage in kB.
+         */
+        public int getTotalPss() {
+            return dalvikPss + nativePss + otherPss;
+        }
+
+        /**
+         * @hide Return total PSS memory usage in kB.
+         */
+        public int getTotalUss() {
+            return dalvikPrivateClean + dalvikPrivateDirty
+                    + nativePrivateClean + nativePrivateDirty
+                    + otherPrivateClean + otherPrivateDirty;
+        }
+
+        /**
+         * Return total PSS memory usage in kB.
+         */
+        public int getTotalSwappablePss() {
+            return dalvikSwappablePss + nativeSwappablePss + otherSwappablePss;
+        }
+
+        /**
+         * Return total private dirty memory usage in kB.
+         */
+        public int getTotalPrivateDirty() {
+            return dalvikPrivateDirty + nativePrivateDirty + otherPrivateDirty;
+        }
+
+        /**
+         * Return total shared dirty memory usage in kB.
+         */
+        public int getTotalSharedDirty() {
+            return dalvikSharedDirty + nativeSharedDirty + otherSharedDirty;
+        }
+
+        /**
+         * Return total shared clean memory usage in kB.
+         */
+        public int getTotalPrivateClean() {
+            return dalvikPrivateClean + nativePrivateClean + otherPrivateClean;
+        }
+
+        /**
+         * Return total shared clean memory usage in kB.
+         */
+        public int getTotalSharedClean() {
+            return dalvikSharedClean + nativeSharedClean + otherSharedClean;
+        }
+
+        /**
+         * Return total swapped out memory in kB.
+         * @hide
+         */
+        public int getTotalSwappedOut() {
+            return dalvikSwappedOut + nativeSwappedOut + otherSwappedOut;
+        }
+
+        /** @hide */
+        public int getOtherPss(int which) {
+            return otherStats[which*NUM_CATEGORIES + offsetPss];
+        }
+
+
+        /** @hide */
+        public int getOtherSwappablePss(int which) {
+            return otherStats[which*NUM_CATEGORIES + offsetSwappablePss];
+        }
+
+
+        /** @hide */
+        public int getOtherPrivateDirty(int which) {
+            return otherStats[which*NUM_CATEGORIES + offsetPrivateDirty];
+        }
+
+        /** @hide */
+        public int getOtherSharedDirty(int which) {
+            return otherStats[which*NUM_CATEGORIES + offsetSharedDirty];
+        }
+
+        /** @hide */
+        public int getOtherPrivateClean(int which) {
+            return otherStats[which*NUM_CATEGORIES + offsetPrivateClean];
+        }
+
+        /** @hide */
+        public int getOtherSharedClean(int which) {
+            return otherStats[which*NUM_CATEGORIES + offsetSharedClean];
+        }
+
+        /** @hide */
+        public int getOtherSwappedOut(int which) {
+            return otherStats[which*NUM_CATEGORIES + offsetSwappedOut];
+        }
+
+        /** @hide */
+        public static String getOtherLabel(int which) {
+            switch (which) {
+                case 0: return "Dalvik Other";
+                case 1: return "Stack";
+                case 2: return "Cursor";
+                case 3: return "Ashmem";
+                case 4: return "Other dev";
+                case 5: return ".so mmap";
+                case 6: return ".jar mmap";
+                case 7: return ".apk mmap";
+                case 8: return ".ttf mmap";
+                case 9: return ".dex mmap";
+                case 10: return "code mmap";
+                case 11: return "image mmap";
+                case 12: return "Other mmap";
+                case 13: return "Graphics";
+                case 14: return "GL";
+                case 15: return "Memtrack";
+                case 16: return ".Heap";
+                case 17: return ".LOS";
+                case 18: return ".LinearAlloc";
+                case 19: return ".GC";
+                case 20: return ".JITCache";
+                default: return "????";
+            }
+        }
+
+        public int describeContents() {
+            return 0;
+        }
+
+        public void writeToParcel(Parcel dest, int flags) {
+            dest.writeInt(dalvikPss);
+            dest.writeInt(dalvikSwappablePss);
+            dest.writeInt(dalvikPrivateDirty);
+            dest.writeInt(dalvikSharedDirty);
+            dest.writeInt(dalvikPrivateClean);
+            dest.writeInt(dalvikSharedClean);
+            dest.writeInt(dalvikSwappedOut);
+            dest.writeInt(nativePss);
+            dest.writeInt(nativeSwappablePss);
+            dest.writeInt(nativePrivateDirty);
+            dest.writeInt(nativeSharedDirty);
+            dest.writeInt(nativePrivateClean);
+            dest.writeInt(nativeSharedClean);
+            dest.writeInt(nativeSwappedOut);
+            dest.writeInt(otherPss);
+            dest.writeInt(otherSwappablePss);
+            dest.writeInt(otherPrivateDirty);
+            dest.writeInt(otherSharedDirty);
+            dest.writeInt(otherPrivateClean);
+            dest.writeInt(otherSharedClean);
+            dest.writeInt(otherSwappedOut);
+            dest.writeIntArray(otherStats);
+        }
+
+        public void readFromParcel(Parcel source) {
+            dalvikPss = source.readInt();
+            dalvikSwappablePss = source.readInt();
+            dalvikPrivateDirty = source.readInt();
+            dalvikSharedDirty = source.readInt();
+            dalvikPrivateClean = source.readInt();
+            dalvikSharedClean = source.readInt();
+            dalvikSwappedOut = source.readInt();
+            nativePss = source.readInt();
+            nativeSwappablePss = source.readInt();
+            nativePrivateDirty = source.readInt();
+            nativeSharedDirty = source.readInt();
+            nativePrivateClean = source.readInt();
+            nativeSharedClean = source.readInt();
+            nativeSwappedOut = source.readInt();
+            otherPss = source.readInt();
+            otherSwappablePss = source.readInt();
+            otherPrivateDirty = source.readInt();
+            otherSharedDirty = source.readInt();
+            otherPrivateClean = source.readInt();
+            otherSharedClean = source.readInt();
+            otherSwappedOut = source.readInt();
+            otherStats = source.createIntArray();
+        }
+
+        public static final Creator<MemoryInfo> CREATOR = new Creator<MemoryInfo>() {
+            public MemoryInfo createFromParcel(Parcel source) {
+                return new MemoryInfo(source);
+            }
+            public MemoryInfo[] newArray(int size) {
+                return new MemoryInfo[size];
+            }
+        };
+
+        private MemoryInfo(Parcel source) {
+            readFromParcel(source);
+        }
     }
 
 
@@ -117,6 +392,10 @@ public final class Debug
      * waitForDebugger() call if you want to start tracing immediately.
      */
     public static void waitForDebugger() {
+        if (!VMDebug.isDebuggingEnabled()) {
+            //System.out.println("debugging not enabled, not waiting");
+            return;
+        }
         if (isDebuggerConnected())
             return;
 
@@ -178,11 +457,22 @@ public final class Debug
     }
 
     /**
-     * Change the JDWP port -- this is a temporary measure.
+     * Returns an array of strings that identify VM features.  This is
+     * used by DDMS to determine what sorts of operations the VM can
+     * perform.
      *
-     * If a debugger is currently attached the change may not happen
-     * until after the debugger disconnects.
+     * @hide
      */
+    public static String[] getVmFeatureList() {
+        return VMDebug.getVmFeatureList();
+    }
+
+    /**
+     * Change the JDWP port.
+     *
+     * @deprecated no longer needed or useful
+     */
+    @Deprecated
     public static void changeDebugPort(int port) {}
 
     /**
@@ -224,7 +514,7 @@ public final class Debug
         PrintWriter outStream = null;
         try {
             FileOutputStream fos = new FileOutputStream(SYSFS_QEMU_TRACE_STATE);
-            outStream = new PrintWriter(new OutputStreamWriter(fos));
+            outStream = new FastPrintWriter(fos);
             outStream.println("1");
         } catch (Exception e) {
         } finally {
@@ -252,7 +542,7 @@ public final class Debug
         PrintWriter outStream = null;
         try {
             FileOutputStream fos = new FileOutputStream(SYSFS_QEMU_TRACE_STATE);
-            outStream = new PrintWriter(new OutputStreamWriter(fos));
+            outStream = new FastPrintWriter(fos);
             outStream.println("0");
         } catch (Exception e) {
             // We could print an error message here but we probably want
@@ -281,23 +571,23 @@ public final class Debug
 
     /**
      * Start method tracing with default log name and buffer size. See <a
-href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Program</a> for
+href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Log Viewer</a> for
      * information about reading these files. Call stopMethodTracing() to stop
      * tracing.
      */
     public static void startMethodTracing() {
-        VMDebug.startMethodTracing(DEFAULT_TRACE_FILE_PATH, 0, 0);
+        VMDebug.startMethodTracing(DEFAULT_TRACE_FILE_PATH, 0, 0, false, 0);
     }
 
     /**
      * Start method tracing, specifying the trace log file name.  The trace
      * file will be put under "/sdcard" unless an absolute path is given.
      * See <a
-       href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Program</a> for
+       href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Log Viewer</a> for
      * information about reading trace files.
      *
      * @param traceName Name for the trace log file to create.
-     * If no name argument is given, this value defaults to "/sdcard/dmtrace.trace".
+     * If {@code traceName} is null, this value defaults to "/sdcard/dmtrace.trace".
      * If the files already exist, they will be truncated.
      * If the trace file given does not end in ".trace", it will be appended for you.
      */
@@ -309,10 +599,10 @@ href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Progra
      * Start method tracing, specifying the trace log file name and the
      * buffer size. The trace files will be put under "/sdcard" unless an
      * absolute path is given. See <a
-       href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Program</a> for
+       href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Log Viewer</a> for
      * information about reading trace files.
      * @param traceName    Name for the trace log file to create.
-     * If no name argument is given, this value defaults to "/sdcard/dmtrace.trace".
+     * If {@code traceName} is null, this value defaults to "/sdcard/dmtrace.trace".
      * If the files already exist, they will be truncated.
      * If the trace file given does not end in ".trace", it will be appended for you.
      *
@@ -326,7 +616,7 @@ href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Progra
      * Start method tracing, specifying the trace log file name and the
      * buffer size. The trace files will be put under "/sdcard" unless an
      * absolute path is given. See <a
-       href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Program</a> for
+       href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Log Viewer</a> for
      * information about reading trace files.
      *
      * <p>
@@ -335,26 +625,90 @@ href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Progra
      * in relative terms (e.g. was run #1 faster than run #2).  The times
      * for native methods will not change, so don't try to use this to
      * compare the performance of interpreted and native implementations of the
-     * same method.  As an alternative, consider using "native" tracing
-     * in the emulator via {@link #startNativeTracing()}.
+     * same method.  As an alternative, consider using sampling-based method
+     * tracing via {@link #startMethodTracingSampling(String, int, int)} or
+     * "native" tracing in the emulator via {@link #startNativeTracing()}.
      * </p>
      *
      * @param traceName    Name for the trace log file to create.
-     * If no name argument is given, this value defaults to "/sdcard/dmtrace.trace".
+     * If {@code traceName} is null, this value defaults to "/sdcard/dmtrace.trace".
      * If the files already exist, they will be truncated.
      * If the trace file given does not end in ".trace", it will be appended for you.
      * @param bufferSize    The maximum amount of trace data we gather. If not given, it defaults to 8MB.
+     * @param flags    Flags to control method tracing. The only one that is currently defined is {@link #TRACE_COUNT_ALLOCS}.
      */
     public static void startMethodTracing(String traceName, int bufferSize,
         int flags) {
+        VMDebug.startMethodTracing(fixTraceName(traceName), bufferSize, flags, false, 0);
+    }
 
-        String pathName = traceName;
-        if (pathName.charAt(0) != '/')
-            pathName = DEFAULT_TRACE_PATH_PREFIX + pathName;
-        if (!pathName.endsWith(DEFAULT_TRACE_EXTENSION))
-            pathName = pathName + DEFAULT_TRACE_EXTENSION;
+    /**
+     * Start sampling-based method tracing, specifying the trace log file name,
+     * the buffer size, and the sampling interval. The trace files will be put
+     * under "/sdcard" unless an absolute path is given. See <a
+       href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Log Viewer</a>
+     * for information about reading trace files.
+     *
+     * @param traceName    Name for the trace log file to create.
+     * If {@code traceName} is null, this value defaults to "/sdcard/dmtrace.trace".
+     * If the files already exist, they will be truncated.
+     * If the trace file given does not end in ".trace", it will be appended for you.
+     * @param bufferSize    The maximum amount of trace data we gather. If not given, it defaults to 8MB.
+     * @param intervalUs    The amount of time between each sample in microseconds.
+     */
+    public static void startMethodTracingSampling(String traceName,
+        int bufferSize, int intervalUs) {
+        VMDebug.startMethodTracing(fixTraceName(traceName), bufferSize, 0, true, intervalUs);
+    }
 
-        VMDebug.startMethodTracing(pathName, bufferSize, flags);
+    /**
+     * Formats name of trace log file for method tracing.
+     */
+    private static String fixTraceName(String traceName) {
+        if (traceName == null)
+            traceName = DEFAULT_TRACE_FILE_PATH;
+        if (traceName.charAt(0) != '/')
+            traceName = DEFAULT_TRACE_PATH_PREFIX + traceName;
+        if (!traceName.endsWith(DEFAULT_TRACE_EXTENSION))
+            traceName = traceName + DEFAULT_TRACE_EXTENSION;
+
+        return traceName;
+    }
+
+    /**
+     * Like startMethodTracing(String, int, int), but taking an already-opened
+     * FileDescriptor in which the trace is written.  The file name is also
+     * supplied simply for logging.  Makes a dup of the file descriptor.
+     *
+     * Not exposed in the SDK unless we are really comfortable with supporting
+     * this and find it would be useful.
+     * @hide
+     */
+    public static void startMethodTracing(String traceName, FileDescriptor fd,
+        int bufferSize, int flags) {
+        VMDebug.startMethodTracing(traceName, fd, bufferSize, flags, false, 0);
+    }
+
+    /**
+     * Starts method tracing without a backing file.  When stopMethodTracing
+     * is called, the result is sent directly to DDMS.  (If DDMS is not
+     * attached when tracing ends, the profiling data will be discarded.)
+     *
+     * @hide
+     */
+    public static void startMethodTracingDdms(int bufferSize, int flags,
+        boolean samplingEnabled, int intervalUs) {
+        VMDebug.startMethodTracingDdms(bufferSize, flags, samplingEnabled, intervalUs);
+    }
+
+    /**
+     * Determine whether method tracing is currently active and what type is
+     * active.
+     *
+     * @hide
+     */
+    public static int getMethodTracingMode() {
+        return VMDebug.getMethodTracingMode();
     }
 
     /**
@@ -380,110 +734,298 @@ href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Progra
     }
 
     /**
-     * Count the number and aggregate size of memory allocations between
-     * two points.
+     * Start counting the number and aggregate size of memory allocations.
      *
-     * The "start" function resets the counts and enables counting.  The
-     * "stop" function disables the counting so that the analysis code
-     * doesn't cause additional allocations.  The "get" function returns
-     * the specified value.
+     * <p>The {@link #startAllocCounting() start} method resets the counts and enables counting.
+     * The {@link #stopAllocCounting() stop} method disables the counting so that the analysis
+     * code doesn't cause additional allocations.  The various <code>get</code> methods return
+     * the specified value. And the various <code>reset</code> methods reset the specified
+     * count.</p>
      *
-     * Counts are kept for the system as a whole and for each thread.
+     * <p>Counts are kept for the system as a whole (global) and for each thread.
      * The per-thread counts for threads other than the current thread
-     * are not cleared by the "reset" or "start" calls.
+     * are not cleared by the "reset" or "start" calls.</p>
+     *
+     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
+    @Deprecated
     public static void startAllocCounting() {
         VMDebug.startAllocCounting();
     }
+
+    /**
+     * Stop counting the number and aggregate size of memory allocations.
+     *
+     * @see #startAllocCounting()
+     */
+    @Deprecated
     public static void stopAllocCounting() {
         VMDebug.stopAllocCounting();
     }
 
+    /**
+     * Returns the global count of objects allocated by the runtime between a
+     * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
+     */
     public static int getGlobalAllocCount() {
         return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_ALLOCATED_OBJECTS);
     }
+
+    /**
+     * Clears the global count of objects allocated.
+     * @see #getGlobalAllocCount()
+     */
+    public static void resetGlobalAllocCount() {
+        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_ALLOCATED_OBJECTS);
+    }
+
+    /**
+     * Returns the global size, in bytes, of objects allocated by the runtime between a
+     * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
+     */
     public static int getGlobalAllocSize() {
         return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_ALLOCATED_BYTES);
     }
+
+    /**
+     * Clears the global size of objects allocated.
+     * @see #getGlobalAllocSize()
+     */
+    public static void resetGlobalAllocSize() {
+        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_ALLOCATED_BYTES);
+    }
+
+    /**
+     * Returns the global count of objects freed by the runtime between a
+     * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
+     */
     public static int getGlobalFreedCount() {
         return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_FREED_OBJECTS);
     }
+
+    /**
+     * Clears the global count of objects freed.
+     * @see #getGlobalFreedCount()
+     */
+    public static void resetGlobalFreedCount() {
+        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_FREED_OBJECTS);
+    }
+
+    /**
+     * Returns the global size, in bytes, of objects freed by the runtime between a
+     * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
+     */
     public static int getGlobalFreedSize() {
         return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_FREED_BYTES);
     }
-    public static int getGlobalExternalAllocCount() {
-        return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_EXT_ALLOCATED_OBJECTS);
+
+    /**
+     * Clears the global size of objects freed.
+     * @see #getGlobalFreedSize()
+     */
+    public static void resetGlobalFreedSize() {
+        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_FREED_BYTES);
     }
-    public static int getGlobalExternalAllocSize() {
-        return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_EXT_ALLOCATED_BYTES);
-    }
-    public static int getGlobalExternalFreedCount() {
-        return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_EXT_FREED_OBJECTS);
-    }
-    public static int getGlobalExternalFreedSize() {
-        return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_EXT_FREED_BYTES);
-    }
+
+    /**
+     * Returns the number of non-concurrent GC invocations between a
+     * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
+     */
     public static int getGlobalGcInvocationCount() {
         return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_GC_INVOCATIONS);
     }
+
+    /**
+     * Clears the count of non-concurrent GC invocations.
+     * @see #getGlobalGcInvocationCount()
+     */
+    public static void resetGlobalGcInvocationCount() {
+        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_GC_INVOCATIONS);
+    }
+
+    /**
+     * Returns the number of classes successfully initialized (ie those that executed without
+     * throwing an exception) between a {@link #startAllocCounting() start} and
+     * {@link #stopAllocCounting() stop}.
+     */
+    public static int getGlobalClassInitCount() {
+        return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_CLASS_INIT_COUNT);
+    }
+
+    /**
+     * Clears the count of classes initialized.
+     * @see #getGlobalClassInitCount()
+     */
+    public static void resetGlobalClassInitCount() {
+        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_CLASS_INIT_COUNT);
+    }
+
+    /**
+     * Returns the time spent successfully initializing classes between a
+     * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
+     */
+    public static int getGlobalClassInitTime() {
+        /* cumulative elapsed time for class initialization, in usec */
+        return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_CLASS_INIT_TIME);
+    }
+
+    /**
+     * Clears the count of time spent initializing classes.
+     * @see #getGlobalClassInitTime()
+     */
+    public static void resetGlobalClassInitTime() {
+        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_CLASS_INIT_TIME);
+    }
+
+    /**
+     * This method exists for compatibility and always returns 0.
+     * @deprecated This method is now obsolete.
+     */
+    @Deprecated
+    public static int getGlobalExternalAllocCount() {
+        return 0;
+    }
+
+    /**
+     * This method exists for compatibility and has no effect.
+     * @deprecated This method is now obsolete.
+     */
+    @Deprecated
+    public static void resetGlobalExternalAllocSize() {}
+
+    /**
+     * This method exists for compatibility and has no effect.
+     * @deprecated This method is now obsolete.
+     */
+    @Deprecated
+    public static void resetGlobalExternalAllocCount() {}
+
+    /**
+     * This method exists for compatibility and always returns 0.
+     * @deprecated This method is now obsolete.
+     */
+    @Deprecated
+    public static int getGlobalExternalAllocSize() {
+        return 0;
+    }
+
+    /**
+     * This method exists for compatibility and always returns 0.
+     * @deprecated This method is now obsolete.
+     */
+    @Deprecated
+    public static int getGlobalExternalFreedCount() {
+        return 0;
+    }
+
+    /**
+     * This method exists for compatibility and has no effect.
+     * @deprecated This method is now obsolete.
+     */
+    @Deprecated
+    public static void resetGlobalExternalFreedCount() {}
+
+    /**
+     * This method exists for compatibility and has no effect.
+     * @deprecated This method is now obsolete.
+     */
+    @Deprecated
+    public static int getGlobalExternalFreedSize() {
+        return 0;
+    }
+
+    /**
+     * This method exists for compatibility and has no effect.
+     * @deprecated This method is now obsolete.
+     */
+    @Deprecated
+    public static void resetGlobalExternalFreedSize() {}
+
+    /**
+     * Returns the thread-local count of objects allocated by the runtime between a
+     * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
+     */
     public static int getThreadAllocCount() {
         return VMDebug.getAllocCount(VMDebug.KIND_THREAD_ALLOCATED_OBJECTS);
     }
+
+    /**
+     * Clears the thread-local count of objects allocated.
+     * @see #getThreadAllocCount()
+     */
+    public static void resetThreadAllocCount() {
+        VMDebug.resetAllocCount(VMDebug.KIND_THREAD_ALLOCATED_OBJECTS);
+    }
+
+    /**
+     * Returns the thread-local size of objects allocated by the runtime between a
+     * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
+     * @return The allocated size in bytes.
+     */
     public static int getThreadAllocSize() {
         return VMDebug.getAllocCount(VMDebug.KIND_THREAD_ALLOCATED_BYTES);
     }
+
+    /**
+     * Clears the thread-local count of objects allocated.
+     * @see #getThreadAllocSize()
+     */
+    public static void resetThreadAllocSize() {
+        VMDebug.resetAllocCount(VMDebug.KIND_THREAD_ALLOCATED_BYTES);
+    }
+
+    /**
+     * This method exists for compatibility and has no effect.
+     * @deprecated This method is now obsolete.
+     */
+    @Deprecated
     public static int getThreadExternalAllocCount() {
-        return VMDebug.getAllocCount(VMDebug.KIND_THREAD_EXT_ALLOCATED_OBJECTS);
+        return 0;
     }
+
+    /**
+     * This method exists for compatibility and has no effect.
+     * @deprecated This method is now obsolete.
+     */
+    @Deprecated
+    public static void resetThreadExternalAllocCount() {}
+
+    /**
+     * This method exists for compatibility and has no effect.
+     * @deprecated This method is now obsolete.
+     */
+    @Deprecated
     public static int getThreadExternalAllocSize() {
-        return VMDebug.getAllocCount(VMDebug.KIND_THREAD_EXT_ALLOCATED_BYTES);
+        return 0;
     }
+
+    /**
+     * This method exists for compatibility and has no effect.
+     * @deprecated This method is now obsolete.
+     */
+    @Deprecated
+    public static void resetThreadExternalAllocSize() {}
+
+    /**
+     * Returns the number of thread-local non-concurrent GC invocations between a
+     * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
+     */
     public static int getThreadGcInvocationCount() {
         return VMDebug.getAllocCount(VMDebug.KIND_THREAD_GC_INVOCATIONS);
     }
 
-    public static void resetGlobalAllocCount() {
-        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_ALLOCATED_OBJECTS);
-    }
-    public static void resetGlobalAllocSize() {
-        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_ALLOCATED_BYTES);
-    }
-    public static void resetGlobalFreedCount() {
-        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_FREED_OBJECTS);
-    }
-    public static void resetGlobalFreedSize() {
-        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_FREED_BYTES);
-    }
-    public static void resetGlobalExternalAllocCount() {
-        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_EXT_ALLOCATED_OBJECTS);
-    }
-    public static void resetGlobalExternalAllocSize() {
-        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_EXT_ALLOCATED_BYTES);
-    }
-    public static void resetGlobalExternalFreedCount() {
-        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_EXT_FREED_OBJECTS);
-    }
-    public static void resetGlobalExternalFreedSize() {
-        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_EXT_FREED_BYTES);
-    }
-    public static void resetGlobalGcInvocationCount() {
-        VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_GC_INVOCATIONS);
-    }
-    public static void resetThreadAllocCount() {
-        VMDebug.resetAllocCount(VMDebug.KIND_THREAD_ALLOCATED_OBJECTS);
-    }
-    public static void resetThreadAllocSize() {
-        VMDebug.resetAllocCount(VMDebug.KIND_THREAD_ALLOCATED_BYTES);
-    }
-    public static void resetThreadExternalAllocCount() {
-        VMDebug.resetAllocCount(VMDebug.KIND_THREAD_EXT_ALLOCATED_OBJECTS);
-    }
-    public static void resetThreadExternalAllocSize() {
-        VMDebug.resetAllocCount(VMDebug.KIND_THREAD_EXT_ALLOCATED_BYTES);
-    }
+    /**
+     * Clears the thread-local count of non-concurrent GC invocations.
+     * @see #getThreadGcInvocationCount()
+     */
     public static void resetThreadGcInvocationCount() {
         VMDebug.resetAllocCount(VMDebug.KIND_THREAD_GC_INVOCATIONS);
     }
+
+    /**
+     * Clears all the global and thread-local memory allocation counters.
+     * @see #startAllocCounting()
+     */
     public static void resetAllCounts() {
         VMDebug.resetAllocCount(VMDebug.KIND_ALL_COUNTS);
     }
@@ -513,50 +1055,78 @@ href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Progra
     public static native void getMemoryInfo(MemoryInfo memoryInfo);
 
     /**
-     * Establish an object allocation limit in the current thread.  Useful
-     * for catching regressions in code that is expected to operate
-     * without causing any allocations.
-     *
-     * Pass in the maximum number of allowed allocations.  Use -1 to disable
-     * the limit.  Returns the previous limit.
-     *
-     * The preferred way to use this is:
-     *
-     *  int prevLimit = -1;
-     *  try {
-     *      prevLimit = Debug.setAllocationLimit(0);
-     *      ... do stuff that's not expected to allocate memory ...
-     *  } finally {
-     *      Debug.setAllocationLimit(prevLimit);
-     *  }
-     *
-     * This allows limits to be nested.  The try/finally ensures that the
-     * limit is reset if something fails.
-     *
-     * Exceeding the limit causes a dalvik.system.AllocationLimitError to
-     * be thrown from a memory allocation call.  The limit is reset to -1
-     * when this happens.
-     *
-     * The feature may be disabled in the VM configuration.  If so, this
-     * call has no effect, and always returns -1.
+     * Note: currently only works when the requested pid has the same UID
+     * as the caller.
+     * @hide
      */
+    public static native void getMemoryInfo(int pid, MemoryInfo memoryInfo);
+
+    /**
+     * Retrieves the PSS memory used by the process as given by the
+     * smaps.
+     */
+    public static native long getPss();
+
+    /**
+     * Retrieves the PSS memory used by the process as given by the
+     * smaps.  Optionally supply a long array of 1 entry to also
+     * receive the uss of the process.  @hide
+     */
+    public static native long getPss(int pid, long[] outUss);
+
+    /** @hide */
+    public static final int MEMINFO_TOTAL = 0;
+    /** @hide */
+    public static final int MEMINFO_FREE = 1;
+    /** @hide */
+    public static final int MEMINFO_BUFFERS = 2;
+    /** @hide */
+    public static final int MEMINFO_CACHED = 3;
+    /** @hide */
+    public static final int MEMINFO_SHMEM = 4;
+    /** @hide */
+    public static final int MEMINFO_SLAB = 5;
+    /** @hide */
+    public static final int MEMINFO_SWAP_TOTAL = 6;
+    /** @hide */
+    public static final int MEMINFO_SWAP_FREE = 7;
+    /** @hide */
+    public static final int MEMINFO_ZRAM_TOTAL = 8;
+    /** @hide */
+    public static final int MEMINFO_COUNT = 9;
+
+    /**
+     * Retrieves /proc/meminfo.  outSizes is filled with fields
+     * as defined by MEMINFO_* offsets.
+     * @hide
+     */
+    public static native void getMemInfo(long[] outSizes);
+
+    /**
+     * Establish an object allocation limit in the current thread.
+     * This feature was never enabled in release builds.  The
+     * allocation limits feature was removed in Honeycomb.  This
+     * method exists for compatibility and always returns -1 and has
+     * no effect.
+     *
+     * @deprecated This method is now obsolete.
+     */
+    @Deprecated
     public static int setAllocationLimit(int limit) {
-        return VMDebug.setAllocationLimit(limit);
+        return -1;
     }
 
     /**
-     * Establish a global object allocation limit.  This is similar to
-     * {@link #setAllocationLimit(int)} but applies to all threads in
-     * the VM.  It will coexist peacefully with per-thread limits.
+     * Establish a global object allocation limit.  This feature was
+     * never enabled in release builds.  The allocation limits feature
+     * was removed in Honeycomb.  This method exists for compatibility
+     * and always returns -1 and has no effect.
      *
-     * [ The value of "limit" is currently restricted to 0 (no allocations
-     *   allowed) or -1 (no global limit).  This may be changed in a future
-     *   release. ]
+     * @deprecated This method is now obsolete.
      */
+    @Deprecated
     public static int setGlobalAllocationLimit(int limit) {
-        if (limit != 0 && limit != -1)
-            throw new IllegalArgumentException("limit must be 0 or -1");
-        return VMDebug.setGlobalAllocationLimit(limit);
+        return -1;
     }
 
     /**
@@ -574,6 +1144,59 @@ href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Progra
      */
     public static int getLoadedClassCount() {
         return VMDebug.getLoadedClassCount();
+    }
+
+    /**
+     * Dump "hprof" data to the specified file.  This may cause a GC.
+     *
+     * @param fileName Full pathname of output file (e.g. "/sdcard/dump.hprof").
+     * @throws UnsupportedOperationException if the VM was built without
+     *         HPROF support.
+     * @throws IOException if an error occurs while opening or writing files.
+     */
+    public static void dumpHprofData(String fileName) throws IOException {
+        VMDebug.dumpHprofData(fileName);
+    }
+
+    /**
+     * Like dumpHprofData(String), but takes an already-opened
+     * FileDescriptor to which the trace is written.  The file name is also
+     * supplied simply for logging.  Makes a dup of the file descriptor.
+     *
+     * Primarily for use by the "am" shell command.
+     *
+     * @hide
+     */
+    public static void dumpHprofData(String fileName, FileDescriptor fd)
+            throws IOException {
+        VMDebug.dumpHprofData(fileName, fd);
+    }
+
+    /**
+     * Collect "hprof" and send it to DDMS.  This may cause a GC.
+     *
+     * @throws UnsupportedOperationException if the VM was built without
+     *         HPROF support.
+     * @hide
+     */
+    public static void dumpHprofDataDdms() {
+        VMDebug.dumpHprofDataDdms();
+    }
+
+    /**
+     * Writes native heap data to the specified file descriptor.
+     *
+     * @hide
+     */
+    public static native void dumpNativeHeap(FileDescriptor fd);
+
+    /**
+      * Returns a count of the extant instances of a class.
+     *
+     * @hide
+     */
+    public static long countInstancesOfClass(Class cls) {
+        return VMDebug.countInstancesOfClass(cls, true);
     }
 
     /**
@@ -607,9 +1230,39 @@ href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Progra
     public static final native int getBinderDeathObjectCount();
 
     /**
+     * Primes the register map cache.
+     *
+     * Only works for classes in the bootstrap class loader.  Does not
+     * cause classes to be loaded if they're not already present.
+     *
+     * The classAndMethodDesc argument is a concatentation of the VM-internal
+     * class descriptor, method name, and method descriptor.  Examples:
+     *     Landroid/os/Looper;.loop:()V
+     *     Landroid/app/ActivityThread;.main:([Ljava/lang/String;)V
+     *
+     * @param classAndMethodDesc the method to prepare
+     *
+     * @hide
+     */
+    public static final boolean cacheRegisterMap(String classAndMethodDesc) {
+        return VMDebug.cacheRegisterMap(classAndMethodDesc);
+    }
+
+    /**
+     * Dumps the contents of VM reference tables (e.g. JNI locals and
+     * globals) to the log file.
+     *
+     * @hide
+     */
+    public static final void dumpReferenceTables() {
+        VMDebug.dumpReferenceTables();
+    }
+
+    /**
      * API for gathering and querying instruction counts.
      *
      * Example usage:
+     * <pre>
      *   Debug.InstructionCount icount = new Debug.InstructionCount();
      *   icount.resetAndStart();
      *    [... do lots of stuff ...]
@@ -619,9 +1272,11 @@ href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Progra
      *       System.out.println("Method invocations: "
      *           + icount.globalMethodInvocations());
      *   }
+     * </pre>
      */
     public static class InstructionCount {
-        private static final int NUM_INSTR = 256;
+        private static final int NUM_INSTR =
+            OpcodeInfo.MAXIMUM_PACKED_VALUE + 1;
 
         private int[] mCounts;
 
@@ -665,8 +1320,11 @@ href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Progra
          */
         public int globalTotal() {
             int count = 0;
-            for (int i = 0; i < NUM_INSTR; i++)
+
+            for (int i = 0; i < NUM_INSTR; i++) {
                 count += mCounts[i];
+            }
+
             return count;
         }
 
@@ -677,23 +1335,344 @@ href="{@docRoot}reference/traceview.html">Running the Traceview Debugging Progra
         public int globalMethodInvocations() {
             int count = 0;
 
-            //count += mCounts[Opcodes.OP_EXECUTE_INLINE];
-            count += mCounts[Opcodes.OP_INVOKE_VIRTUAL];
-            count += mCounts[Opcodes.OP_INVOKE_SUPER];
-            count += mCounts[Opcodes.OP_INVOKE_DIRECT];
-            count += mCounts[Opcodes.OP_INVOKE_STATIC];
-            count += mCounts[Opcodes.OP_INVOKE_INTERFACE];
-            count += mCounts[Opcodes.OP_INVOKE_VIRTUAL_RANGE];
-            count += mCounts[Opcodes.OP_INVOKE_SUPER_RANGE];
-            count += mCounts[Opcodes.OP_INVOKE_DIRECT_RANGE];
-            count += mCounts[Opcodes.OP_INVOKE_STATIC_RANGE];
-            count += mCounts[Opcodes.OP_INVOKE_INTERFACE_RANGE];
-            //count += mCounts[Opcodes.OP_INVOKE_DIRECT_EMPTY];
-            count += mCounts[Opcodes.OP_INVOKE_VIRTUAL_QUICK];
-            count += mCounts[Opcodes.OP_INVOKE_VIRTUAL_QUICK_RANGE];
-            count += mCounts[Opcodes.OP_INVOKE_SUPER_QUICK];
-            count += mCounts[Opcodes.OP_INVOKE_SUPER_QUICK_RANGE];
+            for (int i = 0; i < NUM_INSTR; i++) {
+                if (OpcodeInfo.isInvoke(i)) {
+                    count += mCounts[i];
+                }
+            }
+
             return count;
         }
-    };
+    }
+
+    /**
+     * A Map of typed debug properties.
+     */
+    private static final TypedProperties debugProperties;
+
+    /*
+     * Load the debug properties from the standard files into debugProperties.
+     */
+    static {
+        if (false) {
+            final String TAG = "DebugProperties";
+            final String[] files = { "/system/debug.prop", "/debug.prop", "/data/debug.prop" };
+            final TypedProperties tp = new TypedProperties();
+
+            // Read the properties from each of the files, if present.
+            for (String file : files) {
+                Reader r;
+                try {
+                    r = new FileReader(file);
+                } catch (FileNotFoundException ex) {
+                    // It's ok if a file is missing.
+                    continue;
+                }
+
+                try {
+                    tp.load(r);
+                } catch (Exception ex) {
+                    throw new RuntimeException("Problem loading " + file, ex);
+                } finally {
+                    try {
+                        r.close();
+                    } catch (IOException ex) {
+                        // Ignore this error.
+                    }
+                }
+            }
+
+            debugProperties = tp.isEmpty() ? null : tp;
+        } else {
+            debugProperties = null;
+        }
+    }
+
+
+    /**
+     * Returns true if the type of the field matches the specified class.
+     * Handles the case where the class is, e.g., java.lang.Boolean, but
+     * the field is of the primitive "boolean" type.  Also handles all of
+     * the java.lang.Number subclasses.
+     */
+    private static boolean fieldTypeMatches(Field field, Class<?> cl) {
+        Class<?> fieldClass = field.getType();
+        if (fieldClass == cl) {
+            return true;
+        }
+        Field primitiveTypeField;
+        try {
+            /* All of the classes we care about (Boolean, Integer, etc.)
+             * have a Class field called "TYPE" that points to the corresponding
+             * primitive class.
+             */
+            primitiveTypeField = cl.getField("TYPE");
+        } catch (NoSuchFieldException ex) {
+            return false;
+        }
+        try {
+            return fieldClass == (Class<?>) primitiveTypeField.get(null);
+        } catch (IllegalAccessException ex) {
+            return false;
+        }
+    }
+
+
+    /**
+     * Looks up the property that corresponds to the field, and sets the field's value
+     * if the types match.
+     */
+    private static void modifyFieldIfSet(final Field field, final TypedProperties properties,
+                                         final String propertyName) {
+        if (field.getType() == java.lang.String.class) {
+            int stringInfo = properties.getStringInfo(propertyName);
+            switch (stringInfo) {
+                case TypedProperties.STRING_SET:
+                    // Handle as usual below.
+                    break;
+                case TypedProperties.STRING_NULL:
+                    try {
+                        field.set(null, null);  // null object for static fields; null string
+                    } catch (IllegalAccessException ex) {
+                        throw new IllegalArgumentException(
+                            "Cannot set field for " + propertyName, ex);
+                    }
+                    return;
+                case TypedProperties.STRING_NOT_SET:
+                    return;
+                case TypedProperties.STRING_TYPE_MISMATCH:
+                    throw new IllegalArgumentException(
+                        "Type of " + propertyName + " " +
+                        " does not match field type (" + field.getType() + ")");
+                default:
+                    throw new IllegalStateException(
+                        "Unexpected getStringInfo(" + propertyName + ") return value " +
+                        stringInfo);
+            }
+        }
+        Object value = properties.get(propertyName);
+        if (value != null) {
+            if (!fieldTypeMatches(field, value.getClass())) {
+                throw new IllegalArgumentException(
+                    "Type of " + propertyName + " (" + value.getClass() + ") " +
+                    " does not match field type (" + field.getType() + ")");
+            }
+            try {
+                field.set(null, value);  // null object for static fields
+            } catch (IllegalAccessException ex) {
+                throw new IllegalArgumentException(
+                    "Cannot set field for " + propertyName, ex);
+            }
+        }
+    }
+
+
+    /**
+     * Equivalent to <code>setFieldsOn(cl, false)</code>.
+     *
+     * @see #setFieldsOn(Class, boolean)
+     *
+     * @hide
+     */
+    public static void setFieldsOn(Class<?> cl) {
+        setFieldsOn(cl, false);
+    }
+
+    /**
+     * Reflectively sets static fields of a class based on internal debugging
+     * properties.  This method is a no-op if false is
+     * false.
+     * <p>
+     * <strong>NOTE TO APPLICATION DEVELOPERS</strong>: false will
+     * always be false in release builds.  This API is typically only useful
+     * for platform developers.
+     * </p>
+     * Class setup: define a class whose only fields are non-final, static
+     * primitive types (except for "char") or Strings.  In a static block
+     * after the field definitions/initializations, pass the class to
+     * this method, Debug.setFieldsOn(). Example:
+     * <pre>
+     * package com.example;
+     *
+     * import android.os.Debug;
+     *
+     * public class MyDebugVars {
+     *    public static String s = "a string";
+     *    public static String s2 = "second string";
+     *    public static String ns = null;
+     *    public static boolean b = false;
+     *    public static int i = 5;
+     *    @Debug.DebugProperty
+     *    public static float f = 0.1f;
+     *    @@Debug.DebugProperty
+     *    public static double d = 0.5d;
+     *
+     *    // This MUST appear AFTER all fields are defined and initialized!
+     *    static {
+     *        // Sets all the fields
+     *        Debug.setFieldsOn(MyDebugVars.class);
+     *
+     *        // Sets only the fields annotated with @Debug.DebugProperty
+     *        // Debug.setFieldsOn(MyDebugVars.class, true);
+     *    }
+     * }
+     * </pre>
+     * setFieldsOn() may override the value of any field in the class based
+     * on internal properties that are fixed at boot time.
+     * <p>
+     * These properties are only set during platform debugging, and are not
+     * meant to be used as a general-purpose properties store.
+     *
+     * {@hide}
+     *
+     * @param cl The class to (possibly) modify
+     * @param partial If false, sets all static fields, otherwise, only set
+     *        fields with the {@link android.os.Debug.DebugProperty}
+     *        annotation
+     * @throws IllegalArgumentException if any fields are final or non-static,
+     *         or if the type of the field does not match the type of
+     *         the internal debugging property value.
+     */
+    public static void setFieldsOn(Class<?> cl, boolean partial) {
+        if (false) {
+            if (debugProperties != null) {
+                /* Only look for fields declared directly by the class,
+                 * so we don't mysteriously change static fields in superclasses.
+                 */
+                for (Field field : cl.getDeclaredFields()) {
+                    if (!partial || field.getAnnotation(DebugProperty.class) != null) {
+                        final String propertyName = cl.getName() + "." + field.getName();
+                        boolean isStatic = Modifier.isStatic(field.getModifiers());
+                        boolean isFinal = Modifier.isFinal(field.getModifiers());
+
+                        if (!isStatic || isFinal) {
+                            throw new IllegalArgumentException(propertyName +
+                                " must be static and non-final");
+                        }
+                        modifyFieldIfSet(field, debugProperties, propertyName);
+                    }
+                }
+            }
+        } else {
+            Log.wtf(TAG,
+                  "setFieldsOn(" + (cl == null ? "null" : cl.getName()) +
+                  ") called in non-DEBUG build");
+        }
+    }
+
+    /**
+     * Annotation to put on fields you want to set with
+     * {@link Debug#setFieldsOn(Class, boolean)}.
+     *
+     * @hide
+     */
+    @Target({ ElementType.FIELD })
+    @Retention(RetentionPolicy.RUNTIME)
+    public @interface DebugProperty {
+    }
+
+    /**
+     * Get a debugging dump of a system service by name.
+     *
+     * <p>Most services require the caller to hold android.permission.DUMP.
+     *
+     * @param name of the service to dump
+     * @param fd to write dump output to (usually an output log file)
+     * @param args to pass to the service's dump method, may be null
+     * @return true if the service was dumped successfully, false if
+     *     the service could not be found or had an error while dumping
+     */
+    public static boolean dumpService(String name, FileDescriptor fd, String[] args) {
+        IBinder service = ServiceManager.getService(name);
+        if (service == null) {
+            Log.e(TAG, "Can't find service to dump: " + name);
+            return false;
+        }
+
+        try {
+            service.dump(fd, args);
+            return true;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Can't dump service: " + name, e);
+            return false;
+        }
+    }
+
+    /**
+     * Have the stack traces of the given native process dumped to the
+     * specified file.  Will be appended to the file.
+     * @hide
+     */
+    public static native void dumpNativeBacktraceToFile(int pid, String file);
+
+    /**
+     * Return a String describing the calling method and location at a particular stack depth.
+     * @param callStack the Thread stack
+     * @param depth the depth of stack to return information for.
+     * @return the String describing the caller at that depth.
+     */
+    private static String getCaller(StackTraceElement callStack[], int depth) {
+        // callStack[4] is the caller of the method that called getCallers()
+        if (4 + depth >= callStack.length) {
+            return "<bottom of call stack>";
+        }
+        StackTraceElement caller = callStack[4 + depth];
+        return caller.getClassName() + "." + caller.getMethodName() + ":" + caller.getLineNumber();
+    }
+
+    /**
+     * Return a string consisting of methods and locations at multiple call stack levels.
+     * @param depth the number of levels to return, starting with the immediate caller.
+     * @return a string describing the call stack.
+     * {@hide}
+     */
+    public static String getCallers(final int depth) {
+        final StackTraceElement[] callStack = Thread.currentThread().getStackTrace();
+        StringBuffer sb = new StringBuffer();
+        for (int i = 0; i < depth; i++) {
+            sb.append(getCaller(callStack, i)).append(" ");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Return a string consisting of methods and locations at multiple call stack levels.
+     * @param depth the number of levels to return, starting with the immediate caller.
+     * @return a string describing the call stack.
+     * {@hide}
+     */
+    public static String getCallers(final int start, int depth) {
+        final StackTraceElement[] callStack = Thread.currentThread().getStackTrace();
+        StringBuffer sb = new StringBuffer();
+        depth += start;
+        for (int i = start; i < depth; i++) {
+            sb.append(getCaller(callStack, i)).append(" ");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Like {@link #getCallers(int)}, but each location is append to the string
+     * as a new line with <var>linePrefix</var> in front of it.
+     * @param depth the number of levels to return, starting with the immediate caller.
+     * @param linePrefix prefix to put in front of each location.
+     * @return a string describing the call stack.
+     * {@hide}
+     */
+    public static String getCallers(final int depth, String linePrefix) {
+        final StackTraceElement[] callStack = Thread.currentThread().getStackTrace();
+        StringBuffer sb = new StringBuffer();
+        for (int i = 0; i < depth; i++) {
+            sb.append(linePrefix).append(getCaller(callStack, i)).append("\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * @return a String describing the immediate caller of the calling method.
+     * {@hide}
+     */
+    public static String getCaller() {
+        return getCaller(Thread.currentThread().getStackTrace(), 0);
+    }
 }

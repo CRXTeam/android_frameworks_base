@@ -16,24 +16,32 @@
 
 package android.os;
 
-import android.net.LocalSocketAddress;
 import android.net.LocalSocket;
+import android.net.LocalSocketAddress;
+import android.system.Os;
 import android.util.Log;
-
+import com.android.internal.os.Zygote;
 import java.io.BufferedWriter;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 /*package*/ class ZygoteStartFailedEx extends Exception {
-    /**
-     * Something prevented the zygote process startup from happening normally
-     */
+    ZygoteStartFailedEx(String s) {
+        super(s);
+    }
 
-    ZygoteStartFailedEx() {};
-    ZygoteStartFailedEx(String s) {super(s);}
-    ZygoteStartFailedEx(Throwable cause) {super(cause);}
+    ZygoteStartFailedEx(Throwable cause) {
+        super(cause);
+    }
+
+    ZygoteStartFailedEx(String s, Throwable cause) {
+        super(s, cause);
+    }
 }
 
 /**
@@ -42,19 +50,21 @@ import java.util.ArrayList;
 public class Process {
     private static final String LOG_TAG = "Process";
 
-    private static final String ZYGOTE_SOCKET = "zygote";
+    /**
+     * @hide for internal use only.
+     */
+    public static final String ZYGOTE_SOCKET = "zygote";
 
     /**
-     * Name of a process for running the platform's media services.
-     * {@hide}
+     * @hide for internal use only.
      */
-    public static final String ANDROID_SHARED_MEDIA = "com.android.process.media";
+    public static final String SECONDARY_ZYGOTE_SOCKET = "zygote_secondary";
 
     /**
-     * Name of the process that Google content providers can share.
-     * {@hide}
+     * Defines the root UID.
+     * @hide
      */
-    public static final String GOOGLE_SHARED_APP_CONTENT = "com.google.process.content";
+    public static final int ROOT_UID = 0;
 
     /**
      * Defines the UID/GID under which system code runs.
@@ -67,22 +77,116 @@ public class Process {
     public static final int PHONE_UID = 1001;
 
     /**
+     * Defines the UID/GID for the user shell.
+     * @hide
+     */
+    public static final int SHELL_UID = 2000;
+
+    /**
+     * Defines the UID/GID for the log group.
+     * @hide
+     */
+    public static final int LOG_UID = 1007;
+
+    /**
+     * Defines the UID/GID for the WIFI supplicant process.
+     * @hide
+     */
+    public static final int WIFI_UID = 1010;
+
+    /**
+     * Defines the UID/GID for the mediaserver process.
+     * @hide
+     */
+    public static final int MEDIA_UID = 1013;
+
+    /**
+     * Defines the UID/GID for the DRM process.
+     * @hide
+     */
+    public static final int DRM_UID = 1019;
+
+    /**
+     * Defines the UID/GID for the group that controls VPN services.
+     * @hide
+     */
+    public static final int VPN_UID = 1016;
+
+    /**
+     * Defines the UID/GID for the NFC service process.
+     * @hide
+     */
+    public static final int NFC_UID = 1027;
+
+    /**
+     * Defines the UID/GID for the Bluetooth service process.
+     * @hide
+     */
+    public static final int BLUETOOTH_UID = 1002;
+
+    /**
+     * Defines the GID for the group that allows write access to the internal media storage.
+     * @hide
+     */
+    public static final int MEDIA_RW_GID = 1023;
+
+    /**
+     * Access to installed package details
+     * @hide
+     */
+    public static final int PACKAGE_INFO_GID = 1032;
+
+    /**
+     * Defines the UID/GID for the shared RELRO file updater process.
+     * @hide
+     */
+    public static final int SHARED_RELRO_UID = 1037;
+
+    /**
      * Defines the start of a range of UIDs (and GIDs), going from this
      * number to {@link #LAST_APPLICATION_UID} that are reserved for assigning
      * to applications.
      */
     public static final int FIRST_APPLICATION_UID = 10000;
+
     /**
      * Last of application-specific UIDs starting at
      * {@link #FIRST_APPLICATION_UID}.
      */
-    public static final int LAST_APPLICATION_UID = 99999;
+    public static final int LAST_APPLICATION_UID = 19999;
 
     /**
-     * Defines a secondary group id for access to the bluetooth hardware.
+     * First uid used for fully isolated sandboxed processes (with no permissions of their own)
+     * @hide
      */
-    public static final int BLUETOOTH_GID = 2000;
-    
+    public static final int FIRST_ISOLATED_UID = 99000;
+
+    /**
+     * Last uid used for fully isolated sandboxed processes (with no permissions of their own)
+     * @hide
+     */
+    public static final int LAST_ISOLATED_UID = 99999;
+
+    /**
+     * Defines the gid shared by all applications running under the same profile.
+     * @hide
+     */
+    public static final int SHARED_USER_GID = 9997;
+
+    /**
+     * First gid for applications to share resources. Used when forward-locking
+     * is enabled but all UserHandles need to be able to read the resources.
+     * @hide
+     */
+    public static final int FIRST_SHARED_APPLICATION_GID = 50000;
+
+    /**
+     * Last gid for applications to share resources. Used when forward-locking
+     * is enabled but all UserHandles need to be able to read the resources.
+     * @hide
+     */
+    public static final int LAST_SHARED_APPLICATION_GID = 59999;
+
     /**
      * Standard priority of application threads.
      * Use with {@link #setThreadPriority(int)} and
@@ -175,18 +279,169 @@ public class Process {
      */
     public static final int THREAD_PRIORITY_LESS_FAVORABLE = +1;
 
+    /**
+     * Default scheduling policy
+     * @hide
+     */
+    public static final int SCHED_OTHER = 0;
+
+    /**
+     * First-In First-Out scheduling policy
+     * @hide
+     */
+    public static final int SCHED_FIFO = 1;
+
+    /**
+     * Round-Robin scheduling policy
+     * @hide
+     */
+    public static final int SCHED_RR = 2;
+
+    /**
+     * Batch scheduling policy
+     * @hide
+     */
+    public static final int SCHED_BATCH = 3;
+
+    /**
+     * Idle scheduling policy
+     * @hide
+     */
+    public static final int SCHED_IDLE = 5;
+
+    // Keep in sync with SP_* constants of enum type SchedPolicy
+    // declared in system/core/include/cutils/sched_policy.h,
+    // except THREAD_GROUP_DEFAULT does not correspond to any SP_* value.
+
+    /**
+     * Default thread group -
+     * has meaning with setProcessGroup() only, cannot be used with setThreadGroup().
+     * When used with setProcessGroup(), the group of each thread in the process
+     * is conditionally changed based on that thread's current priority, as follows:
+     * threads with priority numerically less than THREAD_PRIORITY_BACKGROUND
+     * are moved to foreground thread group.  All other threads are left unchanged.
+     * @hide
+     */
+    public static final int THREAD_GROUP_DEFAULT = -1;
+
+    /**
+     * Background thread group - All threads in
+     * this group are scheduled with a reduced share of the CPU.
+     * Value is same as constant SP_BACKGROUND of enum SchedPolicy.
+     * FIXME rename to THREAD_GROUP_BACKGROUND.
+     * @hide
+     */
+    public static final int THREAD_GROUP_BG_NONINTERACTIVE = 0;
+
+    /**
+     * Foreground thread group - All threads in
+     * this group are scheduled with a normal share of the CPU.
+     * Value is same as constant SP_FOREGROUND of enum SchedPolicy.
+     * Not used at this level.
+     * @hide
+     **/
+    private static final int THREAD_GROUP_FOREGROUND = 1;
+
+    /**
+     * System thread group.
+     * @hide
+     **/
+    public static final int THREAD_GROUP_SYSTEM = 2;
+
+    /**
+     * Application audio thread group.
+     * @hide
+     **/
+    public static final int THREAD_GROUP_AUDIO_APP = 3;
+
+    /**
+     * System audio thread group.
+     * @hide
+     **/
+    public static final int THREAD_GROUP_AUDIO_SYS = 4;
+
     public static final int SIGNAL_QUIT = 3;
     public static final int SIGNAL_KILL = 9;
     public static final int SIGNAL_USR1 = 10;
-    
-    // State for communicating with zygote process
 
-    static LocalSocket sZygoteSocket;
-    static DataInputStream sZygoteInputStream;
-    static BufferedWriter sZygoteWriter;
+    /**
+     * State for communicating with the zygote process.
+     *
+     * @hide for internal use only.
+     */
+    public static class ZygoteState {
+        final LocalSocket socket;
+        final DataInputStream inputStream;
+        final BufferedWriter writer;
+        final List<String> abiList;
 
-    /** true if previous zygote open failed */
-    static boolean sPreviousZygoteOpenFailed;
+        boolean mClosed;
+
+        private ZygoteState(LocalSocket socket, DataInputStream inputStream,
+                BufferedWriter writer, List<String> abiList) {
+            this.socket = socket;
+            this.inputStream = inputStream;
+            this.writer = writer;
+            this.abiList = abiList;
+        }
+
+        public static ZygoteState connect(String socketAddress) throws IOException {
+            DataInputStream zygoteInputStream = null;
+            BufferedWriter zygoteWriter = null;
+            final LocalSocket zygoteSocket = new LocalSocket();
+
+            try {
+                zygoteSocket.connect(new LocalSocketAddress(socketAddress,
+                        LocalSocketAddress.Namespace.RESERVED));
+
+                zygoteInputStream = new DataInputStream(zygoteSocket.getInputStream());
+
+                zygoteWriter = new BufferedWriter(new OutputStreamWriter(
+                        zygoteSocket.getOutputStream()), 256);
+            } catch (IOException ex) {
+                try {
+                    zygoteSocket.close();
+                } catch (IOException ignore) {
+                }
+
+                throw ex;
+            }
+
+            String abiListString = getAbiList(zygoteWriter, zygoteInputStream);
+            Log.i("Zygote", "Process: zygote socket opened, supported ABIS: " + abiListString);
+
+            return new ZygoteState(zygoteSocket, zygoteInputStream, zygoteWriter,
+                    Arrays.asList(abiListString.split(",")));
+        }
+
+        boolean matches(String abi) {
+            return abiList.contains(abi);
+        }
+
+        public void close() {
+            try {
+                socket.close();
+            } catch (IOException ex) {
+                Log.e(LOG_TAG,"I/O exception on routine close", ex);
+            }
+
+            mClosed = true;
+        }
+
+        boolean isClosed() {
+            return mClosed;
+        }
+    }
+
+    /**
+     * The state of the connection to the primary zygote.
+     */
+    static ZygoteState primaryZygoteState;
+
+    /**
+     * The state of the connection to the secondary zygote.
+     */
+    static ZygoteState secondaryZygoteState;
 
     /**
      * Start a new process.
@@ -209,180 +464,78 @@ public class Process {
      * @param uid The user-id under which the process will run.
      * @param gid The group-id under which the process will run.
      * @param gids Additional group-ids associated with the process.
-     * @param enableDebugger True if debugging should be enabled for this process.
+     * @param debugFlags Additional flags.
+     * @param targetSdkVersion The target SDK version for the app.
+     * @param seInfo null-ok SELinux information for the new process.
+     * @param abi non-null the ABI this app should be started with.
+     * @param instructionSet null-ok the instruction set to use.
+     * @param appDataDir null-ok the data directory of the app.
      * @param zygoteArgs Additional arguments to supply to the zygote process.
      * 
-     * @return int If > 0 the pid of the new process; if 0 the process is
-     *         being emulated by a thread
+     * @return An object that describes the result of the attempt to start the process.
      * @throws RuntimeException on fatal start failure
      * 
      * {@hide}
      */
-    public static final int start(final String processClass,
+    public static final ProcessStartResult start(final String processClass,
                                   final String niceName,
                                   int uid, int gid, int[] gids,
-                                  boolean enableDebugger,
-                                  String[] zygoteArgs)
-    {
-        if (supportsProcesses()) {
-            try {
-                return startViaZygote(processClass, niceName, uid, gid, gids,
-                        enableDebugger, zygoteArgs);
-            } catch (ZygoteStartFailedEx ex) {
-                Log.e(LOG_TAG,
-                        "Starting VM process through Zygote failed");
-                throw new RuntimeException(
-                        "Starting VM process through Zygote failed", ex);
-            }
-        } else {
-            // Running in single-process mode
-            
-            Runnable runnable = new Runnable() {
-                        public void run() {
-                            Process.invokeStaticMain(processClass);
-                        }
-            };
-            
-            // Thread constructors must not be called with null names (see spec). 
-            if (niceName != null) {
-                new Thread(runnable, niceName).start();
-            } else {
-                new Thread(runnable).start();
-            }
-            
-            return 0;
-        }
-    }
-    
-    /**
-     * Start a new process.  Don't supply a custom nice name.
-     * {@hide}
-     */
-    public static final int start(String processClass, int uid, int gid,
-            int[] gids, boolean enableDebugger, String[] zygoteArgs) {
-        return start(processClass, "", uid, gid, gids, 
-                enableDebugger, zygoteArgs);
-    }
-
-    private static void invokeStaticMain(String className) {
-        Class cl;
-        Object args[] = new Object[1];
-
-        args[0] = new String[0];     //this is argv
-   
+                                  int debugFlags, int mountExternal,
+                                  int targetSdkVersion,
+                                  String seInfo,
+                                  String abi,
+                                  String instructionSet,
+                                  String appDataDir,
+                                  String[] zygoteArgs) {
         try {
-            cl = Class.forName(className);
-            cl.getMethod("main", new Class[] { String[].class })
-                    .invoke(null, args);            
-        } catch (Exception ex) {
-            // can be: ClassNotFoundException,
-            // NoSuchMethodException, SecurityException,
-            // IllegalAccessException, IllegalArgumentException
-            // InvocationTargetException
-            // or uncaught exception from main()
-
-            Log.e(LOG_TAG, "Exception invoking static main on " 
-                    + className, ex);
-
-            throw new RuntimeException(ex);
+            return startViaZygote(processClass, niceName, uid, gid, gids,
+                    debugFlags, mountExternal, targetSdkVersion, seInfo,
+                    abi, instructionSet, appDataDir, zygoteArgs);
+        } catch (ZygoteStartFailedEx ex) {
+            Log.e(LOG_TAG,
+                    "Starting VM process through Zygote failed");
+            throw new RuntimeException(
+                    "Starting VM process through Zygote failed", ex);
         }
-
     }
 
     /** retry interval for opening a zygote socket */
     static final int ZYGOTE_RETRY_MILLIS = 500;
 
     /**
-     * Tries to open socket to Zygote process if not already open. If
-     * already open, does nothing.  May block and retry.
+     * Queries the zygote for the list of ABIS it supports.
+     *
+     * @throws ZygoteStartFailedEx if the query failed.
      */
-    private static void openZygoteSocketIfNeeded() 
-            throws ZygoteStartFailedEx {
+    private static String getAbiList(BufferedWriter writer, DataInputStream inputStream)
+            throws IOException {
+        // Each query starts with the argument count (1 in this case)
+        writer.write("1");
+        // ... followed by a new-line.
+        writer.newLine();
+        // ... followed by our only argument.
+        writer.write("--query-abi-list");
+        writer.newLine();
+        writer.flush();
 
-        int retryCount;
+        // The response is a length prefixed stream of ASCII bytes.
+        int numBytes = inputStream.readInt();
+        byte[] bytes = new byte[numBytes];
+        inputStream.readFully(bytes);
 
-        if (sPreviousZygoteOpenFailed) {
-            /*
-             * If we've failed before, expect that we'll fail again and
-             * don't pause for retries.
-             */
-            retryCount = 0;
-        } else {
-            retryCount = 10;            
-        }
-
-        /*
-         * See bug #811181: Sometimes runtime can make it up before zygote.
-         * Really, we'd like to do something better to avoid this condition,
-         * but for now just wait a bit...
-         */
-        for (int retry = 0
-                ; (sZygoteSocket == null) && (retry < (retryCount + 1))
-                ; retry++ ) {
-
-            if (retry > 0) {
-                try {
-                    Log.i("Zygote", "Zygote not up yet, sleeping...");
-                    Thread.sleep(ZYGOTE_RETRY_MILLIS);
-                } catch (InterruptedException ex) {
-                    // should never happen
-                }
-            }
-
-            try {
-                sZygoteSocket = new LocalSocket();
-
-                sZygoteSocket.connect(new LocalSocketAddress(ZYGOTE_SOCKET, 
-                        LocalSocketAddress.Namespace.RESERVED));
-
-                sZygoteInputStream
-                        = new DataInputStream(sZygoteSocket.getInputStream());
-
-                sZygoteWriter =
-                    new BufferedWriter(
-                            new OutputStreamWriter(
-                                    sZygoteSocket.getOutputStream()),
-                            256);
-
-                Log.i("Zygote", "Process: zygote socket opened");
-
-                sPreviousZygoteOpenFailed = false;
-                break;
-            } catch (IOException ex) {
-                if (sZygoteSocket != null) {
-                    try {
-                        sZygoteSocket.close();
-                    } catch (IOException ex2) {
-                        Log.e(LOG_TAG,"I/O exception on close after exception",
-                                ex2);
-                    }
-                }
-
-                sZygoteSocket = null;
-            }
-        }
-
-        if (sZygoteSocket == null) {
-            sPreviousZygoteOpenFailed = true;
-            throw new ZygoteStartFailedEx("connect failed");                 
-        }
+        return new String(bytes, StandardCharsets.US_ASCII);
     }
 
     /**
      * Sends an argument list to the zygote process, which starts a new child
      * and returns the child's pid. Please note: the present implementation
      * replaces newlines in the argument list with spaces.
-     * @param args argument list
-     * @return PID of new child process
+     *
      * @throws ZygoteStartFailedEx if process start failed for any reason
      */
-    private static int zygoteSendArgsAndGetPid(ArrayList<String> args)
+    private static ProcessStartResult zygoteSendArgsAndGetResult(
+            ZygoteState zygoteState, ArrayList<String> args)
             throws ZygoteStartFailedEx {
-
-        int pid;
-
-        openZygoteSocketIfNeeded();
-
         try {
             /**
              * See com.android.internal.os.ZygoteInit.readArgumentList()
@@ -391,11 +544,14 @@ public class Process {
              * b) a number of newline-separated argument strings equal to count
              *
              * After the zygote process reads these it will write the pid of
-             * the child or -1 on failure.
+             * the child or -1 on failure, followed by boolean to
+             * indicate whether a wrapper process was used.
              */
+            final BufferedWriter writer = zygoteState.writer;
+            final DataInputStream inputStream = zygoteState.inputStream;
 
-            sZygoteWriter.write(Integer.toString(args.size()));
-            sZygoteWriter.newLine();
+            writer.write(Integer.toString(args.size()));
+            writer.newLine();
 
             int sz = args.size();
             for (int i = 0; i < sz; i++) {
@@ -404,34 +560,24 @@ public class Process {
                     throw new ZygoteStartFailedEx(
                             "embedded newlines not allowed");
                 }
-                sZygoteWriter.write(arg);
-                sZygoteWriter.newLine();
+                writer.write(arg);
+                writer.newLine();
             }
 
-            sZygoteWriter.flush();
+            writer.flush();
 
             // Should there be a timeout on this?
-            pid = sZygoteInputStream.readInt();
-
-            if (pid < 0) {
+            ProcessStartResult result = new ProcessStartResult();
+            result.pid = inputStream.readInt();
+            if (result.pid < 0) {
                 throw new ZygoteStartFailedEx("fork() failed");
             }
+            result.usingWrapper = inputStream.readBoolean();
+            return result;
         } catch (IOException ex) {
-            try {
-                if (sZygoteSocket != null) {
-                    sZygoteSocket.close();
-                }
-            } catch (IOException ex2) {
-                // we're going to fail anyway
-                Log.e(LOG_TAG,"I/O exception on routine close", ex2);
-            }
-
-            sZygoteSocket = null;
-
+            zygoteState.close();
             throw new ZygoteStartFailedEx(ex);
         }
-
-        return pid;
     }
 
     /**
@@ -443,20 +589,28 @@ public class Process {
      * @param gid a POSIX gid that the new process shuold setgid() to
      * @param gids null-ok; a list of supplementary group IDs that the
      * new process should setgroup() to.
-     * @param enableDebugger True if debugging should be enabled for this process.
+     * @param debugFlags Additional flags.
+     * @param targetSdkVersion The target SDK version for the app.
+     * @param seInfo null-ok SELinux information for the new process.
+     * @param abi the ABI the process should use.
+     * @param instructionSet null-ok the instruction set to use.
+     * @param appDataDir null-ok the data directory of the app.
      * @param extraArgs Additional arguments to supply to the zygote process.
-     * @return PID
+     * @return An object that describes the result of the attempt to start the process.
      * @throws ZygoteStartFailedEx if process start failed for any reason
      */
-    private static int startViaZygote(final String processClass,
+    private static ProcessStartResult startViaZygote(final String processClass,
                                   final String niceName,
                                   final int uid, final int gid,
                                   final int[] gids,
-                                  boolean enableDebugger,
+                                  int debugFlags, int mountExternal,
+                                  int targetSdkVersion,
+                                  String seInfo,
+                                  String abi,
+                                  String instructionSet,
+                                  String appDataDir,
                                   String[] extraArgs)
                                   throws ZygoteStartFailedEx {
-        int pid;
-
         synchronized(Process.class) {
             ArrayList<String> argsForZygote = new ArrayList<String>();
 
@@ -465,9 +619,27 @@ public class Process {
             argsForZygote.add("--runtime-init");
             argsForZygote.add("--setuid=" + uid);
             argsForZygote.add("--setgid=" + gid);
-            if (enableDebugger) {
+            if ((debugFlags & Zygote.DEBUG_ENABLE_JNI_LOGGING) != 0) {
+                argsForZygote.add("--enable-jni-logging");
+            }
+            if ((debugFlags & Zygote.DEBUG_ENABLE_SAFEMODE) != 0) {
+                argsForZygote.add("--enable-safemode");
+            }
+            if ((debugFlags & Zygote.DEBUG_ENABLE_DEBUGGER) != 0) {
                 argsForZygote.add("--enable-debugger");
             }
+            if ((debugFlags & Zygote.DEBUG_ENABLE_CHECKJNI) != 0) {
+                argsForZygote.add("--enable-checkjni");
+            }
+            if ((debugFlags & Zygote.DEBUG_ENABLE_ASSERT) != 0) {
+                argsForZygote.add("--enable-assert");
+            }
+            if (mountExternal == Zygote.MOUNT_EXTERNAL_MULTIUSER) {
+                argsForZygote.add("--mount-external-multiuser");
+            } else if (mountExternal == Zygote.MOUNT_EXTERNAL_MULTIUSER_ALL) {
+                argsForZygote.add("--mount-external-multiuser-all");
+            }
+            argsForZygote.add("--target-sdk-version=" + targetSdkVersion);
 
             //TODO optionally enable debuger
             //argsForZygote.add("--enable-debugger");
@@ -492,6 +664,18 @@ public class Process {
                 argsForZygote.add("--nice-name=" + niceName);
             }
 
+            if (seInfo != null) {
+                argsForZygote.add("--seinfo=" + seInfo);
+            }
+
+            if (instructionSet != null) {
+                argsForZygote.add("--instruction-set=" + instructionSet);
+            }
+
+            if (appDataDir != null) {
+                argsForZygote.add("--app-data-dir=" + appDataDir);
+            }
+
             argsForZygote.add(processClass);
 
             if (extraArgs != null) {
@@ -499,17 +683,44 @@ public class Process {
                     argsForZygote.add(arg);
                 }
             }
-            
-            pid = zygoteSendArgsAndGetPid(argsForZygote);
-        }
 
-        if (pid <= 0) {
-            throw new ZygoteStartFailedEx("zygote start failed:" + pid);
+            return zygoteSendArgsAndGetResult(openZygoteSocketIfNeeded(abi), argsForZygote);
         }
-
-        return pid;
     }
-    
+
+    /**
+     * Tries to open socket to Zygote process if not already open. If
+     * already open, does nothing.  May block and retry.
+     */
+    private static ZygoteState openZygoteSocketIfNeeded(String abi) throws ZygoteStartFailedEx {
+        if (primaryZygoteState == null || primaryZygoteState.isClosed()) {
+            try {
+                primaryZygoteState = ZygoteState.connect(ZYGOTE_SOCKET);
+            } catch (IOException ioe) {
+                throw new ZygoteStartFailedEx("Error connecting to primary zygote", ioe);
+            }
+        }
+
+        if (primaryZygoteState.matches(abi)) {
+            return primaryZygoteState;
+        }
+
+        // The primary zygote didn't match. Try the secondary.
+        if (secondaryZygoteState == null || secondaryZygoteState.isClosed()) {
+            try {
+            secondaryZygoteState = ZygoteState.connect(SECONDARY_ZYGOTE_SOCKET);
+            } catch (IOException ioe) {
+                throw new ZygoteStartFailedEx("Error connecting to secondary zygote", ioe);
+            }
+        }
+
+        if (secondaryZygoteState.matches(abi)) {
+            return secondaryZygoteState;
+        }
+
+        throw new ZygoteStartFailedEx("Unsupported zygote ABI: " + abi);
+    }
+
     /**
      * Returns elapsed milliseconds of the time this process has run.
      * @return  Returns the number of milliseconds this process has return.
@@ -520,16 +731,57 @@ public class Process {
      * Returns the identifier of this process, which can be used with
      * {@link #killProcess} and {@link #sendSignal}.
      */
-    public static final native int myPid();
+    public static final int myPid() {
+        return Os.getpid();
+    }
+
+    /**
+     * Returns the identifier of this process' parent.
+     * @hide
+     */
+    public static final int myPpid() {
+        return Os.getppid();
+    }
 
     /**
      * Returns the identifier of the calling thread, which be used with
      * {@link #setThreadPriority(int, int)}.
      */
-    public static final native int myTid();
+    public static final int myTid() {
+        return Os.gettid();
+    }
 
     /**
-     * Returns the UID assigned to a partlicular user name, or -1 if there is
+     * Returns the identifier of this process's uid.  This is the kernel uid
+     * that the process is running under, which is the identity of its
+     * app-specific sandbox.  It is different from {@link #myUserHandle} in that
+     * a uid identifies a specific app sandbox in a specific user.
+     */
+    public static final int myUid() {
+        return Os.getuid();
+    }
+
+    /**
+     * Returns this process's user handle.  This is the
+     * user the process is running under.  It is distinct from
+     * {@link #myUid()} in that a particular user will have multiple
+     * distinct apps running under it each with their own uid.
+     */
+    public static final UserHandle myUserHandle() {
+        return new UserHandle(UserHandle.getUserId(myUid()));
+    }
+
+    /**
+     * Returns whether the current process is in an isolated sandbox.
+     * @hide
+     */
+    public static final boolean isIsolated() {
+        int uid = UserHandle.getAppId(myUid());
+        return uid >= FIRST_ISOLATED_UID && uid <= LAST_ISOLATED_UID;
+    }
+
+    /**
+     * Returns the UID assigned to a particular user name, or -1 if there is
      * none.  If the given string consists of only numbers, it is converted
      * directly to a uid.
      */
@@ -541,7 +793,50 @@ public class Process {
      * directly to a gid.
      */
     public static final native int getGidForName(String name);
-    
+
+    /**
+     * Returns a uid for a currently running process.
+     * @param pid the process id
+     * @return the uid of the process, or -1 if the process is not running.
+     * @hide pending API council review
+     */
+    public static final int getUidForPid(int pid) {
+        String[] procStatusLabels = { "Uid:" };
+        long[] procStatusValues = new long[1];
+        procStatusValues[0] = -1;
+        Process.readProcLines("/proc/" + pid + "/status", procStatusLabels, procStatusValues);
+        return (int) procStatusValues[0];
+    }
+
+    /**
+     * Returns the parent process id for a currently running process.
+     * @param pid the process id
+     * @return the parent process id of the process, or -1 if the process is not running.
+     * @hide
+     */
+    public static final int getParentPid(int pid) {
+        String[] procStatusLabels = { "PPid:" };
+        long[] procStatusValues = new long[1];
+        procStatusValues[0] = -1;
+        Process.readProcLines("/proc/" + pid + "/status", procStatusLabels, procStatusValues);
+        return (int) procStatusValues[0];
+    }
+
+    /**
+     * Returns the thread group leader id for a currently running thread.
+     * @param tid the thread id
+     * @return the thread group leader id of the thread, or -1 if the thread is not running.
+     *         This is same as what getpid(2) would return if called by tid.
+     * @hide
+     */
+    public static final int getThreadGroupLeader(int tid) {
+        String[] procStatusLabels = { "Tgid:" };
+        long[] procStatusValues = new long[1];
+        procStatusValues[0] = -1;
+        Process.readProcLines("/proc/" + tid + "/status", procStatusLabels, procStatusValues);
+        return (int) procStatusValues[0];
+    }
+
     /**
      * Set the priority of a thread, based on Linux priorities.
      * 
@@ -557,7 +852,62 @@ public class Process {
      */
     public static final native void setThreadPriority(int tid, int priority)
             throws IllegalArgumentException, SecurityException;
-    
+
+    /**
+     * Call with 'false' to cause future calls to {@link #setThreadPriority(int)} to
+     * throw an exception if passed a background-level thread priority.  This is only
+     * effective if the JNI layer is built with GUARD_THREAD_PRIORITY defined to 1.
+     *
+     * @hide
+     */
+    public static final native void setCanSelfBackground(boolean backgroundOk);
+
+    /**
+     * Sets the scheduling group for a thread.
+     * @hide
+     * @param tid The identifier of the thread to change.
+     * @param group The target group for this thread from THREAD_GROUP_*.
+     * 
+     * @throws IllegalArgumentException Throws IllegalArgumentException if
+     * <var>tid</var> does not exist.
+     * @throws SecurityException Throws SecurityException if your process does
+     * not have permission to modify the given thread, or to use the given
+     * priority.
+     * If the thread is a thread group leader, that is it's gettid() == getpid(),
+     * then the other threads in the same thread group are _not_ affected.
+     */
+    public static final native void setThreadGroup(int tid, int group)
+            throws IllegalArgumentException, SecurityException;
+
+    /**
+     * Sets the scheduling group for a process and all child threads
+     * @hide
+     * @param pid The identifier of the process to change.
+     * @param group The target group for this process from THREAD_GROUP_*.
+     * 
+     * @throws IllegalArgumentException Throws IllegalArgumentException if
+     * <var>tid</var> does not exist.
+     * @throws SecurityException Throws SecurityException if your process does
+     * not have permission to modify the given thread, or to use the given
+     * priority.
+     *
+     * group == THREAD_GROUP_DEFAULT means to move all non-background priority
+     * threads to the foreground scheduling group, but to leave background
+     * priority threads alone.  group == THREAD_GROUP_BG_NONINTERACTIVE moves all
+     * threads, regardless of priority, to the background scheduling group.
+     * group == THREAD_GROUP_FOREGROUND is not allowed.
+     */
+    public static final native void setProcessGroup(int pid, int group)
+            throws IllegalArgumentException, SecurityException;
+
+    /**
+     * Return the scheduling group of requested process.
+     *
+     * @hide
+     */
+    public static final native int getProcessGroup(int pid)
+            throws IllegalArgumentException, SecurityException;
+
     /**
      * Set the priority of the calling thread, based on Linux priorities.  See
      * {@link #setThreadPriority(int, int)} for more information.
@@ -592,25 +942,48 @@ public class Process {
             throws IllegalArgumentException;
     
     /**
+     * Set the scheduling policy and priority of a thread, based on Linux.
+     *
+     * @param tid The identifier of the thread/process to change.
+     * @param policy A Linux scheduling policy such as SCHED_OTHER etc.
+     * @param priority A Linux priority level in a range appropriate for the given policy.
+     *
+     * @throws IllegalArgumentException Throws IllegalArgumentException if
+     * <var>tid</var> does not exist, or if <var>priority</var> is out of range for the policy.
+     * @throws SecurityException Throws SecurityException if your process does
+     * not have permission to modify the given thread, or to use the given
+     * scheduling policy or priority.
+     *
+     * {@hide}
+     */
+    public static final native void setThreadScheduler(int tid, int policy, int priority)
+            throws IllegalArgumentException;
+
+    /**
      * Determine whether the current environment supports multiple processes.
      * 
      * @return Returns true if the system can run in multiple processes, else
      * false if everything is running in a single process.
+     *
+     * @deprecated This method always returns true.  Do not use.
      */
-    public static final native boolean supportsProcesses();
+    @Deprecated
+    public static final boolean supportsProcesses() {
+        return true;
+    }
 
     /**
-     * Set the out-of-memory badness adjustment for a process.
-     * 
+     * Adjust the swappiness level for a process.
+     *
      * @param pid The process identifier to set.
-     * @param amt Adjustment value -- linux allows -16 to +15.
-     * 
+     * @param is_increased Whether swappiness should be increased or default.
+     *
      * @return Returns true if the underlying system supports this
      *         feature, else false.
-     *         
+     *
      * {@hide}
      */
-    public static final native boolean setOomAdj(int pid, int amt);
+    public static final native boolean setSwappiness(int pid, boolean is_increased);
 
     /**
      * Change this process's argv[0] parameter.  This can be useful to show
@@ -651,8 +1024,29 @@ public class Process {
      */
     public static final native void sendSignal(int pid, int signal);
     
+    /**
+     * @hide
+     * Private impl for avoiding a log message...  DO NOT USE without doing
+     * your own log, or the Android Illuminati will find you some night and
+     * beat you up.
+     */
+    public static final void killProcessQuiet(int pid) {
+        sendSignalQuiet(pid, SIGNAL_KILL);
+    }
+
+    /**
+     * @hide
+     * Private impl for avoiding a log message...  DO NOT USE without doing
+     * your own log, or the Android Illuminati will find you some night and
+     * beat you up.
+     */
+    public static final native void sendSignalQuiet(int pid, int signal);
+    
     /** @hide */
-    public static final native int getFreeMemory();
+    public static final native long getFreeMemory();
+    
+    /** @hide */
+    public static final native long getTotalMemory();
     
     /** @hide */
     public static final native void readProcLines(String path,
@@ -668,9 +1062,13 @@ public class Process {
     /** @hide */
     public static final int PROC_SPACE_TERM = (int)' ';
     /** @hide */
+    public static final int PROC_TAB_TERM = (int)'\t';
+    /** @hide */
     public static final int PROC_COMBINE = 0x100;
     /** @hide */
     public static final int PROC_PARENS = 0x200;
+    /** @hide */
+    public static final int PROC_QUOTES = 0x400;
     /** @hide */
     public static final int PROC_OUT_STRING = 0x1000;
     /** @hide */
@@ -681,6 +1079,13 @@ public class Process {
     /** @hide */
     public static final native boolean readProcFile(String file, int[] format,
             String[] outStrings, long[] outLongs, float[] outFloats);
+    
+    /** @hide */
+    public static final native boolean parseProcLine(byte[] buffer, int startIndex, 
+            int endIndex, int[] format, String[] outStrings, long[] outLongs, float[] outFloats);
+
+    /** @hide */
+    public static final native int[] getPidsForCommands(String[] cmds);
 
     /**
      * Gets the total Pss value for a given process, in bytes.
@@ -691,4 +1096,35 @@ public class Process {
      * @hide
      */
     public static final native long getPss(int pid);
+
+    /**
+     * Specifies the outcome of having started a process.
+     * @hide
+     */
+    public static final class ProcessStartResult {
+        /**
+         * The PID of the newly started process.
+         * Always >= 0.  (If the start failed, an exception will have been thrown instead.)
+         */
+        public int pid;
+
+        /**
+         * True if the process was started with a wrapper attached.
+         */
+        public boolean usingWrapper;
+    }
+
+    /**
+     * Kill all processes in a process group started for the given
+     * pid.
+     * @hide
+     */
+    public static final native int killProcessGroup(int uid, int pid);
+
+    /**
+     * Remove all process groups.  Expected to be called when ActivityManager
+     * is restarted.
+     * @hide
+     */
+    public static final native void removeAllProcessGroups();
 }

@@ -20,38 +20,37 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.DialogInterface.OnClickListener;
 import android.os.Bundle;
-import android.pim.DateFormat;
-import android.text.TextUtils.TruncateAt;
+import android.text.format.DateUtils;
+import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.widget.Button;
 import android.widget.DatePicker;
-import android.widget.TextView;
 import android.widget.DatePicker.OnDateChangedListener;
+import android.widget.DatePicker.ValidationCallback;
 
 import com.android.internal.R;
 
-import java.text.DateFormatSymbols;
 import java.util.Calendar;
 
 /**
  * A simple dialog containing an {@link android.widget.DatePicker}.
+ *
+ * <p>See the <a href="{@docRoot}guide/topics/ui/controls/pickers.html">Pickers</a>
+ * guide.</p>
  */
-public class DatePickerDialog extends AlertDialog implements OnClickListener, 
+public class DatePickerDialog extends AlertDialog implements OnClickListener,
         OnDateChangedListener {
 
     private static final String YEAR = "year";
     private static final String MONTH = "month";
     private static final String DAY = "day";
-    
-    private final DatePicker mDatePicker;
-    private final OnDateSetListener mCallBack;
-    private final Calendar mCalendar;
-    private final java.text.DateFormat mDateFormat;
-    private final String[] mWeekDays;
 
-    private int mInitialYear;
-    private int mInitialMonth;
-    private int mInitialDay;
+    private final DatePicker mDatePicker;
+    private final OnDateSetListener mDateSetListener;
+    private final Calendar mCalendar;
+
+    private boolean mTitleNeedsUpdate = true;
 
     /**
      * The callback used to indicate the user is done filling in the date.
@@ -80,106 +79,135 @@ public class DatePickerDialog extends AlertDialog implements OnClickListener,
             int year,
             int monthOfYear,
             int dayOfMonth) {
-        this(context, com.android.internal.R.style.Theme_Dialog_Alert, 
-                callBack, year, monthOfYear, dayOfMonth);
+        this(context, 0, callBack, year, monthOfYear, dayOfMonth);
+    }
+
+    static int resolveDialogTheme(Context context, int resid) {
+        if (resid == 0) {
+            final TypedValue outValue = new TypedValue();
+            context.getTheme().resolveAttribute(R.attr.datePickerDialogTheme, outValue, true);
+            return outValue.resourceId;
+        } else {
+            return resid;
+        }
     }
 
     /**
      * @param context The context the dialog is to run in.
      * @param theme the theme to apply to this dialog
-     * @param callBack How the parent is notified that the date is set.
+     * @param listener How the parent is notified that the date is set.
      * @param year The initial year of the dialog.
      * @param monthOfYear The initial month of the dialog.
      * @param dayOfMonth The initial day of the dialog.
      */
-    public DatePickerDialog(Context context,
-            int theme,
-            OnDateSetListener callBack,
-            int year,
-            int monthOfYear,
-            int dayOfMonth) {
-        super(context, theme);
+    public DatePickerDialog(Context context, int theme, OnDateSetListener listener, int year,
+            int monthOfYear, int dayOfMonth) {
+        super(context, resolveDialogTheme(context, theme));
 
-        mCallBack = callBack;
-        mInitialYear = year;
-        mInitialMonth = monthOfYear;
-        mInitialDay = dayOfMonth;
-        DateFormatSymbols symbols = new DateFormatSymbols();
-        mWeekDays = symbols.getShortWeekdays();
-        
-        mDateFormat = DateFormat.getLongDateFormat(context);
+        mDateSetListener = listener;
         mCalendar = Calendar.getInstance();
-        updateTitle(mInitialYear, mInitialMonth, mInitialDay);
-        
-        setButton(context.getText(R.string.date_time_set), this);
-        setButton2(context.getText(R.string.cancel), (OnClickListener) null);
-        setIcon(R.drawable.ic_dialog_time);
-        
-        LayoutInflater inflater = 
-                (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-        View view = inflater.inflate(R.layout.date_picker_dialog, null);
+
+        final Context themeContext = getContext();
+        final LayoutInflater inflater = LayoutInflater.from(themeContext);
+        final View view = inflater.inflate(R.layout.date_picker_dialog, null);
         setView(view);
+        setButton(BUTTON_POSITIVE, themeContext.getString(R.string.ok), this);
+        setButton(BUTTON_NEGATIVE, themeContext.getString(R.string.cancel), this);
+        setButtonPanelLayoutHint(LAYOUT_HINT_SIDE);
+
         mDatePicker = (DatePicker) view.findViewById(R.id.datePicker);
-        mDatePicker.init(mInitialYear, mInitialMonth, mInitialDay, this);
+        mDatePicker.init(year, monthOfYear, dayOfMonth, this);
+        mDatePicker.setValidationCallback(mValidationCallback);
     }
 
     @Override
-    public void show() {
-        super.show();
-        
-        /* Sometimes the full month is displayed causing the title
-         * to be very long, in those cases ensure it doesn't wrap to
-         * 2 lines (as that looks jumpy) and ensure we ellipsize the end.
-         */
-        TextView title = (TextView) findViewById(R.id.alertTitle);
-        title.setSingleLine();
-        title.setEllipsize(TruncateAt.END);
-    }
-    
-    public void onClick(DialogInterface dialog, int which) {
-        if (mCallBack != null) {
-            mDatePicker.clearFocus();
-            mCallBack.onDateSet(mDatePicker, mDatePicker.getYear(), 
-                    mDatePicker.getMonth(), mDatePicker.getDayOfMonth());
-        }
-    }
-    
-    public void onDateChanged(DatePicker view, int year,
-            int month, int day) {
+    public void onDateChanged(DatePicker view, int year, int month, int day) {
+        mDatePicker.init(year, month, day, this);
         updateTitle(year, month, day);
     }
-    
+
+    @Override
+    public void onClick(DialogInterface dialog, int which) {
+        switch (which) {
+            case BUTTON_POSITIVE:
+                if (mDateSetListener != null) {
+                    mDateSetListener.onDateSet(mDatePicker, mDatePicker.getYear(),
+                            mDatePicker.getMonth(), mDatePicker.getDayOfMonth());
+                }
+                break;
+            case BUTTON_NEGATIVE:
+                cancel();
+                break;
+        }
+    }
+
+    /**
+     * Gets the {@link DatePicker} contained in this dialog.
+     *
+     * @return The calendar view.
+     */
+    public DatePicker getDatePicker() {
+        return mDatePicker;
+    }
+
+    /**
+     * Sets the current date.
+     *
+     * @param year The date year.
+     * @param monthOfYear The date month.
+     * @param dayOfMonth The date day of month.
+     */
     public void updateDate(int year, int monthOfYear, int dayOfMonth) {
-        mInitialYear = year;
-        mInitialMonth = monthOfYear;
-        mInitialDay = dayOfMonth;
         mDatePicker.updateDate(year, monthOfYear, dayOfMonth);
     }
 
     private void updateTitle(int year, int month, int day) {
-        mCalendar.set(Calendar.YEAR, year);
-        mCalendar.set(Calendar.MONTH, month);
-        mCalendar.set(Calendar.DAY_OF_MONTH, day);
-        String weekday = mWeekDays[mCalendar.get(Calendar.DAY_OF_WEEK)];
-        setTitle(weekday + ", " + mDateFormat.format(mCalendar.getTime()));
+        if (!mDatePicker.getCalendarViewShown()) {
+            mCalendar.set(Calendar.YEAR, year);
+            mCalendar.set(Calendar.MONTH, month);
+            mCalendar.set(Calendar.DAY_OF_MONTH, day);
+            String title = DateUtils.formatDateTime(mContext,
+                    mCalendar.getTimeInMillis(),
+                    DateUtils.FORMAT_SHOW_DATE
+                    | DateUtils.FORMAT_SHOW_WEEKDAY
+                    | DateUtils.FORMAT_SHOW_YEAR
+                    | DateUtils.FORMAT_ABBREV_MONTH
+                    | DateUtils.FORMAT_ABBREV_WEEKDAY);
+            setTitle(title);
+            mTitleNeedsUpdate = true;
+        } else {
+            if (mTitleNeedsUpdate) {
+                mTitleNeedsUpdate = false;
+                setTitle(R.string.date_picker_dialog_title);
+            }
+        }
     }
-    
+
     @Override
     public Bundle onSaveInstanceState() {
-        Bundle state = super.onSaveInstanceState();
+        final Bundle state = super.onSaveInstanceState();
         state.putInt(YEAR, mDatePicker.getYear());
         state.putInt(MONTH, mDatePicker.getMonth());
         state.putInt(DAY, mDatePicker.getDayOfMonth());
         return state;
     }
-    
+
     @Override
     public void onRestoreInstanceState(Bundle savedInstanceState) {
         super.onRestoreInstanceState(savedInstanceState);
-        int year = savedInstanceState.getInt(YEAR);
-        int month = savedInstanceState.getInt(MONTH);
-        int day = savedInstanceState.getInt(DAY);
+        final int year = savedInstanceState.getInt(YEAR);
+        final int month = savedInstanceState.getInt(MONTH);
+        final int day = savedInstanceState.getInt(DAY);
         mDatePicker.init(year, month, day, this);
-        updateTitle(year, month, day);
     }
+
+    private final ValidationCallback mValidationCallback = new ValidationCallback() {
+        @Override
+        public void onValidationChanged(boolean valid) {
+            final Button positive = getButton(BUTTON_POSITIVE);
+            if (positive != null) {
+                positive.setEnabled(valid);
+            }
+        }
+    };
 }

@@ -20,12 +20,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.preference.Preference.OnPreferenceChangeInternalListener;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Adapter;
 import android.widget.BaseAdapter;
+import android.widget.FrameLayout;
 import android.widget.ListView;
 
 /**
@@ -45,8 +47,11 @@ import android.widget.ListView;
  * adapter, use {@link PreferenceCategoryAdapter} instead.
  * 
  * @see PreferenceCategoryAdapter
+ *
+ * @hide
  */
-class PreferenceGroupAdapter extends BaseAdapter implements OnPreferenceChangeInternalListener {
+public class PreferenceGroupAdapter extends BaseAdapter
+        implements OnPreferenceChangeInternalListener {
     
     private static final String TAG = "PreferenceGroupAdapter";
 
@@ -69,7 +74,9 @@ class PreferenceGroupAdapter extends BaseAdapter implements OnPreferenceChangeIn
      * count once--when the adapter is being set). We will not recycle views for
      * Preference subclasses seen after the count has been returned.
      */
-    private List<String> mPreferenceClassNames;
+    private ArrayList<PreferenceLayout> mPreferenceLayouts;
+
+    private PreferenceLayout mTempPreferenceLayout = new PreferenceLayout();
 
     /**
      * Blocks the mPreferenceClassNames from being changed anymore.
@@ -86,11 +93,43 @@ class PreferenceGroupAdapter extends BaseAdapter implements OnPreferenceChangeIn
         }
     };
 
+    private int mHighlightedPosition = -1;
+    private Drawable mHighlightedDrawable;
+
+    private static ViewGroup.LayoutParams sWrapperLayoutParams = new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+
+    private static class PreferenceLayout implements Comparable<PreferenceLayout> {
+        private int resId;
+        private int widgetResId;
+        private String name;
+
+        public int compareTo(PreferenceLayout other) {
+            int compareNames = name.compareTo(other.name);
+            if (compareNames == 0) {
+                if (resId == other.resId) {
+                    if (widgetResId == other.widgetResId) {
+                        return 0;
+                    } else {
+                        return widgetResId - other.widgetResId;
+                    }
+                } else {
+                    return resId - other.resId;
+                }
+            } else {
+                return compareNames;
+            }
+        }
+    }
+
     public PreferenceGroupAdapter(PreferenceGroup preferenceGroup) {
         mPreferenceGroup = preferenceGroup;
+        // If this group gets or loses any children, let us know
+        mPreferenceGroup.setOnPreferenceChangeInternalListener(this);
+
         mPreferenceList = new ArrayList<Preference>();
-        mPreferenceClassNames = new ArrayList<String>();
-        
+        mPreferenceLayouts = new ArrayList<PreferenceLayout>();
+
         syncMyPreferences();
     }
 
@@ -99,7 +138,7 @@ class PreferenceGroupAdapter extends BaseAdapter implements OnPreferenceChangeIn
             if (mIsSyncing) {
                 return;
             }
-        
+
             mIsSyncing = true;
         }
 
@@ -125,7 +164,7 @@ class PreferenceGroupAdapter extends BaseAdapter implements OnPreferenceChangeIn
             
             preferences.add(preference);
             
-            if (!mHasReturnedViewTypeCount) {
+            if (!mHasReturnedViewTypeCount && preference.canRecycleLayout()) {
                 addPreferenceClassName(preference);
             }
             
@@ -133,23 +172,35 @@ class PreferenceGroupAdapter extends BaseAdapter implements OnPreferenceChangeIn
                 final PreferenceGroup preferenceAsGroup = (PreferenceGroup) preference;
                 if (preferenceAsGroup.isOnSameScreenAsChildren()) {
                     flattenPreferenceGroup(preferences, preferenceAsGroup);
-                    preference.setOnPreferenceChangeInternalListener(this);
                 }
-            } else {
-                preference.setOnPreferenceChangeInternalListener(this);
             }
+
+            preference.setOnPreferenceChangeInternalListener(this);
         }
     }
 
+    /**
+     * Creates a string that includes the preference name, layout id and widget layout id.
+     * If a particular preference type uses 2 different resources, they will be treated as
+     * different view types.
+     */
+    private PreferenceLayout createPreferenceLayout(Preference preference, PreferenceLayout in) {
+        PreferenceLayout pl = in != null? in : new PreferenceLayout();
+        pl.name = preference.getClass().getName();
+        pl.resId = preference.getLayoutResource();
+        pl.widgetResId = preference.getWidgetLayoutResource();
+        return pl;
+    }
+
     private void addPreferenceClassName(Preference preference) {
-        final String name = preference.getClass().getName();
-        int insertPos = Collections.binarySearch(mPreferenceClassNames, name);
-        
+        final PreferenceLayout pl = createPreferenceLayout(preference, null);
+        int insertPos = Collections.binarySearch(mPreferenceLayouts, pl);
+
         // Only insert if it doesn't exist (when it is negative).
         if (insertPos < 0) {
             // Convert to insert index
             insertPos = insertPos * -1 - 1;
-            mPreferenceClassNames.add(insertPos, name);
+            mPreferenceLayouts.add(insertPos, pl);
         }
     }
     
@@ -167,22 +218,40 @@ class PreferenceGroupAdapter extends BaseAdapter implements OnPreferenceChangeIn
         return this.getItem(position).getId();
     }
 
+    /**
+     * @hide
+     */
+    public void setHighlighted(int position) {
+        mHighlightedPosition = position;
+    }
+
+    /**
+     * @hide
+     */
+    public void setHighlightedDrawable(Drawable drawable) {
+        mHighlightedDrawable = drawable;
+    }
+
     public View getView(int position, View convertView, ViewGroup parent) {
         final Preference preference = this.getItem(position);
-        
-        if (preference.hasSpecifiedLayout()) {
-            // If the preference had specified a layout (as opposed to the
-            // default), don't use convert views.
+        // Build a PreferenceLayout to compare with known ones that are cacheable.
+        mTempPreferenceLayout = createPreferenceLayout(preference, mTempPreferenceLayout);
+
+        // If it's not one of the cached ones, set the convertView to null so that 
+        // the layout gets re-created by the Preference.
+        if (Collections.binarySearch(mPreferenceLayouts, mTempPreferenceLayout) < 0 ||
+                (getItemViewType(position) == getHighlightItemViewType())) {
             convertView = null;
-        } else {
-            // TODO: better way of doing this
-            final String name = preference.getClass().getName();
-            if (Collections.binarySearch(mPreferenceClassNames, name) < 0) {
-                convertView = null;
-            }
         }
-        
-        return preference.getView(convertView, parent);
+        View result = preference.getView(convertView, parent);
+        if (position == mHighlightedPosition && mHighlightedDrawable != null) {
+            ViewGroup wrapper = new FrameLayout(parent.getContext());
+            wrapper.setLayoutParams(sWrapperLayoutParams);
+            wrapper.setBackgroundDrawable(mHighlightedDrawable);
+            wrapper.addView(result);
+            result = wrapper;
+        }
+        return result;
     }
 
     @Override
@@ -212,19 +281,28 @@ class PreferenceGroupAdapter extends BaseAdapter implements OnPreferenceChangeIn
         return true;
     }
 
+    private int getHighlightItemViewType() {
+        return getViewTypeCount() - 1;
+    }
+
     @Override
     public int getItemViewType(int position) {
+        if (position == mHighlightedPosition) {
+            return getHighlightItemViewType();
+        }
+
         if (!mHasReturnedViewTypeCount) {
             mHasReturnedViewTypeCount = true;
         }
         
         final Preference preference = this.getItem(position);
-        if (preference.hasSpecifiedLayout()) {
+        if (!preference.canRecycleLayout()) {
             return IGNORE_ITEM_VIEW_TYPE;
         }
 
-        final String name = preference.getClass().getName();
-        int viewType = Collections.binarySearch(mPreferenceClassNames, name);
+        mTempPreferenceLayout = createPreferenceLayout(preference, mTempPreferenceLayout);
+
+        int viewType = Collections.binarySearch(mPreferenceLayouts, mTempPreferenceLayout);
         if (viewType < 0) {
             // This is a class that was seen after we returned the count, so
             // don't recycle it.
@@ -240,7 +318,7 @@ class PreferenceGroupAdapter extends BaseAdapter implements OnPreferenceChangeIn
             mHasReturnedViewTypeCount = true;
         }
         
-        return mPreferenceClassNames.size();
+        return Math.max(1, mPreferenceLayouts.size()) + 1;
     }
 
 }

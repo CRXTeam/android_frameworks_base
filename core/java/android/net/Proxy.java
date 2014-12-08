@@ -16,22 +16,121 @@
 
 package android.net;
 
-import android.content.ContentResolver;
+import android.annotation.SdkConstant;
+import android.annotation.SdkConstant.SdkConstantType;
 import android.content.Context;
-import android.os.SystemProperties;
-import android.provider.Settings;
+import android.net.ProxyInfo;
+import android.text.TextUtils;
 import android.util.Log;
 
-import junit.framework.Assert;
+
+import org.apache.http.HttpHost;
+import org.apache.http.HttpRequest;
+import org.apache.http.conn.routing.HttpRoute;
+import org.apache.http.conn.routing.HttpRoutePlanner;
+import org.apache.http.conn.scheme.SchemeRegistry;
+import org.apache.http.protocol.HttpContext;
+
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
+import java.net.URI;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * A convenience class for accessing the user and default proxy
  * settings.
  */
-final public class Proxy {
+public final class Proxy {
 
-    static final public String PROXY_CHANGE_ACTION =
-        "android.intent.action.PROXY_CHANGE";
+    // Set to true to enable extra debugging.
+    private static final boolean DEBUG = false;
+    private static final String TAG = "Proxy";
+
+    private static final ProxySelector sDefaultProxySelector;
+
+    /**
+     * Used to notify an app that's caching the default connection proxy
+     * that either the default connection or its proxy has changed.
+     * The intent will have the following extra value:</p>
+     * <ul>
+     *   <li><em>EXTRA_PROXY_INFO</em> - The ProxyProperties for the proxy.  Non-null,
+     *                                   though if the proxy is undefined the host string
+     *                                   will be empty.
+     * </ul>
+     *
+     * <p class="note">This is a protected intent that can only be sent by the system
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String PROXY_CHANGE_ACTION = "android.intent.action.PROXY_CHANGE";
+    /**
+     * Intent extra included with {@link #PROXY_CHANGE_ACTION} intents.
+     * It describes the new proxy being used (as a {@link ProxyInfo} object).
+     */
+    public static final String EXTRA_PROXY_INFO = "android.intent.extra.PROXY_INFO";
+
+    /** @hide */
+    public static final int PROXY_VALID             = 0;
+    /** @hide */
+    public static final int PROXY_HOSTNAME_EMPTY    = 1;
+    /** @hide */
+    public static final int PROXY_HOSTNAME_INVALID  = 2;
+    /** @hide */
+    public static final int PROXY_PORT_EMPTY        = 3;
+    /** @hide */
+    public static final int PROXY_PORT_INVALID      = 4;
+    /** @hide */
+    public static final int PROXY_EXCLLIST_INVALID  = 5;
+
+    private static ConnectivityManager sConnectivityManager = null;
+
+    // Hostname / IP REGEX validation
+    // Matches blank input, ips, and domain names
+    private static final String NAME_IP_REGEX =
+        "[a-zA-Z0-9]+(\\-[a-zA-Z0-9]+)*(\\.[a-zA-Z0-9]+(\\-[a-zA-Z0-9]+)*)*";
+
+    private static final String HOSTNAME_REGEXP = "^$|^" + NAME_IP_REGEX + "$";
+
+    private static final Pattern HOSTNAME_PATTERN;
+
+    private static final String EXCL_REGEX =
+        "[a-zA-Z0-9*]+(\\-[a-zA-Z0-9*]+)*(\\.[a-zA-Z0-9*]+(\\-[a-zA-Z0-9*]+)*)*";
+
+    private static final String EXCLLIST_REGEXP = "^$|^" + EXCL_REGEX + "(," + EXCL_REGEX + ")*$";
+
+    private static final Pattern EXCLLIST_PATTERN;
+
+    static {
+        HOSTNAME_PATTERN = Pattern.compile(HOSTNAME_REGEXP);
+        EXCLLIST_PATTERN = Pattern.compile(EXCLLIST_REGEXP);
+        sDefaultProxySelector = ProxySelector.getDefault();
+    }
+
+    /**
+     * Return the proxy object to be used for the URL given as parameter.
+     * @param ctx A Context used to get the settings for the proxy host.
+     * @param url A URL to be accessed. Used to evaluate exclusion list.
+     * @return Proxy (java.net) object containing the host name. If the
+     *         user did not set a hostname it returns the default host.
+     *         A null value means that no host is to be used.
+     * {@hide}
+     */
+    public static final java.net.Proxy getProxy(Context ctx, String url) {
+        String host = "";
+        if ((url != null) && !isLocalHost(host)) {
+            URI uri = URI.create(url);
+            ProxySelector proxySelector = ProxySelector.getDefault();
+
+            List<java.net.Proxy> proxyList = proxySelector.select(uri);
+
+            if (proxyList.size() > 0) {
+                return proxyList.get(0);
+            }
+        }
+        return java.net.Proxy.NO_PROXY;
+    }
+
 
     /**
      * Return the proxy host set by the user.
@@ -39,82 +138,181 @@ final public class Proxy {
      * @return String containing the host name. If the user did not set a host
      *         name it returns the default host. A null value means that no
      *         host is to be used.
+     * @deprecated Use standard java vm proxy values to find the host, port
+     *         and exclusion list.  This call ignores the exclusion list.
      */
-    static final public String getHost(Context ctx) {
-        ContentResolver contentResolver = ctx.getContentResolver();
-        Assert.assertNotNull(contentResolver);
-        String host = Settings.System.getString(
-                contentResolver,
-                Settings.System.HTTP_PROXY);
-        if (host != null) {
-            int i = host.indexOf(':');
-            if (i == -1) {
-                if (android.util.Config.DEBUG) {
-                    Assert.assertTrue(host.length() == 0);
-                }
-                return null;
-            }
-            return host.substring(0, i);
+    public static final String getHost(Context ctx) {
+        java.net.Proxy proxy = getProxy(ctx, null);
+        if (proxy == java.net.Proxy.NO_PROXY) return null;
+        try {
+            return ((InetSocketAddress)(proxy.address())).getHostName();
+        } catch (Exception e) {
+            return null;
         }
-        return getDefaultHost();
     }
 
     /**
      * Return the proxy port set by the user.
      * @param ctx A Context used to get the settings for the proxy port.
      * @return The port number to use or -1 if no proxy is to be used.
+     * @deprecated Use standard java vm proxy values to find the host, port
+     *         and exclusion list.  This call ignores the exclusion list.
      */
-    static final public int getPort(Context ctx) {
-        ContentResolver contentResolver = ctx.getContentResolver();
-        Assert.assertNotNull(contentResolver);
-        String host = Settings.System.getString(
-                contentResolver,
-                Settings.System.HTTP_PROXY);
-        if (host != null) {
-            int i = host.indexOf(':');
-            if (i == -1) {
-                if (android.util.Config.DEBUG) {
-                    Assert.assertTrue(host.length() == 0);
-                }
-                return -1;
-            }
-            if (android.util.Config.DEBUG) {
-                Assert.assertTrue(i < host.length());
-            }
-            return Integer.parseInt(host.substring(i+1));
+    public static final int getPort(Context ctx) {
+        java.net.Proxy proxy = getProxy(ctx, null);
+        if (proxy == java.net.Proxy.NO_PROXY) return -1;
+        try {
+            return ((InetSocketAddress)(proxy.address())).getPort();
+        } catch (Exception e) {
+            return -1;
         }
-        return getDefaultPort();
     }
 
     /**
      * Return the default proxy host specified by the carrier.
      * @return String containing the host name or null if there is no proxy for
      * this carrier.
+     * @deprecated Use standard java vm proxy values to find the host, port and
+     *         exclusion list.  This call ignores the exclusion list and no
+     *         longer reports only mobile-data apn-based proxy values.
      */
-    static final public String getDefaultHost() {
-        String host = SystemProperties.get("net.gprs.http-proxy");
-        if (host != null) {
-            Uri u = Uri.parse(host);
-            host = u.getHost();
-            return host;
-        } else {
-            return null;
-        }
+    public static final String getDefaultHost() {
+        String host = System.getProperty("http.proxyHost");
+        if (TextUtils.isEmpty(host)) return null;
+        return host;
     }
 
     /**
      * Return the default proxy port specified by the carrier.
      * @return The port number to be used with the proxy host or -1 if there is
      * no proxy for this carrier.
+     * @deprecated Use standard java vm proxy values to find the host, port and
+     *         exclusion list.  This call ignores the exclusion list and no
+     *         longer reports only mobile-data apn-based proxy values.
      */
-    static final public int getDefaultPort() {
-        String host = SystemProperties.get("net.gprs.http-proxy");
-        if (host != null) {
-            Uri u = Uri.parse(host);
-            return u.getPort();
-        } else {
+    public static final int getDefaultPort() {
+        if (getDefaultHost() == null) return -1;
+        try {
+            return Integer.parseInt(System.getProperty("http.proxyPort"));
+        } catch (NumberFormatException e) {
             return -1;
         }
     }
 
-};
+    /**
+     * Returns the preferred proxy to be used by clients. This is a wrapper
+     * around {@link android.net.Proxy#getHost()}.
+     *
+     * @param context the context which will be passed to
+     * {@link android.net.Proxy#getHost()}
+     * @param url the target URL for the request
+     * @note Calling this method requires permission
+     * android.permission.ACCESS_NETWORK_STATE
+     * @return The preferred proxy to be used by clients, or null if there
+     * is no proxy.
+     * {@hide}
+     */
+    public static final HttpHost getPreferredHttpHost(Context context,
+            String url) {
+        java.net.Proxy prefProxy = getProxy(context, url);
+        if (prefProxy.equals(java.net.Proxy.NO_PROXY)) {
+            return null;
+        } else {
+            InetSocketAddress sa = (InetSocketAddress)prefProxy.address();
+            return new HttpHost(sa.getHostName(), sa.getPort(), "http");
+        }
+    }
+
+    private static final boolean isLocalHost(String host) {
+        if (host == null) {
+            return false;
+        }
+        try {
+            if (host != null) {
+                if (host.equalsIgnoreCase("localhost")) {
+                    return true;
+                }
+                if (NetworkUtils.numericToInetAddress(host).isLoopbackAddress()) {
+                    return true;
+                }
+            }
+        } catch (IllegalArgumentException iex) {
+        }
+        return false;
+    }
+
+    /**
+     * Validate syntax of hostname, port and exclusion list entries
+     * {@hide}
+     */
+    public static int validate(String hostname, String port, String exclList) {
+        Matcher match = HOSTNAME_PATTERN.matcher(hostname);
+        Matcher listMatch = EXCLLIST_PATTERN.matcher(exclList);
+
+        if (!match.matches()) return PROXY_HOSTNAME_INVALID;
+
+        if (!listMatch.matches()) return PROXY_EXCLLIST_INVALID;
+
+        if (hostname.length() > 0 && port.length() == 0) return PROXY_PORT_EMPTY;
+
+        if (port.length() > 0) {
+            if (hostname.length() == 0) return PROXY_HOSTNAME_EMPTY;
+            int portVal = -1;
+            try {
+                portVal = Integer.parseInt(port);
+            } catch (NumberFormatException ex) {
+                return PROXY_PORT_INVALID;
+            }
+            if (portVal <= 0 || portVal > 0xFFFF) return PROXY_PORT_INVALID;
+        }
+        return PROXY_VALID;
+    }
+
+    /** @hide */
+    public static final void setHttpProxySystemProperty(ProxyInfo p) {
+        String host = null;
+        String port = null;
+        String exclList = null;
+        Uri pacFileUrl = Uri.EMPTY;
+        if (p != null) {
+            host = p.getHost();
+            port = Integer.toString(p.getPort());
+            exclList = p.getExclusionListAsString();
+            pacFileUrl = p.getPacFileUrl();
+        }
+        setHttpProxySystemProperty(host, port, exclList, pacFileUrl);
+    }
+
+    /** @hide */
+    public static final void setHttpProxySystemProperty(String host, String port, String exclList,
+            Uri pacFileUrl) {
+        if (exclList != null) exclList = exclList.replace(",", "|");
+        if (false) Log.d(TAG, "setHttpProxySystemProperty :"+host+":"+port+" - "+exclList);
+        if (host != null) {
+            System.setProperty("http.proxyHost", host);
+            System.setProperty("https.proxyHost", host);
+        } else {
+            System.clearProperty("http.proxyHost");
+            System.clearProperty("https.proxyHost");
+        }
+        if (port != null) {
+            System.setProperty("http.proxyPort", port);
+            System.setProperty("https.proxyPort", port);
+        } else {
+            System.clearProperty("http.proxyPort");
+            System.clearProperty("https.proxyPort");
+        }
+        if (exclList != null) {
+            System.setProperty("http.nonProxyHosts", exclList);
+            System.setProperty("https.nonProxyHosts", exclList);
+        } else {
+            System.clearProperty("http.nonProxyHosts");
+            System.clearProperty("https.nonProxyHosts");
+        }
+        if (!Uri.EMPTY.equals(pacFileUrl)) {
+            ProxySelector.setDefault(new PacProxySelector());
+        } else {
+            ProxySelector.setDefault(sDefaultProxySelector);
+        }
+    }
+}

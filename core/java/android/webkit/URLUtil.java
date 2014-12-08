@@ -17,22 +17,29 @@
 package android.webkit;
 
 import java.io.UnsupportedEncodingException;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import android.net.Uri;
 import android.net.ParseException;
 import android.net.WebAddress;
-import android.util.Config;
 import android.util.Log;
 
 public final class URLUtil {
 
     private static final String LOGTAG = "webkit";
-    
+
+    // to refer to bar.png under your package's asset/foo/ directory, use
+    // "file:///android_asset/foo/bar.png".
     static final String ASSET_BASE = "file:///android_asset/";
+    // to refer to bar.png under your package's res/drawable/ directory, use
+    // "file:///android_res/drawable/bar.png". Use "drawable" to refer to
+    // "drawable-hdpi" directory as well.
+    static final String RESOURCE_BASE = "file:///android_res/";
     static final String FILE_BASE = "file://";
     static final String PROXY_BASE = "file:///cookieless_proxy/";
+    static final String CONTENT_BASE = "content:";
 
     /**
      * Cleans up (if possible) user-entered web addresses
@@ -42,7 +49,7 @@ public final class URLUtil {
         String retVal = inUrl;
         WebAddress webAddress;
 
-        Log.v(LOGTAG, "guessURL before queueRequest: " + inUrl);
+        if (DebugFlags.URL_UTIL) Log.v(LOGTAG, "guessURL before queueRequest: " + inUrl);
 
         if (inUrl.length() == 0) return inUrl;
         if (inUrl.startsWith("about:")) return inUrl;
@@ -62,16 +69,16 @@ public final class URLUtil {
             webAddress = new WebAddress(inUrl);
         } catch (ParseException ex) {
 
-            if (Config.LOGV) {
+            if (DebugFlags.URL_UTIL) {
                 Log.v(LOGTAG, "smartUrlFilter: failed to parse url = " + inUrl);
             }
             return retVal;
         }
 
         // Check host
-        if (webAddress.mHost.indexOf('.') == -1) {
+        if (webAddress.getHost().indexOf('.') == -1) {
             // no dot: user probably entered a bare domain.  try .com
-            webAddress.mHost = "www." + webAddress.mHost + ".com";
+            webAddress.setHost("www." + webAddress.getHost() + ".com");
         }
         return webAddress.toString();
     }
@@ -127,6 +134,32 @@ public final class URLUtil {
         return retData;
     }
 
+    /**
+     * @return True iff the url is correctly URL encoded
+     */
+    static boolean verifyURLEncoding(String url) {
+        int count = url.length();
+        if (count == 0) {
+            return false;
+        }
+
+        int index = url.indexOf('%');
+        while (index >= 0 && index < count) {
+            if (index < count - 2) {
+                try {
+                    parseHex((byte) url.charAt(++index));
+                    parseHex((byte) url.charAt(++index));
+                } catch (IllegalArgumentException e) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+            index = url.indexOf('%', index + 1);
+        }
+        return true;
+    }
+
     private static int parseHex(byte b) {
         if (b >= '0' && b <= '9') return (b - '0');
         if (b >= 'A' && b <= 'F') return (b - 'A' + 10);
@@ -141,11 +174,21 @@ public final class URLUtil {
     public static boolean isAssetUrl(String url) {
         return (null != url) && url.startsWith(ASSET_BASE);
     }
-    
+
     /**
-     * @return True iff the url is an proxy url to allow cookieless network 
-     * requests from a file url.
+     * @return True iff the url is a resource file.
+     * @hide
      */
+    public static boolean isResourceUrl(String url) {
+        return (null != url) && url.startsWith(RESOURCE_BASE);
+    }
+
+    /**
+     * @return True iff the url is a proxy url to allow cookieless network
+     * requests from a file url.
+     * @deprecated Cookieless proxy is no longer supported.
+     */
+    @Deprecated
     public static boolean isCookielessProxyUrl(String url) {
         return (null != url) && url.startsWith(PROXY_BASE);
     }
@@ -212,7 +255,7 @@ public final class URLUtil {
      * @return True iff the url is a content: url.
      */
     public static boolean isContentUrl(String url) {
-        return (null != url) && url.startsWith("content:");
+        return (null != url) && url.startsWith(CONTENT_BASE);
     }
 
     /**
@@ -224,6 +267,7 @@ public final class URLUtil {
         }
 
         return (isAssetUrl(url) ||
+                isResourceUrl(url) ||
                 isFileUrl(url) ||
                 isAboutUrl(url) ||
                 isHttpUrl(url) ||
@@ -305,7 +349,7 @@ public final class URLUtil {
                 }
             }
             if (extension == null) {
-                if (mimeType != null && mimeType.toLowerCase().startsWith("text/")) {
+                if (mimeType != null && mimeType.toLowerCase(Locale.ROOT).startsWith("text/")) {
                     if (mimeType.equalsIgnoreCase("text/html")) {
                         extension = ".html";
                     } else {
@@ -340,19 +384,23 @@ public final class URLUtil {
 
     /** Regex used to parse content-disposition headers */
     private static final Pattern CONTENT_DISPOSITION_PATTERN =
-            Pattern.compile("attachment;\\s*filename\\s*=\\s*\"([^\"]*)\"");
+            Pattern.compile("attachment;\\s*filename\\s*=\\s*(\"?)([^\"]*)\\1\\s*$",
+            Pattern.CASE_INSENSITIVE);
 
     /*
      * Parse the Content-Disposition HTTP Header. The format of the header
      * is defined here: http://www.w3.org/Protocols/rfc2616/rfc2616-sec19.html
      * This header provides a filename for content that is going to be
      * downloaded to the file system. We only support the attachment type.
+     * Note that RFC 2616 specifies the filename value must be double-quoted.
+     * Unfortunately some servers do not quote the value so to maintain
+     * consistent behaviour with other browsers, we allow unquoted values too.
      */
-    private static String parseContentDisposition(String contentDisposition) {
+    static String parseContentDisposition(String contentDisposition) {
         try {
             Matcher m = CONTENT_DISPOSITION_PATTERN.matcher(contentDisposition);
             if (m.find()) {
-                return m.group(1);
+                return m.group(2);
             }
         } catch (IllegalStateException ex) {
              // This function is defined as returning null when it can't parse the header

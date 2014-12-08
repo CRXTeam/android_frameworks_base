@@ -17,7 +17,7 @@ extern const char* const RESOURCES_ANDROID_NAMESPACE;
 
 bool isWhitespace(const char16_t* str);
 
-String16 getNamespaceResourcePackage(String16 namespaceUri);
+String16 getNamespaceResourcePackage(String16 namespaceUri, bool* outIsPublic = NULL);
 
 status_t parseStyledString(Bundle* bundle,
                            const char* fileName,
@@ -25,7 +25,8 @@ status_t parseStyledString(Bundle* bundle,
                            const String16& endTag,
                            String16* outString,
                            Vector<StringPool::entry_style_span>* outSpans,
-                           bool isPseudolocalizable);
+                           bool isFormatted,
+                           PseudolocalizationMethod isPseudolocalizable);
 
 void printXMLBlock(ResXMLTree* block);
 
@@ -68,6 +69,8 @@ public:
     const String16& getElementName() const;
     const Vector<sp<XMLNode> >& getChildren() const;
 
+    const String8& getFilename() const;
+    
     struct attribute_entry {
         attribute_entry() : index(~(uint32_t)0), nameResId(0)
         {
@@ -91,6 +94,10 @@ public:
 
     const Vector<attribute_entry>& getAttributes() const;
 
+    const attribute_entry* getAttribute(const String16& ns, const String16& name) const;
+    
+    attribute_entry* editAttribute(const String16& ns, const String16& name);
+
     const String16& getCData() const;
 
     const String16& getComment() const;
@@ -98,10 +105,18 @@ public:
     int32_t getStartLineNumber() const;
     int32_t getEndLineNumber() const;
 
+    sp<XMLNode> searchElement(const String16& tagNamespace, const String16& tagName);
+    
+    sp<XMLNode> getChildElement(const String16& tagNamespace, const String16& tagName);
+    
     status_t addChild(const sp<XMLNode>& child);
+
+    status_t insertChildAt(const sp<XMLNode>& child, size_t index);
 
     status_t addAttribute(const String16& ns, const String16& name,
                           const String16& value);
+
+    status_t removeAttribute(size_t index);
 
     void setAttributeResID(size_t attrIdx, uint32_t resId);
 
@@ -114,6 +129,8 @@ public:
 
     void removeWhitespace(bool stripAll=true, const char** cDataTags=NULL);
 
+    void setUTF8(bool val) { mUTF8 = val; }
+
     status_t parseValues(const sp<AaptAssets>& assets, ResourceTable* table);
 
     status_t assignResourceIds(const sp<AaptAssets>& assets,
@@ -121,6 +138,8 @@ public:
 
     status_t flatten(const sp<AaptFile>& dest, bool stripComments,
             bool stripRawValues) const;
+
+    sp<XMLNode> clone() const;
 
     void print(int indent=0);
 
@@ -148,6 +167,9 @@ private:
     static void XMLCALL
     commentData(void *userData, const char *comment);
     
+    // For cloning
+    XMLNode();
+
     // Creating an element node.
     XMLNode(const String8& filename, const String16& s1, const String16& s2, bool isNamespace);
     
@@ -179,6 +201,9 @@ private:
     String8 mFilename;
     int32_t mStartLineNumber;
     int32_t mEndLineNumber;
+
+    // Encode compiled XML with UTF-8 StringPools?
+    bool mUTF8;
 };
 
 #endif

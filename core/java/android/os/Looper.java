@@ -16,7 +16,7 @@
 
 package android.os;
 
-import android.util.Config;
+import android.util.Log;
 import android.util.Printer;
 
 /**
@@ -31,109 +31,134 @@ import android.util.Printer;
   * <p>This is a typical example of the implementation of a Looper thread,
   * using the separation of {@link #prepare} and {@link #loop} to create an
   * initial Handler to communicate with the Looper.
-  * 
+  *
   * <pre>
   *  class LooperThread extends Thread {
   *      public Handler mHandler;
-  *      
+  *
   *      public void run() {
   *          Looper.prepare();
-  *          
+  *
   *          mHandler = new Handler() {
   *              public void handleMessage(Message msg) {
   *                  // process incoming messages here
   *              }
   *          };
-  *          
+  *
   *          Looper.loop();
   *      }
   *  }</pre>
   */
-public class Looper {
-    private static final boolean DEBUG = false;
-    private static final boolean localLOGV = DEBUG ? Config.LOGD : Config.LOGV;
+public final class Looper {
+    private static final String TAG = "Looper";
 
     // sThreadLocal.get() will return null unless you've called prepare().
-    private static final ThreadLocal sThreadLocal = new ThreadLocal();
+    static final ThreadLocal<Looper> sThreadLocal = new ThreadLocal<Looper>();
+    private static Looper sMainLooper;  // guarded by Looper.class
 
     final MessageQueue mQueue;
-    volatile boolean mRun;
-    Thread mThread;
-    private Printer mLogging = null;
-    private static Looper mMainLooper = null;
-    
+    final Thread mThread;
+
+    private Printer mLogging;
+
      /** Initialize the current thread as a looper.
       * This gives you a chance to create handlers that then reference
       * this looper, before actually starting the loop. Be sure to call
       * {@link #loop()} after calling this method, and end it by calling
       * {@link #quit()}.
       */
-    public static final void prepare() {
+    public static void prepare() {
+        prepare(true);
+    }
+
+    private static void prepare(boolean quitAllowed) {
         if (sThreadLocal.get() != null) {
             throw new RuntimeException("Only one Looper may be created per thread");
         }
-        sThreadLocal.set(new Looper());
+        sThreadLocal.set(new Looper(quitAllowed));
     }
-    
-    /** Initialize the current thread as a looper, marking it as an application's main 
-     *  looper. The main looper for your application is created by the Android environment,
-     *  so you should never need to call this function yourself.
-     * {@link #prepare()}
+
+    /**
+     * Initialize the current thread as a looper, marking it as an
+     * application's main looper. The main looper for your application
+     * is created by the Android environment, so you should never need
+     * to call this function yourself.  See also: {@link #prepare()}
      */
-     
-    public static final void prepareMainLooper() {
-        prepare();
-        setMainLooper(myLooper());
-        if (Process.supportsProcesses()) {
-            myLooper().mQueue.mQuitAllowed = false;
+    public static void prepareMainLooper() {
+        prepare(false);
+        synchronized (Looper.class) {
+            if (sMainLooper != null) {
+                throw new IllegalStateException("The main Looper has already been prepared.");
+            }
+            sMainLooper = myLooper();
         }
     }
 
-    private synchronized static void setMainLooper(Looper looper) {
-        mMainLooper = looper;
-    }
-    
     /** Returns the application's main looper, which lives in the main thread of the application.
      */
-    public synchronized static final Looper getMainLooper() {
-        return mMainLooper;
-    }
-
-    /**
-     *  Run the message queue in this thread. Be sure to call
-     * {@link #quit()} to end the loop.
-     */
-    public static final void loop() {
-        Looper me = myLooper();
-        MessageQueue queue = me.mQueue;
-        while (true) {
-            Message msg = queue.next(); // might block
-            //if (!me.mRun) {
-            //    break;
-            //}
-            if (msg != null) {
-                if (msg.target == null) {
-                    // No target is a magic identifier for the quit message.
-                    return;
-                }
-                if (me.mLogging!= null) me.mLogging.println(
-                        ">>>>> Dispatching to " + msg.target + " "
-                        + msg.callback + ": " + msg.what
-                        );
-                msg.target.dispatchMessage(msg);
-                if (me.mLogging!= null) me.mLogging.println(
-                        "<<<<< Finished to    " + msg.target + " "
-                        + msg.callback);
-                msg.recycle();
-            }
+    public static Looper getMainLooper() {
+        synchronized (Looper.class) {
+            return sMainLooper;
         }
     }
 
     /**
-     * Return the Looper object associated with the current thread.
+     * Run the message queue in this thread. Be sure to call
+     * {@link #quit()} to end the loop.
      */
-    public static final Looper myLooper() {
-        return (Looper)sThreadLocal.get();
+    public static void loop() {
+        final Looper me = myLooper();
+        if (me == null) {
+            throw new RuntimeException("No Looper; Looper.prepare() wasn't called on this thread.");
+        }
+        final MessageQueue queue = me.mQueue;
+
+        // Make sure the identity of this thread is that of the local process,
+        // and keep track of what that identity token actually is.
+        Binder.clearCallingIdentity();
+        final long ident = Binder.clearCallingIdentity();
+
+        for (;;) {
+            Message msg = queue.next(); // might block
+            if (msg == null) {
+                // No message indicates that the message queue is quitting.
+                return;
+            }
+
+            // This must be in a local variable, in case a UI event sets the logger
+            Printer logging = me.mLogging;
+            if (logging != null) {
+                logging.println(">>>>> Dispatching to " + msg.target + " " +
+                        msg.callback + ": " + msg.what);
+            }
+
+            msg.target.dispatchMessage(msg);
+
+            if (logging != null) {
+                logging.println("<<<<< Finished to " + msg.target + " " + msg.callback);
+            }
+
+            // Make sure that during the course of dispatching the
+            // identity of the thread wasn't corrupted.
+            final long newIdent = Binder.clearCallingIdentity();
+            if (ident != newIdent) {
+                Log.wtf(TAG, "Thread identity changed from 0x"
+                        + Long.toHexString(ident) + " to 0x"
+                        + Long.toHexString(newIdent) + " while dispatching to "
+                        + msg.target.getClass().getName() + " "
+                        + msg.callback + " what=" + msg.what);
+            }
+
+            msg.recycleUnchecked();
+        }
+    }
+
+    /**
+     * Return the Looper object associated with the current thread.  Returns
+     * null if the calling thread is not associated with a Looper.
+     */
+    public static Looper myLooper() {
+        return sThreadLocal.get();
     }
 
     /**
@@ -151,64 +176,133 @@ public class Looper {
     
     /**
      * Return the {@link MessageQueue} object associated with the current
-     * thread.
+     * thread.  This must be called from a thread running a Looper, or a
+     * NullPointerException will be thrown.
      */
-    public static final MessageQueue myQueue() {
+    public static MessageQueue myQueue() {
         return myLooper().mQueue;
     }
 
-    private Looper() {
-        mQueue = new MessageQueue();
-        mRun = true;
+    private Looper(boolean quitAllowed) {
+        mQueue = new MessageQueue(quitAllowed);
         mThread = Thread.currentThread();
     }
 
+    /**
+     * Returns true if the current thread is this looper's thread.
+     * @hide
+     */
+    public boolean isCurrentThread() {
+        return Thread.currentThread() == mThread;
+    }
+
+    /**
+     * Quits the looper.
+     * <p>
+     * Causes the {@link #loop} method to terminate without processing any
+     * more messages in the message queue.
+     * </p><p>
+     * Any attempt to post messages to the queue after the looper is asked to quit will fail.
+     * For example, the {@link Handler#sendMessage(Message)} method will return false.
+     * </p><p class="note">
+     * Using this method may be unsafe because some messages may not be delivered
+     * before the looper terminates.  Consider using {@link #quitSafely} instead to ensure
+     * that all pending work is completed in an orderly manner.
+     * </p>
+     *
+     * @see #quitSafely
+     */
     public void quit() {
-        Message msg = Message.obtain();
-        // NOTE: By enqueueing directly into the message queue, the
-        // message is left with a null target.  This is how we know it is
-        // a quit message.
-        mQueue.enqueueMessage(msg, 0);
+        mQueue.quit(false);
+    }
+
+    /**
+     * Quits the looper safely.
+     * <p>
+     * Causes the {@link #loop} method to terminate as soon as all remaining messages
+     * in the message queue that are already due to be delivered have been handled.
+     * However pending delayed messages with due times in the future will not be
+     * delivered before the loop terminates.
+     * </p><p>
+     * Any attempt to post messages to the queue after the looper is asked to quit will fail.
+     * For example, the {@link Handler#sendMessage(Message)} method will return false.
+     * </p>
+     */
+    public void quitSafely() {
+        mQueue.quit(true);
+    }
+
+    /**
+     * Posts a synchronization barrier to the Looper's message queue.
+     *
+     * Message processing occurs as usual until the message queue encounters the
+     * synchronization barrier that has been posted.  When the barrier is encountered,
+     * later synchronous messages in the queue are stalled (prevented from being executed)
+     * until the barrier is released by calling {@link #removeSyncBarrier} and specifying
+     * the token that identifies the synchronization barrier.
+     *
+     * This method is used to immediately postpone execution of all subsequently posted
+     * synchronous messages until a condition is met that releases the barrier.
+     * Asynchronous messages (see {@link Message#isAsynchronous} are exempt from the barrier
+     * and continue to be processed as usual.
+     *
+     * This call must be always matched by a call to {@link #removeSyncBarrier} with
+     * the same token to ensure that the message queue resumes normal operation.
+     * Otherwise the application will probably hang!
+     *
+     * @return A token that uniquely identifies the barrier.  This token must be
+     * passed to {@link #removeSyncBarrier} to release the barrier.
+     *
+     * @hide
+     */
+    public int postSyncBarrier() {
+        return mQueue.enqueueSyncBarrier(SystemClock.uptimeMillis());
+    }
+
+
+    /**
+     * Removes a synchronization barrier.
+     *
+     * @param token The synchronization barrier token that was returned by
+     * {@link #postSyncBarrier}.
+     *
+     * @throws IllegalStateException if the barrier was not found.
+     *
+     * @hide
+     */
+    public void removeSyncBarrier(int token) {
+        mQueue.removeSyncBarrier(token);
+    }
+
+    /**
+     * Return the Thread associated with this Looper.
+     */
+    public Thread getThread() {
+        return mThread;
+    }
+
+    /** @hide */
+    public MessageQueue getQueue() {
+        return mQueue;
+    }
+
+    /**
+     * Return whether this looper's thread is currently idle, waiting for new work
+     * to do.  This is intrinsically racy, since its state can change before you get
+     * the result back.
+     * @hide
+     */
+    public boolean isIdling() {
+        return mQueue.isIdling();
     }
 
     public void dump(Printer pw, String prefix) {
-        pw.println(prefix + this);
-        pw.println(prefix + "mRun=" + mRun);
-        pw.println(prefix + "mThread=" + mThread);
-        pw.println(prefix + "mQueue=" + ((mQueue != null) ? mQueue : "(null"));
-        if (mQueue != null) {
-            synchronized (mQueue) {
-                Message msg = mQueue.mMessages;
-                int n = 0;
-                while (msg != null) {
-                    pw.println(prefix + "  Message " + n + ": " + msg);
-                    n++;
-                    msg = msg.next;
-                }
-                pw.println(prefix + "(Total messages: " + n + ")");
-            }
-        }
+        pw.println(prefix + toString());
+        mQueue.dump(pw, prefix + "  ");
     }
 
     public String toString() {
-        return "Looper{"
-            + Integer.toHexString(System.identityHashCode(this))
-            + "}";
-    }
-
-    static class HandlerException extends Exception {
-
-        HandlerException(Message message, Throwable cause) {
-            super(createMessage(cause), cause);
-        }
-
-        static String createMessage(Throwable cause) {
-            String causeMsg = cause.getMessage();
-            if (causeMsg == null) {
-                causeMsg = cause.toString();
-            }
-            return causeMsg;
-        }
+        return "Looper (" + mThread.getName() + ", tid " + mThread.getId()
+                + ") {" + Integer.toHexString(System.identityHashCode(this)) + "}";
     }
 }
-

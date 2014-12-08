@@ -25,12 +25,20 @@ import android.content.Context;
 import android.content.res.TypedArray;
 import android.os.Bundle;
 import android.os.Parcelable;
+import android.text.TextUtils;
 import android.util.AttributeSet;
 
 /**
- * The {@link PreferenceGroup} class is a container for multiple
- * {@link Preference}s. It is a base class for {@link Preference} that are
+ * A container for multiple
+ * {@link Preference} objects. It is a base class for  Preference objects that are
  * parents, such as {@link PreferenceCategory} and {@link PreferenceScreen}.
+ * 
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For information about building a settings UI with Preferences,
+ * read the <a href="{@docRoot}guide/topics/ui/settings.html">Settings</a>
+ * guide.</p>
+ * </div>
  * 
  * @attr ref android.R.styleable#PreferenceGroup_orderingFromXml
  */
@@ -47,17 +55,21 @@ public abstract class PreferenceGroup extends Preference implements GenericInfla
     private int mCurrentPreferenceOrder = 0;
 
     private boolean mAttachedToActivity = false;
-    
-    public PreferenceGroup(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+
+    public PreferenceGroup(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
 
         mPreferenceList = new ArrayList<Preference>();
 
-        TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.PreferenceGroup, defStyle, 0);
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, com.android.internal.R.styleable.PreferenceGroup, defStyleAttr, defStyleRes);
         mOrderingAsAdded = a.getBoolean(com.android.internal.R.styleable.PreferenceGroup_orderingFromXml,
                 mOrderingAsAdded);
         a.recycle();
+    }
+
+    public PreferenceGroup(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
     }
 
     public PreferenceGroup(Context context, AttributeSet attrs) {
@@ -202,10 +214,7 @@ public abstract class PreferenceGroup extends Preference implements GenericInfla
      * @return Whether to allow adding the preference (true), or not (false).
      */
     protected boolean onPrepareAddPreference(Preference preference) {
-        if (!super.isEnabled()) {
-            preference.setEnabled(false);
-        }
-        
+        preference.onParentChanged(this, shouldDisableDependents());
         return true;
     }
 
@@ -223,6 +232,9 @@ public abstract class PreferenceGroup extends Preference implements GenericInfla
      * @return The {@link Preference} with the key, or null.
      */
     public Preference findPreference(CharSequence key) {
+        if (TextUtils.equals(getKey(), key)) {
+            return this;
+        }
         final int preferenceCount = getPreferenceCount();
         for (int i = 0; i < preferenceCount; i++) {
             final Preference preference = getPreference(i);
@@ -279,13 +291,14 @@ public abstract class PreferenceGroup extends Preference implements GenericInfla
     }
 
     @Override
-    public void setEnabled(boolean enabled) {
-        super.setEnabled(enabled);
-        
-        // Dispatch to all contained preferences
+    public void notifyDependencyChange(boolean disableDependents) {
+        super.notifyDependencyChange(disableDependents);
+
+        // Child preferences have an implicit dependency on their containing
+        // group. Dispatch dependency change to all contained preferences.
         final int preferenceCount = getPreferenceCount();
         for (int i = 0; i < preferenceCount; i++) {
-            getPreference(i).setEnabled(enabled);
+            getPreference(i).onParentChanged(this, disableDependents);
         }
     }
     

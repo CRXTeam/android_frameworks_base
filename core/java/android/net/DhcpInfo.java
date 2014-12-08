@@ -26,15 +26,27 @@ public class DhcpInfo implements Parcelable {
     public int ipAddress;
     public int gateway;
     public int netmask;
-
     public int dns1;
     public int dns2;
-
     public int serverAddress;
+
     public int leaseDuration;
 
     public DhcpInfo() {
         super();
+    }
+
+    /** copy constructor {@hide} */
+    public DhcpInfo(DhcpInfo source) {
+        if (source != null) {
+            ipAddress = source.ipAddress;
+            gateway = source.gateway;
+            netmask = source.netmask;
+            dns1 = source.dns1;
+            dns2 = source.dns2;
+            serverAddress = source.serverAddress;
+            leaseDuration = source.leaseDuration;
+        }
     }
 
     public String toString() {
@@ -52,10 +64,7 @@ public class DhcpInfo implements Parcelable {
     }
 
     private static void putAddress(StringBuffer buf, int addr) {
-        buf.append(addr  & 0xff).append('.').
-            append((addr >>>= 8) & 0xff).append('.').
-            append((addr >>>= 8) & 0xff).append('.').
-            append((addr >>>= 8) & 0xff);
+        buf.append(NetworkUtils.intToInetAddress(addr).getHostAddress());
     }
 
     /** Implement the Parcelable interface {@hide} */

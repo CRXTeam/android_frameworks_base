@@ -17,10 +17,13 @@
 
 package android.view;
 
+import android.content.res.Configuration;
+import android.graphics.Rect;
+import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
+import android.view.DragEvent;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
-
-import android.os.ParcelFileDescriptor;
 
 /**
  * API back to a client window that the Window Manager uses to inform it of
@@ -42,10 +45,10 @@ oneway interface IWindow {
      */
     void executeCommand(String command, String parameters, in ParcelFileDescriptor descriptor);
 
-    void resized(int w, int h, boolean reportDraw);
-    void dispatchKey(in KeyEvent event);
-    void dispatchPointer(in MotionEvent event, long eventTime);
-    void dispatchTrackball(in MotionEvent event, long eventTime);
+    void resized(in Rect frame, in Rect overscanInsets, in Rect contentInsets,
+            in Rect visibleInsets, in Rect stableInsets, boolean reportDraw,
+            in Configuration newConfig);
+    void moved(int newX, int newY);
     void dispatchAppVisibility(boolean visible);
     void dispatchGetNewSurface();
 
@@ -54,4 +57,32 @@ oneway interface IWindow {
      * to date on the current state showing navigational focus (touch mode) too.
      */
     void windowFocusChanged(boolean hasFocus, boolean inTouchMode);
+    
+    void closeSystemDialogs(String reason);
+    
+    /**
+     * Called for wallpaper windows when their offsets change.
+     */
+    void dispatchWallpaperOffsets(float x, float y, float xStep, float yStep, boolean sync);
+    
+    void dispatchWallpaperCommand(String action, int x, int y,
+            int z, in Bundle extras, boolean sync);
+
+    /**
+     * Drag/drop events
+     */
+    void dispatchDragEvent(in DragEvent event);
+
+    /**
+     * System chrome visibility changes
+     */
+    void dispatchSystemUiVisibilityChanged(int seq, int globalVisibility,
+            int localValue, int localChanges);
+
+    /**
+     * If the window manager returned RELAYOUT_RES_ANIMATING
+     * from relayout(), this method will be called when the animation
+     * is done.
+     */
+    void doneAnimating();
 }

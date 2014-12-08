@@ -26,7 +26,9 @@ import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.SoundEffectConstants;
 import android.view.View;
+import android.view.ViewDebug;
 import android.widget.TextView;
+import android.text.Layout;
 
 /**
  * The item view for each item in the {@link IconMenuView}.  
@@ -55,8 +57,8 @@ public final class IconMenuItemView extends TextView implements MenuView.ItemVie
     
     private static String sPrependShortcutLabel;
 
-    public IconMenuItemView(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs);
+    public IconMenuItemView(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
 
         if (sPrependShortcutLabel == null) {
             /*
@@ -66,10 +68,9 @@ public final class IconMenuItemView extends TextView implements MenuView.ItemVie
             sPrependShortcutLabel = getResources().getString(
                     com.android.internal.R.string.prepend_shortcut_label);
         }
-        
-        TypedArray a =
-            context.obtainStyledAttributes(
-                attrs, com.android.internal.R.styleable.MenuView, defStyle, 0);
+
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, com.android.internal.R.styleable.MenuView, defStyleAttr, defStyleRes);
 
         mDisabledAlpha = a.getFloat(
                 com.android.internal.R.styleable.MenuView_itemIconDisabledAlpha, 0.8f);
@@ -79,7 +80,11 @@ public final class IconMenuItemView extends TextView implements MenuView.ItemVie
         
         a.recycle();
     }
-    
+
+    public IconMenuItemView(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
     public IconMenuItemView(Context context, AttributeSet attrs) {
         this(context, attrs, 0);
     }
@@ -108,6 +113,10 @@ public final class IconMenuItemView extends TextView implements MenuView.ItemVie
         
         setVisibility(itemData.isVisible() ? View.VISIBLE : View.GONE);
         setEnabled(itemData.isEnabled());
+    }
+
+    public void setItemData(MenuItemImpl data) {
+        mItemData = data;
     }
 
     @Override
@@ -141,9 +150,6 @@ public final class IconMenuItemView extends TextView implements MenuView.ItemVie
     }
     
     void setCaptionMode(boolean shortcut) {
-
-        mShortcutCaptionMode = shortcut;
-        
         /*
          * If there is no item model, don't do any of the below (for example,
          * the 'More' item doesn't have a model)
@@ -152,9 +158,11 @@ public final class IconMenuItemView extends TextView implements MenuView.ItemVie
             return;
         }
         
+        mShortcutCaptionMode = shortcut && (mItemData.shouldShowShortcut());
+        
         CharSequence text = mItemData.getTitleForItemView(this);
         
-        if (shortcut) {
+        if (mShortcutCaptionMode) {
             
             if (mShortcutCaption == null) {
                 mShortcutCaption = mItemData.getShortcutLabel();
@@ -176,6 +184,9 @@ public final class IconMenuItemView extends TextView implements MenuView.ItemVie
             
             // Set the compound drawables
             setCompoundDrawables(null, icon, null, null);
+            
+            // When there is an icon, make sure the text is at the bottom
+            setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
 
             /*
              * Request a layout to reposition the icon. The positioning of icon
@@ -185,13 +196,17 @@ public final class IconMenuItemView extends TextView implements MenuView.ItemVie
             requestLayout();
         } else {
             setCompoundDrawables(null, null, null, null);
+            
+            // When there is no icon, make sure the text is centered vertically
+            setGravity(Gravity.CENTER_VERTICAL | Gravity.CENTER_HORIZONTAL);
         }
     }
 
     public void setItemInvoker(ItemInvoker itemInvoker) {
         mItemInvoker = itemInvoker;
     }
-
+    
+    @ViewDebug.CapturedViewProperty(retrieveReturn = true)
     public MenuItemImpl getItemData() {
         return mItemData;
     }
@@ -229,6 +244,32 @@ public final class IconMenuItemView extends TextView implements MenuView.ItemVie
         positionIcon();
     }
 
+    @Override
+    protected void onTextChanged(CharSequence text, int start, int before, int after) {
+        super.onTextChanged(text, start, before, after);
+
+        // our layout params depend on the length of the text
+        setLayoutParams(getTextAppropriateLayoutParams());
+    }
+
+    /**
+     * @return layout params appropriate for this view.  If layout params already exist, it will
+     *         augment them to be appropriate to the current text size.
+     */
+    IconMenuView.LayoutParams getTextAppropriateLayoutParams() {
+        IconMenuView.LayoutParams lp = (IconMenuView.LayoutParams) getLayoutParams();
+        if (lp == null) {
+            // Default layout parameters
+            lp = new IconMenuView.LayoutParams(
+                    IconMenuView.LayoutParams.MATCH_PARENT, IconMenuView.LayoutParams.MATCH_PARENT);
+        }
+
+        // Set the desired width of item
+        lp.desiredWidth = (int) Layout.getDesiredWidth(getText(), getPaint());
+
+        return lp;
+    }
+
     /**
      * Positions the icon vertically (horizontal centering is taken care of by
      * the TextView's gravity).
@@ -243,8 +284,10 @@ public final class IconMenuItemView extends TextView implements MenuView.ItemVie
         Rect tmpRect = mPositionIconOutput;
         getLineBounds(0, tmpRect);
         mPositionIconAvailable.set(0, 0, getWidth(), tmpRect.top);
-        Gravity.apply(Gravity.CENTER_VERTICAL | Gravity.LEFT, mIcon.getIntrinsicWidth(), mIcon
-                .getIntrinsicHeight(), mPositionIconAvailable, mPositionIconOutput);
+        final int layoutDirection = getLayoutDirection();
+        Gravity.apply(Gravity.CENTER_VERTICAL | Gravity.START, mIcon.getIntrinsicWidth(), mIcon
+                .getIntrinsicHeight(), mPositionIconAvailable, mPositionIconOutput,
+                layoutDirection);
         mIcon.setBounds(mPositionIconOutput);
     }
 
@@ -273,5 +316,5 @@ public final class IconMenuItemView extends TextView implements MenuView.ItemVie
     public boolean showsIcon() {
         return true;
     }
-    
+
 }

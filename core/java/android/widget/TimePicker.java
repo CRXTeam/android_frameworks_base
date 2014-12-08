@@ -16,63 +16,40 @@
 
 package android.widget;
 
+import android.annotation.Nullable;
 import android.annotation.Widget;
 import android.content.Context;
-import android.os.Parcel;
+import android.content.res.Configuration;
+import android.content.res.TypedArray;
 import android.os.Parcelable;
 import android.util.AttributeSet;
-import android.view.LayoutInflater;
-import android.view.View;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 import com.android.internal.R;
-import com.android.internal.widget.NumberPicker;
 
-import java.text.DateFormatSymbols;
-import java.util.Calendar;
+import java.util.Locale;
 
 /**
- * A view for selecting the time of day, in either 24 hour or AM/PM mode.
- *
- * The hour, each minute digit, and AM/PM (if applicable) can be conrolled by
- * vertical spinners.
- *
- * The hour can be entered by keyboard input.  Entering in two digit hours
- * can be accomplished by hitting two digits within a timeout of about a
- * second (e.g. '1' then '2' to select 12).
- *
- * The minutes can be entered by entering single digits.
- *
- * Under AM/PM mode, the user can hit 'a', 'A", 'p' or 'P' to pick.
- *
- * For a dialog using this view, see {@link android.app.TimePickerDialog}.
+ * A view for selecting the time of day, in either 24 hour or AM/PM mode. The
+ * hour, each minute digit, and AM/PM (if applicable) can be conrolled by
+ * vertical spinners. The hour can be entered by keyboard input. Entering in two
+ * digit hours can be accomplished by hitting two digits within a timeout of
+ * about a second (e.g. '1' then '2' to select 12). The minutes can be entered
+ * by entering single digits. Under AM/PM mode, the user can hit 'a', 'A", 'p'
+ * or 'P' to pick. For a dialog using this view, see
+ * {@link android.app.TimePickerDialog}.
+ * <p>
+ * See the <a href="{@docRoot}guide/topics/ui/controls/pickers.html">Pickers</a>
+ * guide.
+ * </p>
  */
 @Widget
 public class TimePicker extends FrameLayout {
-    
-    /**
-     * A no-op callback used in the constructor to avoid null checks
-     * later in the code.
-     */
-    private static final OnTimeChangedListener NO_OP_CHANGE_LISTENER = new OnTimeChangedListener() {
-        public void onTimeChanged(TimePicker view, int hourOfDay, int minute) {
-        }
-    };
-    
-    // state
-    private int mCurrentHour = 0; // 0-23
-    private int mCurrentMinute = 0; // 0-59
-    private Boolean mIs24HourView = false;
-    private boolean mIsAm;
+    private static final int MODE_SPINNER = 1;
+    private static final int MODE_CLOCK = 2;
 
-    // ui components
-    private final NumberPicker mHourPicker;
-    private final NumberPicker mMinutePicker;
-    private final Button mAmPmButton;
-    private final String mAmText;
-    private final String mPmText;
-    
-    // callbacks
-    private OnTimeChangedListener mOnTimeChangedListener;
+    private final TimePickerDelegate mDelegate;
 
     /**
      * The callback interface used to indicate the time has been adjusted.
@@ -90,271 +67,242 @@ public class TimePicker extends FrameLayout {
     public TimePicker(Context context) {
         this(context, null);
     }
-    
+
     public TimePicker(Context context, AttributeSet attrs) {
-        this(context, attrs, 0);
+        this(context, attrs, R.attr.timePickerStyle);
     }
 
-    public TimePicker(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public TimePicker(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
 
-        LayoutInflater inflater =
-                (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-        inflater.inflate(R.layout.time_picker,
-            this, // we are the parent
-            true);
+    public TimePicker(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
 
-        // hour
-        mHourPicker = (NumberPicker) findViewById(R.id.hour);
-        mHourPicker.setOnChangeListener(new NumberPicker.OnChangedListener() {
-            public void onChanged(NumberPicker spinner, int oldVal, int newVal) {
-                mCurrentHour = newVal;
-                if (!mIs24HourView) {
-                    // adjust from [1-12] to [0-11] internally, with the times
-                    // written "12:xx" being the start of the half-day
-                    if (mCurrentHour == 12) {
-                        mCurrentHour = 0;
-                    }
-                    if (!mIsAm) {
-                        // PM means 12 hours later than nominal
-                        mCurrentHour += 12;
-                    }
-                }
-                onTimeChanged();
-            }
-        });
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, R.styleable.TimePicker, defStyleAttr, defStyleRes);
+        final int mode = a.getInt(R.styleable.TimePicker_timePickerMode, MODE_SPINNER);
+        a.recycle();
 
-        // digits of minute
-        mMinutePicker = (NumberPicker) findViewById(R.id.minute);
-        mMinutePicker.setRange(0, 59);
-        mMinutePicker.setSpeed(100);
-        mMinutePicker.setFormatter(NumberPicker.TWO_DIGIT_FORMATTER);
-        mMinutePicker.setOnChangeListener(new NumberPicker.OnChangedListener() {
-            public void onChanged(NumberPicker spinner, int oldVal, int newVal) {
-                mCurrentMinute = newVal;
-                onTimeChanged();
-            }
-        });
-
-        // am/pm
-        mAmPmButton = (Button) findViewById(R.id.amPm);
-
-        // now that the hour/minute picker objects have been initialized, set
-        // the hour range properly based on the 12/24 hour display mode.
-        configurePickerRanges();
-
-        // initialize to current time
-        Calendar cal = Calendar.getInstance();
-        setOnTimeChangedListener(NO_OP_CHANGE_LISTENER);
-        
-        // by default we're not in 24 hour mode
-        setCurrentHour(cal.get(Calendar.HOUR_OF_DAY));
-        setCurrentMinute(cal.get(Calendar.MINUTE));
-        
-        mIsAm = (mCurrentHour < 12);
-        
-        /* Get the localized am/pm strings and use them in the spinner */
-        DateFormatSymbols dfs = new DateFormatSymbols();
-        String[] dfsAmPm = dfs.getAmPmStrings();
-        mAmText = dfsAmPm[Calendar.AM];
-        mPmText = dfsAmPm[Calendar.PM];
-        mAmPmButton.setText(mIsAm ? mAmText : mPmText);
-        mAmPmButton.setOnClickListener(new OnClickListener() {
-            public void onClick(View v) {
-                requestFocus();
-                if (mIsAm) {
-                    
-                    // Currently AM switching to PM
-                    if (mCurrentHour < 12) {
-                        mCurrentHour += 12;
-                    }                
-                } else {
-                    
-                    // Currently PM switching to AM
-                    if (mCurrentHour >= 12) {
-                        mCurrentHour -= 12;
-                    }
-                }
-                mIsAm = !mIsAm;
-                mAmPmButton.setText(mIsAm ? mAmText : mPmText);
-                onTimeChanged();
-            }
-        });
-        
-        if (!isEnabled()) {
-            setEnabled(false);
+        switch (mode) {
+            case MODE_CLOCK:
+                mDelegate = new TimePickerSpinnerDelegate(
+                        this, context, attrs, defStyleAttr, defStyleRes);
+                break;
+            case MODE_SPINNER:
+            default:
+                mDelegate = new TimePickerClockDelegate(
+                        this, context, attrs, defStyleAttr, defStyleRes);
+                break;
         }
-    }
-    
-    @Override
-    public void setEnabled(boolean enabled) {
-        super.setEnabled(enabled);
-        mMinutePicker.setEnabled(enabled);
-        mHourPicker.setEnabled(enabled);
-        mAmPmButton.setEnabled(enabled);
-    }
-
-    /**
-     * Used to save / restore state of time picker
-     */
-    private static class SavedState extends BaseSavedState {
-
-        private final int mHour;
-        private final int mMinute;
-
-        private SavedState(Parcelable superState, int hour, int minute) {
-            super(superState);
-            mHour = hour;
-            mMinute = minute;
-        }
-        
-        private SavedState(Parcel in) {
-            super(in);
-            mHour = in.readInt();
-            mMinute = in.readInt();
-        }
-
-        public int getHour() {
-            return mHour;
-        }
-
-        public int getMinute() {
-            return mMinute;
-        }
-
-        @Override
-        public void writeToParcel(Parcel dest, int flags) {
-            super.writeToParcel(dest, flags);
-            dest.writeInt(mHour);
-            dest.writeInt(mMinute);
-        }
-
-        public static final Parcelable.Creator<SavedState> CREATOR
-                = new Creator<SavedState>() {
-            public SavedState createFromParcel(Parcel in) {
-                return new SavedState(in);
-            }
-
-            public SavedState[] newArray(int size) {
-                return new SavedState[size];
-            }
-        };
-    }
-
-    @Override
-    protected Parcelable onSaveInstanceState() {
-        Parcelable superState = super.onSaveInstanceState();
-        return new SavedState(superState, mCurrentHour, mCurrentMinute);
-    }
-
-    @Override
-    protected void onRestoreInstanceState(Parcelable state) {
-        SavedState ss = (SavedState) state;
-        super.onRestoreInstanceState(ss.getSuperState());
-        setCurrentHour(ss.getHour());
-        setCurrentMinute(ss.getMinute());
-    }
-
-    /**
-     * Set the callback that indicates the time has been adjusted by the user.
-     * @param onTimeChangedListener the callback, should not be null.
-     */
-    public void setOnTimeChangedListener(OnTimeChangedListener onTimeChangedListener) {
-        mOnTimeChangedListener = onTimeChangedListener;
-    }
-
-    /**
-     * @return The current hour (0-23).
-     */
-    public Integer getCurrentHour() {
-        return mCurrentHour;
     }
 
     /**
      * Set the current hour.
      */
     public void setCurrentHour(Integer currentHour) {
-        this.mCurrentHour = currentHour;
-        updateHourDisplay();
+        mDelegate.setCurrentHour(currentHour);
     }
 
     /**
-     * Set whether in 24 hour or AM/PM mode.
-     * @param is24HourView True = 24 hour mode. False = AM/PM.
+     * @return The current hour in the range (0-23).
      */
-    public void setIs24HourView(Boolean is24HourView) {
-        if (mIs24HourView != is24HourView) {
-            mIs24HourView = is24HourView;
-            configurePickerRanges();
-            updateHourDisplay();
-        }
-    }
-
-    /**
-     * @return true if this is in 24 hour view else false.
-     */
-    public boolean is24HourView() {
-        return mIs24HourView;
-    }
-    
-    /**
-     * @return The current minute.
-     */
-    public Integer getCurrentMinute() {
-        return mCurrentMinute;
+    public Integer getCurrentHour() {
+        return mDelegate.getCurrentHour();
     }
 
     /**
      * Set the current minute (0-59).
      */
     public void setCurrentMinute(Integer currentMinute) {
-        this.mCurrentMinute = currentMinute;
-        updateMinuteDisplay();
+        mDelegate.setCurrentMinute(currentMinute);
+    }
+
+    /**
+     * @return The current minute.
+     */
+    public Integer getCurrentMinute() {
+        return mDelegate.getCurrentMinute();
+    }
+
+    /**
+     * Set whether in 24 hour or AM/PM mode.
+     *
+     * @param is24HourView True = 24 hour mode. False = AM/PM.
+     */
+    public void setIs24HourView(Boolean is24HourView) {
+        mDelegate.setIs24HourView(is24HourView);
+    }
+
+    /**
+     * @return true if this is in 24 hour view else false.
+     */
+    public boolean is24HourView() {
+        return mDelegate.is24HourView();
+    }
+
+    /**
+     * Set the callback that indicates the time has been adjusted by the user.
+     *
+     * @param onTimeChangedListener the callback, should not be null.
+     */
+    public void setOnTimeChangedListener(OnTimeChangedListener onTimeChangedListener) {
+        mDelegate.setOnTimeChangedListener(onTimeChangedListener);
+    }
+
+    /**
+     * Sets the callback that indicates the current time is valid.
+     *
+     * @param callback the callback, may be null
+     * @hide
+     */
+    public void setValidationCallback(@Nullable ValidationCallback callback) {
+        mDelegate.setValidationCallback(callback);
+    }
+
+    @Override
+    public void setEnabled(boolean enabled) {
+        super.setEnabled(enabled);
+        mDelegate.setEnabled(enabled);
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return mDelegate.isEnabled();
     }
 
     @Override
     public int getBaseline() {
-        return mHourPicker.getBaseline(); 
+        return mDelegate.getBaseline();
+    }
+
+    @Override
+    protected void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        mDelegate.onConfigurationChanged(newConfig);
+    }
+
+    @Override
+    protected Parcelable onSaveInstanceState() {
+        Parcelable superState = super.onSaveInstanceState();
+        return mDelegate.onSaveInstanceState(superState);
+    }
+
+    @Override
+    protected void onRestoreInstanceState(Parcelable state) {
+        BaseSavedState ss = (BaseSavedState) state;
+        super.onRestoreInstanceState(ss.getSuperState());
+        mDelegate.onRestoreInstanceState(ss);
+    }
+
+    @Override
+    public boolean dispatchPopulateAccessibilityEvent(AccessibilityEvent event) {
+        return mDelegate.dispatchPopulateAccessibilityEvent(event);
+    }
+
+    @Override
+    public void onPopulateAccessibilityEvent(AccessibilityEvent event) {
+        super.onPopulateAccessibilityEvent(event);
+        mDelegate.onPopulateAccessibilityEvent(event);
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        mDelegate.onInitializeAccessibilityEvent(event);
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        mDelegate.onInitializeAccessibilityNodeInfo(info);
     }
 
     /**
-     * Set the state of the spinners appropriate to the current hour.
+     * A delegate interface that defined the public API of the TimePicker. Allows different
+     * TimePicker implementations. This would need to be implemented by the TimePicker delegates
+     * for the real behavior.
      */
-    private void updateHourDisplay() {
-        int currentHour = mCurrentHour;
-        if (!mIs24HourView) {
-            // convert [0,23] ordinal to wall clock display
-            if (currentHour > 12) currentHour -= 12;
-            else if (currentHour == 0) currentHour = 12;
-        }
-        mHourPicker.setCurrent(currentHour);
-        mIsAm = mCurrentHour < 12;
-        mAmPmButton.setText(mIsAm ? mAmText : mPmText);
-        onTimeChanged();
-    }
+    interface TimePickerDelegate {
+        void setCurrentHour(Integer currentHour);
+        Integer getCurrentHour();
 
-    private void configurePickerRanges() {
-        if (mIs24HourView) {
-            mHourPicker.setRange(0, 23);
-            mHourPicker.setFormatter(NumberPicker.TWO_DIGIT_FORMATTER);
-            mAmPmButton.setVisibility(View.GONE);
-        } else {
-            mHourPicker.setRange(1, 12);
-            mHourPicker.setFormatter(null);
-            mAmPmButton.setVisibility(View.VISIBLE);
-        }
-    }
+        void setCurrentMinute(Integer currentMinute);
+        Integer getCurrentMinute();
 
-    private void onTimeChanged() {
-        mOnTimeChangedListener.onTimeChanged(this, getCurrentHour(), getCurrentMinute());
+        void setIs24HourView(Boolean is24HourView);
+        boolean is24HourView();
+
+        void setOnTimeChangedListener(OnTimeChangedListener onTimeChangedListener);
+        void setValidationCallback(ValidationCallback callback);
+
+        void setEnabled(boolean enabled);
+        boolean isEnabled();
+
+        int getBaseline();
+
+        void onConfigurationChanged(Configuration newConfig);
+
+        Parcelable onSaveInstanceState(Parcelable superState);
+        void onRestoreInstanceState(Parcelable state);
+
+        boolean dispatchPopulateAccessibilityEvent(AccessibilityEvent event);
+        void onPopulateAccessibilityEvent(AccessibilityEvent event);
+        void onInitializeAccessibilityEvent(AccessibilityEvent event);
+        void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info);
     }
 
     /**
-     * Set the state of the spinners appropriate to the current minute.
+     * A callback interface for updating input validity when the TimePicker
+     * when included into a Dialog.
+     *
+     * @hide
      */
-    private void updateMinuteDisplay() {
-        mMinutePicker.setCurrent(mCurrentMinute);
-        mOnTimeChangedListener.onTimeChanged(this, getCurrentHour(), getCurrentMinute());
+    public static interface ValidationCallback {
+        void onValidationChanged(boolean valid);
+    }
+
+    /**
+     * An abstract class which can be used as a start for TimePicker implementations
+     */
+    abstract static class AbstractTimePickerDelegate implements TimePickerDelegate {
+        // The delegator
+        protected TimePicker mDelegator;
+
+        // The context
+        protected Context mContext;
+
+        // The current locale
+        protected Locale mCurrentLocale;
+
+        // Callbacks
+        protected OnTimeChangedListener mOnTimeChangedListener;
+        protected ValidationCallback mValidationCallback;
+
+        public AbstractTimePickerDelegate(TimePicker delegator, Context context) {
+            mDelegator = delegator;
+            mContext = context;
+
+            // initialization based on locale
+            setCurrentLocale(Locale.getDefault());
+        }
+
+        public void setCurrentLocale(Locale locale) {
+            if (locale.equals(mCurrentLocale)) {
+                return;
+            }
+            mCurrentLocale = locale;
+        }
+
+        @Override
+        public void setValidationCallback(ValidationCallback callback) {
+            mValidationCallback = callback;
+        }
+
+        protected void onValidationChanged(boolean valid) {
+            if (mValidationCallback != null) {
+                mValidationCallback.onValidationChanged(valid);
+            }
+        }
     }
 }
-

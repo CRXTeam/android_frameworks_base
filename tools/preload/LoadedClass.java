@@ -14,12 +14,8 @@
  * limitations under the License.
  */
 
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Set;
-import java.util.HashSet;
 import java.io.Serializable;
+import java.util.*;
 
 /**
  * A loaded class.
@@ -55,7 +51,7 @@ class LoadedClass implements Serializable, Comparable<LoadedClass> {
     }
 
     void measureMemoryUsage() {
-        this.memoryUsage = MemoryUsage.forClass(name);        
+        this.memoryUsage = MemoryUsage.forClass(name);
     }
 
     int mlt = -1;
@@ -78,6 +74,10 @@ class LoadedClass implements Serializable, Comparable<LoadedClass> {
         }
 
         return mit = calculateMedian(initializations);
+    }
+
+    int medianTimeMicros() {
+        return medianInitTimeMicros() + medianLoadTimeMicros();
     }
 
     /** Calculates the median duration for a list of operations. */
@@ -103,61 +103,28 @@ class LoadedClass implements Serializable, Comparable<LoadedClass> {
         }
     }
 
-    /**
-     * Counts loads by apps.
-     */
-    int appLoads() {
-        return operationsByApps(loads);
+    /** Returns names of processes that loaded this class. */
+    Set<String> processNames() {
+        Set<String> names = new HashSet<String>();
+        addProcessNames(loads, names);
+        addProcessNames(initializations, names);
+        return names;
     }
 
-    /**
-     * Counts inits by apps.
-     */
-    int appInits() {
-        return operationsByApps(initializations);
-    }
-
-    /**
-     * Counts number of app operations in the given list.
-     */
-    private static int operationsByApps(List<Operation> operations) {
-        int byApps = 0;
-        for (Operation operation : operations) {
-            if (operation.process.isApplication()) {
-                byApps++;
+    private void addProcessNames(List<Operation> ops, Set<String> names) {
+        for (Operation operation : ops) {
+            if (operation.process.fromZygote()) {
+                names.add(operation.process.name);
             }
         }
-        return byApps;
     }
 
     public int compareTo(LoadedClass o) {
         return name.compareTo(o.name);
     }
 
+    @Override
     public String toString() {
         return name;
-    }
-
-    /**
-     * Returns true if this class's initialization causes the given class to
-     * initialize.
-     */
-    public boolean initializes(LoadedClass clazz, Set<LoadedClass> visited) {
-        // Avoid infinite recursion.
-        if (!visited.add(this)) {
-            return false;
-        }
-
-        if (clazz == this) {
-            return true;
-        }
-
-        for (Operation initialization : initializations) {
-            if (initialization.loadedClass.initializes(clazz, visited)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 }

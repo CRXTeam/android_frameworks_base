@@ -28,8 +28,8 @@ import android.util.AttributeSet;
 import android.util.SparseArray;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.animation.Interpolator;
-
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 /**
  * An abstract base class for spinner widgets. SDK users will probably not
@@ -38,23 +38,19 @@ import android.view.animation.Interpolator;
  * @attr ref android.R.styleable#AbsSpinner_entries
  */
 public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
-
     SpinnerAdapter mAdapter;
 
     int mHeightMeasureSpec;
     int mWidthMeasureSpec;
-    boolean mBlockLayoutRequests;
+
     int mSelectionLeftPadding = 0;
     int mSelectionTopPadding = 0;
     int mSelectionRightPadding = 0;
     int mSelectionBottomPadding = 0;
-    Rect mSpinnerPadding = new Rect();
-    View mSelectedView = null;
-    Interpolator mInterpolator;
+    final Rect mSpinnerPadding = new Rect();
 
-    RecycleBin mRecycler = new RecycleBin();
+    final RecycleBin mRecycler = new RecycleBin();
     private DataSetObserver mDataSetObserver;
-
 
     /** Temporary frame to hold a child View's frame rectangle */
     private Rect mTouchFrame;
@@ -68,12 +64,16 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
         this(context, attrs, 0);
     }
 
-    public AbsSpinner(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public AbsSpinner(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public AbsSpinner(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
         initAbsSpinner();
 
-        TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.AbsSpinner, defStyle, 0);
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, com.android.internal.R.styleable.AbsSpinner, defStyleAttr, defStyleRes);
 
         CharSequence[] entries = a.getTextArray(R.styleable.AbsSpinner_entries);
         if (entries != null) {
@@ -94,7 +94,6 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
         setFocusable(true);
         setWillNotDraw(false);
     }
-
 
     /**
      * The Adapter is used to provide the data which backs this Spinner.
@@ -190,20 +189,22 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
         boolean needsMeasuring = true;
         
         int selectedPosition = getSelectedItemPosition();
-        if (selectedPosition >= 0 && mAdapter != null) {
+        if (selectedPosition >= 0 && mAdapter != null && selectedPosition < mAdapter.getCount()) {
             // Try looking in the recycler. (Maybe we were measured once already)
             View view = mRecycler.get(selectedPosition);
             if (view == null) {
                 // Make a new one
                 view = mAdapter.getView(selectedPosition, null, this);
+
+                if (view.getImportantForAccessibility() == IMPORTANT_FOR_ACCESSIBILITY_AUTO) {
+                    view.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
+                }
             }
 
             if (view != null) {
                 // Put in recycler for re-measuring and/or layout
                 mRecycler.put(selectedPosition, view);
-            }
 
-            if (view != null) {
                 if (view.getLayoutParams() == null) {
                     mBlockLayoutRequests = true;
                     view.setLayoutParams(generateDefaultLayoutParams());
@@ -229,15 +230,14 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
         preferredHeight = Math.max(preferredHeight, getSuggestedMinimumHeight());
         preferredWidth = Math.max(preferredWidth, getSuggestedMinimumWidth());
 
-        heightSize = resolveSize(preferredHeight, heightMeasureSpec);
-        widthSize = resolveSize(preferredWidth, widthMeasureSpec);
+        heightSize = resolveSizeAndState(preferredHeight, heightMeasureSpec, 0);
+        widthSize = resolveSizeAndState(preferredWidth, widthMeasureSpec, 0);
 
         setMeasuredDimension(widthSize, heightSize);
         mHeightMeasureSpec = heightMeasureSpec;
         mWidthMeasureSpec = widthMeasureSpec;
     }
 
-    
     int getChildHeight(View child) {
         return child.getMeasuredHeight();
     }
@@ -249,31 +249,22 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
     @Override
     protected ViewGroup.LayoutParams generateDefaultLayoutParams() {
         return new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.FILL_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
     }
     
     void recycleAllViews() {
-        int childCount = getChildCount();
+        final int childCount = getChildCount();
         final AbsSpinner.RecycleBin recycleBin = mRecycler;
+        final int position = mFirstPosition;
 
         // All views go in recycler
-        for (int i=0; i<childCount; i++) {
+        for (int i = 0; i < childCount; i++) {
             View v = getChildAt(i);
-            int index = mFirstPosition + i;
+            int index = position + i;
             recycleBin.put(index, v);
         }  
     }
-    
-    @Override
-    void handleDataChanged() {
-        // FIXME -- this is called from both measure and layout.
-        // This is harmless right now, but we don't want to do redundant work if
-        // this gets more complicated
-       super.handleDataChanged();
-    }
-    
-  
 
     /**
      * Jump directly to a specific item in the adapter data.
@@ -284,7 +275,6 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
                 position <= mFirstPosition + getChildCount() - 1;
         setSelectionInt(position, shouldAnimate);
     }
-    
 
     @Override
     public void setSelection(int position) {
@@ -334,8 +324,6 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
             super.requestLayout();
         }
     }
-
- 
 
     @Override
     public SpinnerAdapter getAdapter() {
@@ -389,7 +377,7 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
         /**
          * Constructor called from {@link #CREATOR}
          */
-        private SavedState(Parcel in) {
+        SavedState(Parcel in) {
             super(in);
             selectedId = in.readLong();
             position = in.readInt();
@@ -452,7 +440,7 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
     }
 
     class RecycleBin {
-        private SparseArray<View> mScrapHeap = new SparseArray<View>();
+        private final SparseArray<View> mScrapHeap = new SparseArray<View>();
 
         public void put(int position, View v) {
             mScrapHeap.put(position, v);
@@ -469,12 +457,7 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
             }
             return result;
         }
-        
-        View peek(int position) {
-            // System.out.print("Looking for " + position);
-            return mScrapHeap.get(position);
-        }
-        
+
         void clear() {
             final SparseArray<View> scrapHeap = mScrapHeap;
             final int count = scrapHeap.size();
@@ -486,5 +469,17 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
             }
             scrapHeap.clear();
         }
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(AbsSpinner.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(AbsSpinner.class.getName());
     }
 }

@@ -17,6 +17,9 @@
 package android.view.animation;
 
 import android.graphics.Matrix;
+import android.graphics.Rect;
+
+import java.io.PrintWriter;
 
 /**
  * Defines the transformation to be applied at
@@ -27,23 +30,26 @@ public class Transformation {
     /**
      * Indicates a transformation that has no effect (alpha = 1 and identity matrix.)
      */
-    public static int TYPE_IDENTITY = 0x0;
+    public static final int TYPE_IDENTITY = 0x0;
     /**
      * Indicates a transformation that applies an alpha only (uses an identity matrix.)
      */
-    public static int TYPE_ALPHA = 0x1;
+    public static final int TYPE_ALPHA = 0x1;
     /**
      * Indicates a transformation that applies a matrix only (alpha = 1.)
      */
-    public static int TYPE_MATRIX = 0x2;
+    public static final int TYPE_MATRIX = 0x2;
     /**
      * Indicates a transformation that applies an alpha and a matrix.
      */
-    public static int TYPE_BOTH = TYPE_ALPHA | TYPE_MATRIX;
+    public static final int TYPE_BOTH = TYPE_ALPHA | TYPE_MATRIX;
 
     protected Matrix mMatrix;
     protected float mAlpha;
     protected int mTransformationType;
+
+    private boolean mHasClipRect;
+    private Rect mClipRect = new Rect();
 
     /**
      * Creates a new transformation with alpha = 1 and the identity matrix.
@@ -63,6 +69,8 @@ public class Transformation {
         } else {
             mMatrix.reset();
         }
+        mClipRect.setEmpty();
+        mHasClipRect = false;
         mAlpha = 1.0f;
         mTransformationType = TYPE_BOTH;
     }
@@ -96,9 +104,15 @@ public class Transformation {
     public void set(Transformation t) {
         mAlpha = t.getAlpha();
         mMatrix.set(t.getMatrix());
+        if (t.mHasClipRect) {
+            setClipRect(t.getClipRect());
+        } else {
+            mHasClipRect = false;
+            mClipRect.setEmpty();
+        }
         mTransformationType = t.getTransformationType();
     }
-    
+
     /**
      * Apply this Transformation to an existing Transformation, e.g. apply
      * a scale effect to something that has already been rotated.
@@ -107,8 +121,24 @@ public class Transformation {
     public void compose(Transformation t) {
         mAlpha *= t.getAlpha();
         mMatrix.preConcat(t.getMatrix());
+        if (t.mHasClipRect) {
+            setClipRect(t.getClipRect());
+        }
     }
     
+    /**
+     * Like {@link #compose(Transformation)} but does this.postConcat(t) of
+     * the transformation matrix.
+     * @hide
+     */
+    public void postCompose(Transformation t) {
+        mAlpha *= t.getAlpha();
+        mMatrix.postConcat(t.getMatrix());
+        if (t.mHasClipRect) {
+            setClipRect(t.getClipRect());
+        }
+    }
+
     /**
      * @return The 3x3 Matrix representing the trnasformation to apply to the
      * coordinates of the object being animated
@@ -126,6 +156,39 @@ public class Transformation {
     }
 
     /**
+     * Sets the current Transform's clip rect
+     * @hide
+     */
+    public void setClipRect(Rect r) {
+        setClipRect(r.left, r.top, r.right, r.bottom);
+    }
+
+    /**
+     * Sets the current Transform's clip rect
+     * @hide
+     */
+    public void setClipRect(int l, int t, int r, int b) {
+        mClipRect.set(l, t, r, b);
+        mHasClipRect = true;
+    }
+
+    /**
+     * Returns the current Transform's clip rect
+     * @hide
+     */
+    public Rect getClipRect() {
+        return mClipRect;
+    }
+
+    /**
+     * Returns whether the current Transform's clip rect is set
+     * @hide
+     */
+    public boolean hasClipRect() {
+        return mHasClipRect;
+    }
+
+    /**
      * @return The degree of transparency
      */
     public float getAlpha() {
@@ -134,6 +197,38 @@ public class Transformation {
     
     @Override
     public String toString() {
-        return "Transformation{alpha=" + mAlpha + " matrix=" + mMatrix + "}";
+        StringBuilder sb = new StringBuilder(64);
+        sb.append("Transformation");
+        toShortString(sb);
+        return sb.toString();
+    }
+    
+    /**
+     * Return a string representation of the transformation in a compact form.
+     */
+    public String toShortString() {
+        StringBuilder sb = new StringBuilder(64);
+        toShortString(sb);
+        return sb.toString();
+    }
+    
+    /**
+     * @hide
+     */
+    public void toShortString(StringBuilder sb) {
+        sb.append("{alpha="); sb.append(mAlpha);
+        sb.append(" matrix="); mMatrix.toShortString(sb);
+        sb.append('}');
+    }
+    
+    /**
+     * Print short string, to optimize dumping.
+     * @hide
+     */
+    public void printShortString(PrintWriter pw) {
+        pw.print("{alpha="); pw.print(mAlpha);
+        pw.print(" matrix=");
+        mMatrix.printShortString(pw);
+        pw.print('}');
     }
 }

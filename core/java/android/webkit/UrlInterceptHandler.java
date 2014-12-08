@@ -17,8 +17,15 @@
 package android.webkit;
 
 import android.webkit.CacheManager.CacheResult;
+import android.webkit.PluginData;
 import java.util.Map;
 
+/**
+ * @hide
+ * @deprecated This interface was inteded to be used by Gears. Since Gears was
+ * deprecated, so is this class.
+ */
+@Deprecated
 public interface UrlInterceptHandler {
 
     /**
@@ -29,6 +36,25 @@ public interface UrlInterceptHandler {
      * @param url URL string.
      * @param headers The headers associated with the request. May be null.
      * @return The CacheResult containing the surrogate response.
+     *
+     * @hide
+     * @deprecated Do not use, this interface is deprecated.
      */
+    @Deprecated
     public CacheResult service(String url, Map<String, String> headers);
+
+    /**
+     * Given an URL, returns the PluginData which contains the
+     * surrogate response for the request, or null if the handler is
+     * not interested.
+     *
+     * @param url URL string.
+     * @param headers The headers associated with the request. May be null.
+     * @return The PluginData containing the surrogate response.
+     *
+     * @hide
+     * @deprecated Do not use, this interface is deprecated.
+     */
+    @Deprecated
+    public PluginData getPluginData(String url, Map<String, String> headers);
 }

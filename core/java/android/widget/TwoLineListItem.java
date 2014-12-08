@@ -16,14 +16,12 @@
 
 package android.widget;
 
-import com.android.internal.R;
-
-
 import android.annotation.Widget;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.util.AttributeSet;
-import android.view.View;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.RelativeLayout;
 
 /**
@@ -36,11 +34,14 @@ import android.widget.RelativeLayout;
  * that can be displayed when a TwoLineListItem has focus. Android supplies a 
  * {@link android.R.layout#two_line_list_item standard layout resource for TwoLineListView} 
  * (which does not include a selected item icon), but you can design your own custom XML
- * layout for this object as shown here:</p>
- * {@sample packages/apps/Phone/res/layout/dialer_list_item.xml} 
+ * layout for this object.
  * 
  * @attr ref android.R.styleable#TwoLineListItem_mode
+ * 
+ * @deprecated This class can be implemented easily by apps using a {@link RelativeLayout}
+ * or a {@link LinearLayout}.
  */
+@Deprecated
 @Widget
 public class TwoLineListItem extends RelativeLayout {
 
@@ -55,11 +56,15 @@ public class TwoLineListItem extends RelativeLayout {
         this(context, attrs, 0); 
     }
 
-    public TwoLineListItem(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public TwoLineListItem(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
 
-        TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.TwoLineListItem, defStyle, 0);
+    public TwoLineListItem(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, com.android.internal.R.styleable.TwoLineListItem, defStyleAttr, defStyleRes);
 
         a.recycle();
     }
@@ -86,5 +91,17 @@ public class TwoLineListItem extends RelativeLayout {
      */
     public TextView getText2() {
         return mText2;
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(TwoLineListItem.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(TwoLineListItem.class.getName());
     }
 }

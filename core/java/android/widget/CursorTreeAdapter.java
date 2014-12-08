@@ -22,7 +22,6 @@ import android.database.ContentObserver;
 import android.database.Cursor;
 import android.database.DataSetObserver;
 import android.os.Handler;
-import android.util.Config;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.View;
@@ -134,14 +133,16 @@ public abstract class CursorTreeAdapter extends BaseExpandableListAdapter implem
     /**
      * Sets the group Cursor.
      * 
-     * @param cursor The Cursor to set for the group.
+     * @param cursor The Cursor to set for the group. If there is an existing cursor 
+     * it will be closed.
      */
     public void setGroupCursor(Cursor cursor) {
         mGroupCursorHelper.changeCursor(cursor, false);
     }
     
     /**
-     * Sets the children Cursor for a particular group.
+     * Sets the children Cursor for a particular group. If there is an existing cursor
+     * it will be closed.
      * <p>
      * This is useful when asynchronously querying to prevent blocking the UI.
      * 
@@ -450,10 +451,9 @@ public abstract class CursorTreeAdapter extends BaseExpandableListAdapter implem
         }
         
         void changeCursor(Cursor cursor, boolean releaseCursors) {
-            if (mCursor != null) {
-                mCursor.unregisterContentObserver(mContentObserver);
-                mCursor.unregisterDataSetObserver(mDataSetObserver);
-            }
+            if (cursor == mCursor) return;
+
+            deactivate();
             mCursor = cursor;
             if (cursor != null) {
                 cursor.registerContentObserver(mContentObserver);
@@ -477,7 +477,7 @@ public abstract class CursorTreeAdapter extends BaseExpandableListAdapter implem
             
             mCursor.unregisterContentObserver(mContentObserver);
             mCursor.unregisterDataSetObserver(mDataSetObserver);
-            mCursor.deactivate();
+            mCursor.close();
             mCursor = null;
         }
         
@@ -497,8 +497,8 @@ public abstract class CursorTreeAdapter extends BaseExpandableListAdapter implem
 
             @Override
             public void onChange(boolean selfChange) {
-                if (mAutoRequery && mCursor != null) {
-                    if (Config.LOGV) Log.v("Cursor", "Auto requerying " + mCursor +
+                if (mAutoRequery && mCursor != null && !mCursor.isClosed()) {
+                    if (false) Log.v("Cursor", "Auto requerying " + mCursor +
                             " due to update");
                     mDataValid = mCursor.requery();
                 }

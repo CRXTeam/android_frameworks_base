@@ -20,6 +20,7 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
+import android.util.Log;
 
 /**
  * <p>A filter constrains data with a filtering pattern.</p>
@@ -36,18 +37,38 @@ import android.os.Message;
  * @see android.widget.Filterable
  */
 public abstract class Filter {
+    private static final String LOG_TAG = "Filter";
+    
     private static final String THREAD_NAME = "Filter";
     private static final int FILTER_TOKEN = 0xD0D0F00D;
     private static final int FINISH_TOKEN = 0xDEADBEEF;
-    
+
     private Handler mThreadHandler;
     private Handler mResultHandler;
+
+    private Delayer mDelayer;
+
+    private final Object mLock = new Object();
 
     /**
      * <p>Creates a new asynchronous filter.</p>
      */
     public Filter() {
         mResultHandler = new ResultsHandler();
+    }
+
+    /**
+     * Provide an interface that decides how long to delay the message for a given query.  Useful
+     * for heuristics such as posting a delay for the delete key to avoid doing any work while the
+     * user holds down the delete key.
+     *
+     * @param delayer The delayer.
+     * @hide
+     */
+    public void setDelayer(Delayer delayer) {
+        synchronized (mLock) {
+            mDelayer = delayer;
+        }
     }
 
     /**
@@ -78,23 +99,28 @@ public abstract class Filter {
      * @see #publishResults(CharSequence, android.widget.Filter.FilterResults)
      */
     public final void filter(CharSequence constraint, FilterListener listener) {
-        synchronized (this) {
+        synchronized (mLock) {
             if (mThreadHandler == null) {
-                HandlerThread thread = new HandlerThread(THREAD_NAME);
+                HandlerThread thread = new HandlerThread(
+                        THREAD_NAME, android.os.Process.THREAD_PRIORITY_BACKGROUND);
                 thread.start();
                 mThreadHandler = new RequestHandler(thread.getLooper());
             }
+
+            final long delay = (mDelayer == null) ? 0 : mDelayer.getPostingDelay(constraint);
             
             Message message = mThreadHandler.obtainMessage(FILTER_TOKEN);
     
             RequestArguments args = new RequestArguments();
-            args.constraint = constraint;
+            // make sure we use an immutable copy of the constraint, so that
+            // it doesn't change while the filter operation is in progress
+            args.constraint = constraint != null ? constraint.toString() : null;
             args.listener = listener;
             message.obj = args;
     
             mThreadHandler.removeMessages(FILTER_TOKEN);
             mThreadHandler.removeMessages(FINISH_TOKEN);
-            mThreadHandler.sendMessage(message);
+            mThreadHandler.sendMessageDelayed(message, delay);
         }
     }
 
@@ -206,13 +232,16 @@ public abstract class Filter {
                     RequestArguments args = (RequestArguments) msg.obj;
                     try {
                         args.results = performFiltering(args.constraint);
+                    } catch (Exception e) {
+                        args.results = new FilterResults();
+                        Log.w(LOG_TAG, "An exception occured during performFiltering()!", e);
                     } finally {
                         message = mResultHandler.obtainMessage(what);
                         message.obj = args;
                         message.sendToTarget();
                     }
 
-                    synchronized (this) {
+                    synchronized (mLock) {
                         if (mThreadHandler != null) {
                             Message finishMessage = mThreadHandler.obtainMessage(FINISH_TOKEN);
                             mThreadHandler.sendMessageDelayed(finishMessage, 3000);
@@ -220,7 +249,7 @@ public abstract class Filter {
                     }
                     break;
                 case FINISH_TOKEN:
-                    synchronized (this) {
+                    synchronized (mLock) {
                         if (mThreadHandler != null) {
                             mThreadHandler.getLooper().quit();
                             mThreadHandler = null;
@@ -277,5 +306,18 @@ public abstract class Filter {
          * <p>The results of the filtering operation.</p>
          */
         FilterResults results;
+    }
+
+    /**
+     * @hide
+     */
+    public interface Delayer {
+
+        /**
+         * @param constraint The constraint passed to {@link Filter#filter(CharSequence)}
+         * @return The delay that should be used for
+         *         {@link Handler#sendMessageDelayed(android.os.Message, long)}
+         */
+        long getPostingDelay(CharSequence constraint);
     }
 }

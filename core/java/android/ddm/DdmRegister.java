@@ -17,7 +17,6 @@
 package android.ddm;
 
 import org.apache.harmony.dalvik.ddmc.DdmServer;
-import android.util.Config;
 import android.util.Log;
 
 /**
@@ -44,13 +43,15 @@ public class DdmRegister {
      * we finish here.
      */
     public static void registerHandlers() {
-        if (Config.LOGV)
+        if (false)
             Log.v("ddm", "Registering DDM message handlers");
         DdmHandleHello.register();
         DdmHandleThread.register();
         DdmHandleHeap.register();
         DdmHandleNativeHeap.register();
+        DdmHandleProfiling.register();
         DdmHandleExit.register();
+        DdmHandleViewDebug.register();
 
         DdmServer.registrationComplete();
     }

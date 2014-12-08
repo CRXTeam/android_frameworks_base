@@ -16,14 +16,23 @@
 
 package android.graphics.drawable;
 
+import com.android.internal.R;
+
+import android.annotation.NonNull;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
+import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
-import android.graphics.*;
+import android.content.res.Resources.Theme;
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.Insets;
+import android.graphics.Outline;
+import android.graphics.PorterDuff.Mode;
+import android.graphics.Rect;
 import android.util.AttributeSet;
-import android.util.Log;
 
 import java.io.IOException;
 
@@ -31,13 +40,26 @@ import java.io.IOException;
  * A Drawable that insets another Drawable by a specified distance.
  * This is used when a View needs a background that is smaller than
  * the View's actual bounds.
+ *
+ * <p>It can be defined in an XML file with the <code>&lt;inset></code> element. For more
+ * information, see the guide to <a
+ * href="{@docRoot}guide/topics/resources/drawable-resource.html">Drawable Resources</a>.</p>
+ *
+ * @attr ref android.R.styleable#InsetDrawable_visible
+ * @attr ref android.R.styleable#InsetDrawable_drawable
+ * @attr ref android.R.styleable#InsetDrawable_insetLeft
+ * @attr ref android.R.styleable#InsetDrawable_insetRight
+ * @attr ref android.R.styleable#InsetDrawable_insetTop
+ * @attr ref android.R.styleable#InsetDrawable_insetBottom
  */
-public class InsetDrawable extends Drawable implements Drawable.Callback
-{
-    // Most of this is copied from ScaleDrawable.
+public class InsetDrawable extends Drawable implements Drawable.Callback {
+    private final Rect mTmpRect = new Rect();
+
+    private InsetState mInsetState;
+    private boolean mMutated;
 
     /*package*/ InsetDrawable() {
-        this(null);
+        this(null, null);
     }
 
     public InsetDrawable(Drawable drawable, int inset) {
@@ -46,95 +68,151 @@ public class InsetDrawable extends Drawable implements Drawable.Callback
 
     public InsetDrawable(Drawable drawable, int insetLeft, int insetTop,
                          int insetRight, int insetBottom) {
-        this(null);
-        
+        this(null, null);
+
         mInsetState.mDrawable = drawable;
         mInsetState.mInsetLeft = insetLeft;
         mInsetState.mInsetTop = insetTop;
         mInsetState.mInsetRight = insetRight;
         mInsetState.mInsetBottom = insetBottom;
-        
+
         if (drawable != null) {
             drawable.setCallback(this);
         }
     }
-    
-    @Override public void inflate(Resources r, XmlPullParser parser,
-                                  AttributeSet attrs)
-    throws XmlPullParserException, IOException {
-        int type;
-        
-        TypedArray a = r.obtainAttributes(attrs,
-                com.android.internal.R.styleable.InsetDrawable);
 
-        super.inflateWithAttributes(r, parser, a,
-                com.android.internal.R.styleable.InsetDrawable_visible);
+    @Override
+    public void inflate(Resources r, XmlPullParser parser, AttributeSet attrs, Theme theme)
+            throws XmlPullParserException, IOException {
+        final TypedArray a = obtainAttributes(r, theme, attrs, R.styleable.InsetDrawable);
+        super.inflateWithAttributes(r, parser, a, R.styleable.InsetDrawable_visible);
 
-        int drawableRes = a.getResourceId(com.android.internal.R.styleable.
-                                    InsetDrawable_drawable, 0);
+        mInsetState.mDrawable = null;
+        updateStateFromTypedArray(a);
 
-        int inLeft = a.getDimensionPixelOffset(com.android.internal.R.styleable.
-                                    InsetDrawable_insetLeft, 0);
-        int inTop = a.getDimensionPixelOffset(com.android.internal.R.styleable.
-                                    InsetDrawable_insetTop, 0);
-        int inRight = a.getDimensionPixelOffset(com.android.internal.R.styleable.
-                                    InsetDrawable_insetRight, 0);
-        int inBottom = a.getDimensionPixelOffset(com.android.internal.R.styleable.
-                                    InsetDrawable_insetBottom, 0);
-
-        a.recycle();
-
-        Drawable dr;
-        if (drawableRes != 0) {
-            dr = r.getDrawable(drawableRes);
-        } else {
+        // Load inner XML elements.
+        if (mInsetState.mDrawable == null) {
+            int type;
             while ((type=parser.next()) == XmlPullParser.TEXT) {
             }
             if (type != XmlPullParser.START_TAG) {
                 throw new XmlPullParserException(
                         parser.getPositionDescription()
-                        + ": <inset> tag requires a 'drawable' attribute or "
-                        + "child tag defining a drawable");
+                                + ": <inset> tag requires a 'drawable' attribute or "
+                                + "child tag defining a drawable");
             }
-            dr = Drawable.createFromXmlInner(r, parser, attrs);
-        }
-
-        if (dr == null) {
-            Log.w("drawable", "No drawable specified for <inset>");
-        }
-
-        mInsetState.mDrawable = dr;
-        mInsetState.mInsetLeft = inLeft;
-        mInsetState.mInsetRight = inRight;
-        mInsetState.mInsetTop = inTop;
-        mInsetState.mInsetBottom = inBottom;
-
-        if (dr != null) {
+            final Drawable dr = Drawable.createFromXmlInner(r, parser, attrs, theme);
+            mInsetState.mDrawable = dr;
             dr.setCallback(this);
         }
+
+        verifyRequiredAttributes(a);
+        a.recycle();
     }
 
-    // overrides from Drawable.Callback
+    private void verifyRequiredAttributes(TypedArray a) throws XmlPullParserException {
+        // If we're not waiting on a theme, verify required attributes.
+        if (mInsetState.mDrawable == null && (mInsetState.mThemeAttrs == null
+                || mInsetState.mThemeAttrs[R.styleable.InsetDrawable_drawable] == 0)) {
+            throw new XmlPullParserException(a.getPositionDescription() +
+                    ": <inset> tag requires a 'drawable' attribute or "
+                    + "child tag defining a drawable");
+        }
+    }
 
+    private void updateStateFromTypedArray(TypedArray a) throws XmlPullParserException {
+        final InsetState state = mInsetState;
+
+        // Account for any configuration changes.
+        state.mChangingConfigurations |= a.getChangingConfigurations();
+
+        // Extract the theme attributes, if any.
+        state.mThemeAttrs = a.extractThemeAttrs();
+
+        final int N = a.getIndexCount();
+        for (int i = 0; i < N; i++) {
+            final int attr = a.getIndex(i);
+            switch (attr) {
+                case R.styleable.InsetDrawable_drawable:
+                    final Drawable dr = a.getDrawable(attr);
+                    if (dr != null) {
+                        state.mDrawable = dr;
+                        dr.setCallback(this);
+                    }
+                    break;
+                case R.styleable.InsetDrawable_inset:
+                    final int inset = a.getDimensionPixelOffset(attr, Integer.MIN_VALUE);
+                    if (inset != Integer.MIN_VALUE) {
+                        state.mInsetLeft = inset;
+                        state.mInsetTop = inset;
+                        state.mInsetRight = inset;
+                        state.mInsetBottom = inset;
+                    }
+                    break;
+                case R.styleable.InsetDrawable_insetLeft:
+                    state.mInsetLeft = a.getDimensionPixelOffset(attr, state.mInsetLeft);
+                    break;
+                case R.styleable.InsetDrawable_insetTop:
+                    state.mInsetTop = a.getDimensionPixelOffset(attr, state.mInsetTop);
+                    break;
+                case R.styleable.InsetDrawable_insetRight:
+                    state.mInsetRight = a.getDimensionPixelOffset(attr, state.mInsetRight);
+                    break;
+                case R.styleable.InsetDrawable_insetBottom:
+                    state.mInsetBottom = a.getDimensionPixelOffset(attr, state.mInsetBottom);
+                    break;
+            }
+        }
+    }
+
+    @Override
+    public void applyTheme(Theme t) {
+        super.applyTheme(t);
+
+        final InsetState state = mInsetState;
+        if (state == null || state.mThemeAttrs == null) {
+            return;
+        }
+
+        final TypedArray a = t.resolveAttributes(state.mThemeAttrs, R.styleable.InsetDrawable);
+        try {
+            updateStateFromTypedArray(a);
+            verifyRequiredAttributes(a);
+        } catch (XmlPullParserException e) {
+            throw new RuntimeException(e);
+        } finally {
+            a.recycle();
+        }
+    }
+
+    @Override
+    public boolean canApplyTheme() {
+        return mInsetState != null && mInsetState.mThemeAttrs != null;
+    }
+
+    @Override
     public void invalidateDrawable(Drawable who) {
-        if (mCallback != null) {
-            mCallback.invalidateDrawable(this);
+        final Callback callback = getCallback();
+        if (callback != null) {
+            callback.invalidateDrawable(this);
         }
     }
 
+    @Override
     public void scheduleDrawable(Drawable who, Runnable what, long when) {
-        if (mCallback != null) {
-            mCallback.scheduleDrawable(this, what, when);
+        final Callback callback = getCallback();
+        if (callback != null) {
+            callback.scheduleDrawable(this, what, when);
         }
     }
 
+    @Override
     public void unscheduleDrawable(Drawable who, Runnable what) {
-        if (mCallback != null) {
-            mCallback.unscheduleDrawable(this, what);
+        final Callback callback = getCallback();
+        if (callback != null) {
+            callback.unscheduleDrawable(this, what);
         }
     }
-
-    // overrides from Drawable
 
     @Override
     public void draw(Canvas canvas) {
@@ -147,7 +225,7 @@ public class InsetDrawable extends Drawable implements Drawable.Callback
                 | mInsetState.mChangingConfigurations
                 | mInsetState.mDrawable.getChangingConfigurations();
     }
-    
+
     @Override
     public boolean getPadding(Rect padding) {
         boolean pad = mInsetState.mDrawable.getPadding(padding);
@@ -157,12 +235,34 @@ public class InsetDrawable extends Drawable implements Drawable.Callback
         padding.top += mInsetState.mInsetTop;
         padding.bottom += mInsetState.mInsetBottom;
 
-        if (pad || (mInsetState.mInsetLeft | mInsetState.mInsetRight | 
-                    mInsetState.mInsetTop | mInsetState.mInsetBottom) != 0) {
-            return true;
-        } else {
-            return false;
-        }
+        return pad || (mInsetState.mInsetLeft | mInsetState.mInsetRight |
+                mInsetState.mInsetTop | mInsetState.mInsetBottom) != 0;
+    }
+
+    /** @hide */
+    @Override
+    public Insets getOpticalInsets() {
+        final Insets contentInsets = super.getOpticalInsets();
+        return Insets.of(contentInsets.left + mInsetState.mInsetLeft,
+                contentInsets.top + mInsetState.mInsetTop,
+                contentInsets.right + mInsetState.mInsetRight,
+                contentInsets.bottom + mInsetState.mInsetBottom);
+    }
+
+    @Override
+    public void setHotspot(float x, float y) {
+        mInsetState.mDrawable.setHotspot(x, y);
+    }
+
+    @Override
+    public void setHotspotBounds(int left, int top, int right, int bottom) {
+        mInsetState.mDrawable.setHotspotBounds(left, top, right, bottom);
+    }
+
+    /** @hide */
+    @Override
+    public void getHotspotBounds(Rect outRect) {
+        mInsetState.mDrawable.getHotspotBounds(outRect);
     }
 
     @Override
@@ -175,17 +275,38 @@ public class InsetDrawable extends Drawable implements Drawable.Callback
     public void setAlpha(int alpha) {
         mInsetState.mDrawable.setAlpha(alpha);
     }
-    
+
+    @Override
+    public int getAlpha() {
+        return mInsetState.mDrawable.getAlpha();
+    }
+
     @Override
     public void setColorFilter(ColorFilter cf) {
         mInsetState.mDrawable.setColorFilter(cf);
     }
-    
+
+    @Override
+    public void setTintList(ColorStateList tint) {
+        mInsetState.mDrawable.setTintList(tint);
+    }
+
+    @Override
+    public void setTintMode(Mode tintMode) {
+        mInsetState.mDrawable.setTintMode(tintMode);
+    }
+
+    /** {@hide} */
+    @Override
+    public void setLayoutDirection(int layoutDirection) {
+        mInsetState.mDrawable.setLayoutDirection(layoutDirection);
+    }
+
     @Override
     public int getOpacity() {
         return mInsetState.mDrawable.getOpacity();
     }
-    
+
     @Override
     public boolean isStateful() {
         return mInsetState.mDrawable.isStateful();
@@ -197,7 +318,12 @@ public class InsetDrawable extends Drawable implements Drawable.Callback
         onBoundsChange(getBounds());
         return changed;
     }
-    
+
+    @Override
+    protected boolean onLevelChange(int level) {
+        return mInsetState.mDrawable.setLevel(level);
+    }
+
     @Override
     protected void onBoundsChange(Rect bounds) {
         final Rect r = mTmpRect;
@@ -222,19 +348,62 @@ public class InsetDrawable extends Drawable implements Drawable.Callback
     }
 
     @Override
+    public void getOutline(@NonNull Outline outline) {
+        mInsetState.mDrawable.getOutline(outline);
+    }
+
+    @Override
     public ConstantState getConstantState() {
         if (mInsetState.canConstantState()) {
-            mInsetState.mChangingConfigurations = super.getChangingConfigurations();
+            mInsetState.mChangingConfigurations = getChangingConfigurations();
             return mInsetState;
         }
         return null;
     }
 
+    @Override
+    public Drawable mutate() {
+        if (!mMutated && super.mutate() == this) {
+            mInsetState.mDrawable.mutate();
+            mMutated = true;
+        }
+        return this;
+    }
+
+    /**
+     * Returns the drawable wrapped by this InsetDrawable. May be null.
+     */
+    public Drawable getDrawable() {
+        return mInsetState.mDrawable;
+    }
+
     final static class InsetState extends ConstantState {
-        InsetState(InsetState orig, InsetDrawable owner) {
+        int[] mThemeAttrs;
+        int mChangingConfigurations;
+
+        Drawable mDrawable;
+
+        int mInsetLeft;
+        int mInsetTop;
+        int mInsetRight;
+        int mInsetBottom;
+
+        boolean mCheckedConstantState;
+        boolean mCanConstantState;
+
+        InsetState(InsetState orig, InsetDrawable owner, Resources res) {
             if (orig != null) {
-                mDrawable = orig.mDrawable.getConstantState().newDrawable();
+                mThemeAttrs = orig.mThemeAttrs;
+                mChangingConfigurations = orig.mChangingConfigurations;
+                if (res != null) {
+                    mDrawable = orig.mDrawable.getConstantState().newDrawable(res);
+                } else {
+                    mDrawable = orig.mDrawable.getConstantState().newDrawable();
+                }
                 mDrawable.setCallback(owner);
+                mDrawable.setLayoutDirection(orig.mDrawable.getLayoutDirection());
+                mDrawable.setBounds(orig.mDrawable.getBounds());
+                mDrawable.setLevel(orig.mDrawable.getLevel());
                 mInsetLeft = orig.mInsetLeft;
                 mInsetTop = orig.mInsetTop;
                 mInsetRight = orig.mInsetRight;
@@ -245,9 +414,14 @@ public class InsetDrawable extends Drawable implements Drawable.Callback
 
         @Override
         public Drawable newDrawable() {
-            return new InsetDrawable(this);
+            return new InsetDrawable(this, null);
         }
-        
+
+        @Override
+        public Drawable newDrawable(Resources res) {
+            return new InsetDrawable(this, res);
+        }
+
         @Override
         public int getChangingConfigurations() {
             return mChangingConfigurations;
@@ -261,25 +435,10 @@ public class InsetDrawable extends Drawable implements Drawable.Callback
 
             return mCanConstantState;
         }
-
-        Drawable mDrawable;
-        int mChangingConfigurations;
-
-        int mInsetLeft;
-        int mInsetTop;
-        int mInsetRight;
-        int mInsetBottom;
-
-        boolean mCheckedConstantState;
-        boolean mCanConstantState;
     }
 
-    private InsetDrawable(InsetState state) {
-        InsetState as = new InsetState(state, this);
-        mInsetState = as;
+    private InsetDrawable(InsetState state, Resources res) {
+        mInsetState = new InsetState(state, this, res);
     }
-
-    private InsetState  mInsetState;
-    private final Rect  mTmpRect = new Rect();
 }
 

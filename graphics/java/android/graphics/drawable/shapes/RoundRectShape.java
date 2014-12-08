@@ -17,6 +17,7 @@
 package android.graphics.drawable.shapes;
 
 import android.graphics.Canvas;
+import android.graphics.Outline;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
@@ -57,13 +58,11 @@ public class RoundRectShape extends RectShape {
      */
     public RoundRectShape(float[] outerRadii, RectF inset,
                           float[] innerRadii) {
-        if (outerRadii.length < 8) {
-            throw new ArrayIndexOutOfBoundsException(
-                                        "outer radii must have >= 8 values");
+        if (outerRadii != null && outerRadii.length < 8) {
+            throw new ArrayIndexOutOfBoundsException("outer radii must have >= 8 values");
         }
         if (innerRadii != null && innerRadii.length < 8) {
-            throw new ArrayIndexOutOfBoundsException(
-                                        "inner radii must have >= 8 values");
+            throw new ArrayIndexOutOfBoundsException("inner radii must have >= 8 values");
         }
         mOuterRadii = outerRadii;
         mInset = inset;
@@ -79,11 +78,33 @@ public class RoundRectShape extends RectShape {
     public void draw(Canvas canvas, Paint paint) {
         canvas.drawPath(mPath, paint);
     }
-    
+
+    @Override
+    public void getOutline(Outline outline) {
+        if (mInnerRect != null) return; // have a hole, can't produce valid outline
+
+        float radius = 0;
+        if (mOuterRadii != null) {
+            radius = mOuterRadii[0];
+            for (int i = 1; i < 8; i++) {
+                if (mOuterRadii[i] != radius) {
+                    // can't call simple constructors, use path
+                    outline.setConvexPath(mPath);
+                    return;
+                }
+            }
+        }
+
+        final RectF rect = rect();
+        outline.setRoundRect((int) Math.ceil(rect.left), (int) Math.ceil(rect.top),
+                (int) Math.floor(rect.right), (int) Math.floor(rect.bottom),
+                radius);
+    }
+
     @Override
     protected void onResize(float w, float h) {
         super.onResize(w, h);
-        
+
         RectF r = rect();
         mPath.reset();
 
@@ -97,12 +118,22 @@ public class RoundRectShape extends RectShape {
                            r.right - mInset.right, r.bottom - mInset.bottom);
             if (mInnerRect.width() < w && mInnerRect.height() < h) {
                 if (mInnerRadii != null) {
-                    mPath.addRoundRect(mInnerRect, mInnerRadii,
-                                       Path.Direction.CCW);
+                    mPath.addRoundRect(mInnerRect, mInnerRadii, Path.Direction.CCW);
                 } else {
                     mPath.addRect(mInnerRect, Path.Direction.CCW);
                 }
             }
         }
+    }
+
+    @Override
+    public RoundRectShape clone() throws CloneNotSupportedException {
+        RoundRectShape shape = (RoundRectShape) super.clone();
+        shape.mOuterRadii = mOuterRadii != null ? mOuterRadii.clone() : null;
+        shape.mInnerRadii = mInnerRadii != null ? mInnerRadii.clone() : null;
+        shape.mInset = new RectF(mInset);
+        shape.mInnerRect = new RectF(mInnerRect);
+        shape.mPath = new Path(mPath);
+        return shape;
     }
 }

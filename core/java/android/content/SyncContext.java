@@ -18,16 +18,17 @@ package android.content;
 
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.IBinder;
 
-/**
- * @hide
- */
 public class SyncContext {
     private ISyncContext mSyncContext;
     private long mLastHeartbeatSendTime;
 
     private static final long HEARTBEAT_SEND_INTERVAL_IN_MS = 1000;
 
+    /**
+     * @hide
+     */
     public SyncContext(ISyncContext syncContextInterface) {
         mSyncContext = syncContextInterface;
         mLastHeartbeatSendTime = 0;
@@ -38,6 +39,8 @@ public class SyncContext {
      * {@link #updateHeartbeat}, so it also takes the place of a call to that.
      *
      * @param message the current status message for this sync
+     *
+     * @hide
      */
     public void setStatusText(String message) {
         updateHeartbeat();
@@ -48,12 +51,14 @@ public class SyncContext {
      * downloads or sends records to/from the server, this may be called after each record
      * is downloaded or uploaded.
      */
-    public void updateHeartbeat() {
+    private void updateHeartbeat() {
         final long now = SystemClock.elapsedRealtime();
         if (now < mLastHeartbeatSendTime + HEARTBEAT_SEND_INTERVAL_IN_MS) return;
         try {
             mLastHeartbeatSendTime = now;
-            mSyncContext.sendHeartbeat();
+            if (mSyncContext != null) {
+                mSyncContext.sendHeartbeat();
+            }
         } catch (RemoteException e) {
             // this should never happen
         }
@@ -61,13 +66,15 @@ public class SyncContext {
 
     public void onFinished(SyncResult result) {
         try {
-            mSyncContext.onFinished(result);
+            if (mSyncContext != null) {
+                mSyncContext.onFinished(result);
+            }
         } catch (RemoteException e) {
             // this should never happen
         }
     }
 
-    public ISyncContext getISyncContext() {
-        return mSyncContext;
+    public IBinder getSyncContextBinder() {
+        return (mSyncContext == null) ? null : mSyncContext.asBinder();
     }
 }

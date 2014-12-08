@@ -23,13 +23,13 @@ public class DashPathEffect extends PathEffect {
      * the even indices specifying the "on" intervals, and the odd indices
      * specifying the "off" intervals. phase is an offset into the intervals
      * array (mod the sum of all of the intervals). The intervals array
-     * controlls the width of the dashes. The paint's strokeWidth controlls the
-     * height of the dashes.
+     * controls the length of the dashes. The paint's strokeWidth controls the
+     * thickness of the dashes.
      * Note: this patheffect only affects drawing with the paint's style is set
-     * to STROKE or STROKE_AND_FILL. It is ignored if the drawing is done with
+     * to STROKE or FILL_AND_STROKE. It is ignored if the drawing is done with
      * style == FILL.
      * @param intervals array of ON and OFF distances
-     * @param phase offset before the first ON interval is drawn
+     * @param phase offset into the intervals array
      */
     public DashPathEffect(float intervals[], float phase) {
         if (intervals.length < 2) {
@@ -38,6 +38,6 @@ public class DashPathEffect extends PathEffect {
         native_instance = nativeCreate(intervals, phase);
     }
     
-    private static native int nativeCreate(float intervals[], float phase);
+    private static native long nativeCreate(float intervals[], float phase);
 }
 

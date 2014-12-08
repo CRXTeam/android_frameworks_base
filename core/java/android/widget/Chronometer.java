@@ -18,13 +18,14 @@ package android.widget;
 
 import android.content.Context;
 import android.content.res.TypedArray;
-import android.graphics.Canvas;
 import android.os.Handler;
 import android.os.Message;
 import android.os.SystemClock;
-import android.pim.DateUtils;
+import android.text.format.DateUtils;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.RemoteViews.RemoteView;
 
 import java.util.Formatter;
@@ -46,6 +47,18 @@ import java.util.Locale;
 public class Chronometer extends TextView {
     private static final String TAG = "Chronometer";
 
+    /**
+     * A callback that notifies when the chronometer has incremented on its own.
+     */
+    public interface OnChronometerTickListener {
+
+        /**
+         * Notification that the chronometer has changed.
+         */
+        void onChronometerTick(Chronometer chronometer);
+
+    }
+
     private long mBase;
     private boolean mVisible;
     private boolean mStarted;
@@ -56,7 +69,11 @@ public class Chronometer extends TextView {
     private Locale mFormatterLocale;
     private Object[] mFormatterArgs = new Object[1];
     private StringBuilder mFormatBuilder;
-
+    private OnChronometerTickListener mOnChronometerTickListener;
+    private StringBuilder mRecycle = new StringBuilder(8);
+    
+    private static final int TICK_WHAT = 2;
+    
     /**
      * Initialize this Chronometer object.
      * Sets the base to the current time.
@@ -77,12 +94,15 @@ public class Chronometer extends TextView {
      * Initialize with standard view layout information and style.
      * Sets the base to the current time.
      */
-    public Chronometer(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public Chronometer(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
 
-        TypedArray a = context.obtainStyledAttributes(
-                attrs,
-                com.android.internal.R.styleable.Chronometer, defStyle, 0);
+    public Chronometer(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, com.android.internal.R.styleable.Chronometer, defStyleAttr, defStyleRes);
         setFormat(a.getString(com.android.internal.R.styleable.Chronometer_format));
         a.recycle();
 
@@ -99,8 +119,10 @@ public class Chronometer extends TextView {
      *
      * @param base Use the {@link SystemClock#elapsedRealtime} time base.
      */
+    @android.view.RemotableViewMethod
     public void setBase(long base) {
         mBase = base;
+        dispatchChronometerTick();
         updateText(SystemClock.elapsedRealtime());
     }
 
@@ -122,6 +144,7 @@ public class Chronometer extends TextView {
      *
      * @param format the format string.
      */
+    @android.view.RemotableViewMethod
     public void setFormat(String format) {
         mFormat = format;
         if (format != null && mFormatBuilder == null) {
@@ -134,6 +157,23 @@ public class Chronometer extends TextView {
      */
     public String getFormat() {
         return mFormat;
+    }
+
+    /**
+     * Sets the listener to be called when the chronometer changes.
+     * 
+     * @param listener The listener.
+     */
+    public void setOnChronometerTickListener(OnChronometerTickListener listener) {
+        mOnChronometerTickListener = listener;
+    }
+
+    /**
+     * @return The listener (may be null) that is listening for chronometer change
+     *         events.
+     */
+    public OnChronometerTickListener getOnChronometerTickListener() {
+        return mOnChronometerTickListener;
     }
 
     /**
@@ -161,6 +201,16 @@ public class Chronometer extends TextView {
         updateRunning();
     }
 
+    /**
+     * The same as calling {@link #start} or {@link #stop}.
+     * @hide pending API council approval
+     */
+    @android.view.RemotableViewMethod
+    public void setStarted(boolean started) {
+        mStarted = started;
+        updateRunning();
+    }
+
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
@@ -175,10 +225,10 @@ public class Chronometer extends TextView {
         updateRunning();
     }
 
-    private void updateText(long now) {
+    private synchronized void updateText(long now) {
         long seconds = now - mBase;
         seconds /= 1000;
-        String text = DateUtils.formatElapsedTime(seconds);
+        String text = DateUtils.formatElapsedTime(mRecycle, seconds);
 
         if (mFormat != null) {
             Locale loc = Locale.getDefault();
@@ -206,7 +256,10 @@ public class Chronometer extends TextView {
         if (running != mRunning) {
             if (running) {
                 updateText(SystemClock.elapsedRealtime());
-                mHandler.sendMessageDelayed(Message.obtain(), 1000);
+                dispatchChronometerTick();
+                mHandler.sendMessageDelayed(Message.obtain(mHandler, TICK_WHAT), 1000);
+            } else {
+                mHandler.removeMessages(TICK_WHAT);
             }
             mRunning = running;
         }
@@ -214,10 +267,29 @@ public class Chronometer extends TextView {
     
     private Handler mHandler = new Handler() {
         public void handleMessage(Message m) {
-            if (mStarted) {
+            if (mRunning) {
                 updateText(SystemClock.elapsedRealtime());
-                sendMessageDelayed(Message.obtain(), 1000);
+                dispatchChronometerTick();
+                sendMessageDelayed(Message.obtain(this, TICK_WHAT), 1000);
             }
         }
     };
+
+    void dispatchChronometerTick() {
+        if (mOnChronometerTickListener != null) {
+            mOnChronometerTickListener.onChronometerTick(this);
+        }
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(Chronometer.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(Chronometer.class.getName());
+    }
 }

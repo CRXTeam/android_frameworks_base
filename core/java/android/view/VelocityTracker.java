@@ -16,72 +16,98 @@
 
 package android.view;
 
-import android.util.Config;
-import android.util.Log;
+import android.util.Pools.SynchronizedPool;
 
 /**
  * Helper for tracking the velocity of touch events, for implementing
- * flinging and other such gestures.  Use {@link #obtain} to retrieve a
- * new instance of the class when you are going to begin tracking, put
- * the motion events you receive into it with {@link #addMovement(MotionEvent)},
- * and when you want to determine the velocity call
- * {@link #computeCurrentVelocity(int)} and then {@link #getXVelocity()}
- * and {@link #getXVelocity()}.
+ * flinging and other such gestures.
+ *
+ * Use {@link #obtain} to retrieve a new instance of the class when you are going
+ * to begin tracking.  Put the motion events you receive into it with
+ * {@link #addMovement(MotionEvent)}.  When you want to determine the velocity call
+ * {@link #computeCurrentVelocity(int)} and then call {@link #getXVelocity(int)}
+ * and {@link #getYVelocity(int)} to retrieve the velocity for each pointer id.
  */
 public final class VelocityTracker {
-    static final String TAG = "VelocityTracker";
-    static final boolean DEBUG = false;
-    static final boolean localLOGV = DEBUG || Config.LOGV;
-    
-    static final int NUM_PAST = 10;
-    static final int LONGEST_PAST_TIME = 200;
-    
-    static final VelocityTracker[] mPool = new VelocityTracker[1];
-    
-    final float mPastX[] = new float[NUM_PAST];
-    final float mPastY[] = new float[NUM_PAST];
-    final long mPastTime[] = new long[NUM_PAST];
-   
-    float mYVelocity;
-    float mXVelocity;
-    
+    private static final SynchronizedPool<VelocityTracker> sPool =
+            new SynchronizedPool<VelocityTracker>(2);
+
+    private static final int ACTIVE_POINTER_ID = -1;
+
+    private long mPtr;
+    private final String mStrategy;
+
+    private static native long nativeInitialize(String strategy);
+    private static native void nativeDispose(long ptr);
+    private static native void nativeClear(long ptr);
+    private static native void nativeAddMovement(long ptr, MotionEvent event);
+    private static native void nativeComputeCurrentVelocity(long ptr, int units, float maxVelocity);
+    private static native float nativeGetXVelocity(long ptr, int id);
+    private static native float nativeGetYVelocity(long ptr, int id);
+    private static native boolean nativeGetEstimator(long ptr, int id, Estimator outEstimator);
+
     /**
      * Retrieve a new VelocityTracker object to watch the velocity of a
      * motion.  Be sure to call {@link #recycle} when done.  You should
      * generally only maintain an active object while tracking a movement,
      * so that the VelocityTracker can be re-used elsewhere.
-     * 
+     *
      * @return Returns a new VelocityTracker.
      */
     static public VelocityTracker obtain() {
-        synchronized (mPool) {
-            VelocityTracker vt = mPool[0];
-            if (vt != null) {
-                vt.clear();
-                return vt;
-            }
-            return new VelocityTracker();
-        }
+        VelocityTracker instance = sPool.acquire();
+        return (instance != null) ? instance : new VelocityTracker(null);
     }
-    
+
+    /**
+     * Obtains a velocity tracker with the specified strategy.
+     * For testing and comparison purposes only.
+     *
+     * @param strategy The strategy, or null to use the default.
+     * @return The velocity tracker.
+     *
+     * @hide
+     */
+    public static VelocityTracker obtain(String strategy) {
+        if (strategy == null) {
+            return obtain();
+        }
+        return new VelocityTracker(strategy);
+    }
+
     /**
      * Return a VelocityTracker object back to be re-used by others.  You must
      * not touch the object after calling this function.
      */
     public void recycle() {
-        synchronized (mPool) {
-            mPool[0] = this;
+        if (mStrategy == null) {
+            clear();
+            sPool.release(this);
         }
     }
-    
-    private VelocityTracker() {
+
+    private VelocityTracker(String strategy) {
+        mPtr = nativeInitialize(strategy);
+        mStrategy = strategy;
     }
-    
+
+    @Override
+    protected void finalize() throws Throwable {
+        try {
+            if (mPtr != 0) {
+                nativeDispose(mPtr);
+                mPtr = 0;
+            }
+        } finally {
+            super.finalize();
+        }
+    }
+
     /**
      * Reset the velocity tracker back to its initial state.
      */
     public void clear() {
-        mPastTime[0] = 0;
+        nativeClear(mPtr);
     }
     
     /**
@@ -91,57 +117,25 @@ public final class VelocityTracker {
      * final {@link MotionEvent#ACTION_UP}.  You can, however, call this
      * for whichever events you desire.
      * 
-     * @param ev The MotionEvent you received and would like to track.
+     * @param event The MotionEvent you received and would like to track.
      */
-    public void addMovement(MotionEvent ev) {
-        long time = ev.getEventTime();
-        final int N = ev.getHistorySize();
-        for (int i=0; i<N; i++) {
-            addPoint(ev.getHistoricalX(i), ev.getHistoricalY(i),
-                    ev.getHistoricalEventTime(i));
+    public void addMovement(MotionEvent event) {
+        if (event == null) {
+            throw new IllegalArgumentException("event must not be null");
         }
-        addPoint(ev.getX(), ev.getY(), time);
+        nativeAddMovement(mPtr, event);
     }
 
-    private void addPoint(float x, float y, long time) {
-        int drop = -1;
-        int i;
-        if (localLOGV) Log.v(TAG, "Adding past y=" + y + " time=" + time);
-        final long[] pastTime = mPastTime;
-        for (i=0; i<NUM_PAST; i++) {
-            if (pastTime[i] == 0) {
-                break;
-            } else if (pastTime[i] < time-LONGEST_PAST_TIME) {
-                if (localLOGV) Log.v(TAG, "Dropping past too old at "
-                        + i + " time=" + pastTime[i]);
-                drop = i;
-            }
-        }
-        if (localLOGV) Log.v(TAG, "Add index: " + i);
-        if (i == NUM_PAST && drop < 0) {
-            drop = 0;
-        }
-        if (drop == i) drop--;
-        final float[] pastX = mPastX;
-        final float[] pastY = mPastY;
-        if (drop >= 0) {
-            if (localLOGV) Log.v(TAG, "Dropping up to #" + drop);
-            final int start = drop+1;
-            final int count = NUM_PAST-drop-1;
-            System.arraycopy(pastX, start, pastX, 0, count);
-            System.arraycopy(pastY, start, pastY, 0, count);
-            System.arraycopy(pastTime, start, pastTime, 0, count);
-            i -= (drop+1);
-        }
-        pastX[i] = x;
-        pastY[i] = y;
-        pastTime[i] = time;
-        i++;
-        if (i < NUM_PAST) {
-            pastTime[i] = 0;
-        }
+    /**
+     * Equivalent to invoking {@link #computeCurrentVelocity(int, float)} with a maximum
+     * velocity of Float.MAX_VALUE.
+     * 
+     * @see #computeCurrentVelocity(int, float) 
+     */
+    public void computeCurrentVelocity(int units) {
+        nativeComputeCurrentVelocity(mPtr, units, Float.MAX_VALUE);
     }
-    
+
     /**
      * Compute the current velocity based on the points that have been
      * collected.  Only call this when you actually want to retrieve velocity
@@ -151,46 +145,12 @@ public final class VelocityTracker {
      * 
      * @param units The units you would like the velocity in.  A value of 1
      * provides pixels per millisecond, 1000 provides pixels per second, etc.
+     * @param maxVelocity The maximum velocity that can be computed by this method.
+     * This value must be declared in the same unit as the units parameter. This value
+     * must be positive.
      */
-    public void computeCurrentVelocity(int units) {
-        final float[] pastX = mPastX;
-        final float[] pastY = mPastY;
-        final long[] pastTime = mPastTime;
-        
-        // Kind-of stupid.
-        final float oldestX = pastX[0];
-        final float oldestY = pastY[0];
-        final long oldestTime = pastTime[0];
-        float accumX = 0;
-        float accumY = 0;
-        int N=0;
-        while (N < NUM_PAST) {
-            if (pastTime[N] == 0) {
-                break;
-            }
-            N++;
-        }
-        // Skip the last received event, since it is probably pretty noisy.
-        if (N > 3) N--;
-        
-        for (int i=1; i < N; i++) {
-            final int dur = (int)(pastTime[i] - oldestTime);
-            if (dur == 0) continue;
-            float dist = pastX[i] - oldestX;
-            float vel = (dist/dur) * units;   // pixels/frame.
-            if (accumX == 0) accumX = vel;
-            else accumX = (accumX + vel) * .5f;
-            
-            dist = pastY[i] - oldestY;
-            vel = (dist/dur) * units;   // pixels/frame.
-            if (accumY == 0) accumY = vel;
-            else accumY = (accumY + vel) * .5f;
-        }
-        mXVelocity = accumX;
-        mYVelocity = accumY;
-        
-        if (localLOGV) Log.v(TAG, "Y velocity=" + mYVelocity +" X velocity="
-                + mXVelocity + " N=" + N);
+    public void computeCurrentVelocity(int units, float maxVelocity) {
+        nativeComputeCurrentVelocity(mPtr, units, maxVelocity);
     }
     
     /**
@@ -200,7 +160,7 @@ public final class VelocityTracker {
      * @return The previously computed X velocity.
      */
     public float getXVelocity() {
-        return mXVelocity;
+        return nativeGetXVelocity(mPtr, ACTIVE_POINTER_ID);
     }
     
     /**
@@ -210,6 +170,132 @@ public final class VelocityTracker {
      * @return The previously computed Y velocity.
      */
     public float getYVelocity() {
-        return mYVelocity;
+        return nativeGetYVelocity(mPtr, ACTIVE_POINTER_ID);
+    }
+    
+    /**
+     * Retrieve the last computed X velocity.  You must first call
+     * {@link #computeCurrentVelocity(int)} before calling this function.
+     * 
+     * @param id Which pointer's velocity to return.
+     * @return The previously computed X velocity.
+     */
+    public float getXVelocity(int id) {
+        return nativeGetXVelocity(mPtr, id);
+    }
+    
+    /**
+     * Retrieve the last computed Y velocity.  You must first call
+     * {@link #computeCurrentVelocity(int)} before calling this function.
+     * 
+     * @param id Which pointer's velocity to return.
+     * @return The previously computed Y velocity.
+     */
+    public float getYVelocity(int id) {
+        return nativeGetYVelocity(mPtr, id);
+    }
+
+    /**
+     * Get an estimator for the movements of a pointer using past movements of the
+     * pointer to predict future movements.
+     *
+     * It is not necessary to call {@link #computeCurrentVelocity(int)} before calling
+     * this method.
+     *
+     * @param id Which pointer's velocity to return.
+     * @param outEstimator The estimator to populate.
+     * @return True if an estimator was obtained, false if there is no information
+     * available about the pointer.
+     *
+     * @hide For internal use only.  Not a final API.
+     */
+    public boolean getEstimator(int id, Estimator outEstimator) {
+        if (outEstimator == null) {
+            throw new IllegalArgumentException("outEstimator must not be null");
+        }
+        return nativeGetEstimator(mPtr, id, outEstimator);
+    }
+
+    /**
+     * An estimator for the movements of a pointer based on a polynomial model.
+     *
+     * The last recorded position of the pointer is at time zero seconds.
+     * Past estimated positions are at negative times and future estimated positions
+     * are at positive times.
+     *
+     * First coefficient is position (in pixels), second is velocity (in pixels per second),
+     * third is acceleration (in pixels per second squared).
+     *
+     * @hide For internal use only.  Not a final API.
+     */
+    public static final class Estimator {
+        // Must match VelocityTracker::Estimator::MAX_DEGREE
+        private static final int MAX_DEGREE = 4;
+
+        /**
+         * Polynomial coefficients describing motion in X.
+         */
+        public final float[] xCoeff = new float[MAX_DEGREE + 1];
+
+        /**
+         * Polynomial coefficients describing motion in Y.
+         */
+        public final float[] yCoeff = new float[MAX_DEGREE + 1];
+
+        /**
+         * Polynomial degree, or zero if only position information is available.
+         */
+        public int degree;
+
+        /**
+         * Confidence (coefficient of determination), between 0 (no fit) and 1 (perfect fit).
+         */
+        public float confidence;
+
+        /**
+         * Gets an estimate of the X position of the pointer at the specified time point.
+         * @param time The time point in seconds, 0 is the last recorded time.
+         * @return The estimated X coordinate.
+         */
+        public float estimateX(float time) {
+            return estimate(time, xCoeff);
+        }
+
+        /**
+         * Gets an estimate of the Y position of the pointer at the specified time point.
+         * @param time The time point in seconds, 0 is the last recorded time.
+         * @return The estimated Y coordinate.
+         */
+        public float estimateY(float time) {
+            return estimate(time, yCoeff);
+        }
+
+        /**
+         * Gets the X coefficient with the specified index.
+         * @param index The index of the coefficient to return.
+         * @return The X coefficient, or 0 if the index is greater than the degree.
+         */
+        public float getXCoeff(int index) {
+            return index <= degree ? xCoeff[index] : 0;
+        }
+
+        /**
+         * Gets the Y coefficient with the specified index.
+         * @param index The index of the coefficient to return.
+         * @return The Y coefficient, or 0 if the index is greater than the degree.
+         */
+        public float getYCoeff(int index) {
+            return index <= degree ? yCoeff[index] : 0;
+        }
+
+        private float estimate(float time, float[] c) {
+            float a = 0;
+            float scale = 1;
+            for (int i = 0; i <= degree; i++) {
+                a += c[i] * scale;
+                scale *= time;
+            }
+            return a;
+        }
     }
 }

@@ -26,9 +26,30 @@ public interface Spanned
 extends CharSequence
 {
     /**
+     * Bitmask of bits that are relevent for controlling point/mark behavior
+     * of spans.
+     *
+     * MARK and POINT are conceptually located <i>between</i> two adjacent characters.
+     * A MARK is "attached" to the character before, while a POINT will stick to the character
+     * after. The insertion cursor is conceptually located between the MARK and the POINT.
+     *
+     * As a result, inserting a new character between a MARK and a POINT will leave the MARK
+     * unchanged, while the POINT will be shifted, now located after the inserted character and
+     * still glued to the same character after it.
+     *
+     * Depending on whether the insertion happens at the beginning or the end of a span, the span
+     * will hence be expanded to <i>include</i> the new character (when the span is using a MARK at
+     * its beginning or a POINT at its end) or it will be <i>excluded</i>.
+     *
+     * Note that <i>before</i> and <i>after</i> here refer to offsets in the String, which are
+     * independent from the visual representation of the text (left-to-right or right-to-left).
+     */
+    public static final int SPAN_POINT_MARK_MASK = 0x33;
+    
+    /**
      * 0-length spans with type SPAN_MARK_MARK behave like text marks:
      * they remain at their original offset when text is inserted
-     * at that offset.
+     * at that offset. Conceptually, the text is added after the mark.
      */
     public static final int SPAN_MARK_MARK =   0x11;
     /**
@@ -44,6 +65,7 @@ extends CharSequence
      * 0-length spans with type SPAN_POINT_POINT behave like cursors:
      * they are pushed forward by the length of the insertion when text
      * is inserted at their offset.
+     * The text is conceptually inserted before the point.
      */
     public static final int SPAN_POINT_POINT = 0x22;
 
@@ -85,12 +107,28 @@ extends CharSequence
     public static final int SPAN_EXCLUSIVE_EXCLUSIVE = SPAN_POINT_MARK;
 
     /**
-     * Non-0-length spans of type SPAN_INCLUSIVE_EXCLUSIVE expand
+     * Non-0-length spans of type SPAN_EXCLUSIVE_INCLUSIVE expand
      * to include text inserted at their ending point but not at their
      * starting point.  When 0-length, they behave like points.
      */
     public static final int SPAN_EXCLUSIVE_INCLUSIVE = SPAN_POINT_POINT;
 
+    /**
+     * This flag is set on spans that are being used to apply temporary
+     * styling information on the composing text of an input method, so that
+     * they can be found and removed when the composing text is being
+     * replaced.
+     */
+    public static final int SPAN_COMPOSING = 0x100;
+    
+    /**
+     * This flag will be set for intermediate span changes, meaning there
+     * is guaranteed to be another change following it.  Typically it is
+     * used for {@link Selection} which automatically uses this with the first
+     * offset it sets when updating the selection.
+     */
+    public static final int SPAN_INTERMEDIATE = 0x200;
+    
     /**
      * The bits numbered SPAN_USER_SHIFT and above are available
      * for callers to use to store scalar data associated with their

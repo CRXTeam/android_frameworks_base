@@ -17,12 +17,22 @@
 package android.text.method;
 
 import android.view.KeyEvent;
+import android.text.InputType;
 
 /**
  * For entering dates in a text field.
+ * <p></p>
+ * As for all implementations of {@link KeyListener}, this class is only concerned
+ * with hardware keyboards.  Software input methods have no obligation to trigger
+ * the methods in this class.
  */
 public class DateKeyListener extends NumberKeyListener
 {
+    public int getInputType() {
+        return InputType.TYPE_CLASS_DATETIME
+                | InputType.TYPE_DATETIME_VARIATION_DATE;
+    }
+    
     @Override
     protected char[] getAcceptedChars()
     {

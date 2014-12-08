@@ -28,6 +28,17 @@ interface IPhoneSubInfo {
     String getDeviceId();
 
     /**
+     * Retrieves the unique device ID of a subId for the device, e.g., IMEI
+     * for GSM phones.
+     */
+    String getDeviceIdForSubscriber(long subId);
+
+    /**
+     * Retrieves the IMEI.
+     */
+    String getImeiForSubscriber(long subId);
+
+    /**
      * Retrieves the software version number for the device, e.g., IMEI/SV
      * for GSM phones.
      */
@@ -39,9 +50,29 @@ interface IPhoneSubInfo {
     String getSubscriberId();
 
     /**
-     * Retrieves the serial number of the SIM, if applicable.
+     * Retrieves the unique subscriber ID of a given subId, e.g., IMSI for GSM phones.
      */
-    String getSimSerialNumber();
+    String getSubscriberIdForSubscriber(long subId);
+
+    /**
+     * Retrieves the Group Identifier Level1 for GSM phones.
+     */
+    String getGroupIdLevel1();
+
+    /**
+     * Retrieves the Group Identifier Level1 for GSM phones of a subId.
+     */
+    String getGroupIdLevel1ForSubscriber(long subId);
+
+    /**
+     * Retrieves the serial number of the ICC, if applicable.
+     */
+    String getIccSerialNumber();
+
+    /**
+     * Retrieves the serial number of a given subId.
+     */
+    String getIccSerialNumberForSubscriber(long subId);
 
     /**
      * Retrieves the phone number string for line 1.
@@ -49,17 +80,113 @@ interface IPhoneSubInfo {
     String getLine1Number();
 
     /**
+     * Retrieves the phone number string for line 1 of a subcription.
+     */
+    String getLine1NumberForSubscriber(long subId);
+
+
+    /**
      * Retrieves the alpha identifier for line 1.
      */
     String getLine1AlphaTag();
 
-	/**
-	 * Retrieves the voice mail number.
-	 */
+    /**
+     * Retrieves the alpha identifier for line 1 of a subId.
+     */
+    String getLine1AlphaTagForSubscriber(long subId);
+
+
+    /**
+     * Retrieves MSISDN Number.
+     */
+    String getMsisdn();
+
+    /**
+     * Retrieves the Msisdn of a subId.
+     */
+    String getMsisdnForSubscriber(long subId);
+
+    /**
+     * Retrieves the voice mail number.
+     */
     String getVoiceMailNumber();
 
-	/**
-	 * Retrieves the alpha identifier associated with the voice mail number.
-	 */
+    /**
+     * Retrieves the voice mail number of a given subId.
+     */
+    String getVoiceMailNumberForSubscriber(long subId);
+
+    /**
+     * Retrieves the complete voice mail number.
+     */
+    String getCompleteVoiceMailNumber();
+
+    /**
+     * Retrieves the complete voice mail number for particular subId
+     */
+    String getCompleteVoiceMailNumberForSubscriber(long subId);
+
+    /**
+     * Retrieves the alpha identifier associated with the voice mail number.
+     */
     String getVoiceMailAlphaTag();
+
+    /**
+     * Retrieves the alpha identifier associated with the voice mail number
+     * of a subId.
+     */
+    String getVoiceMailAlphaTagForSubscriber(long subId);
+
+    /**
+     * Returns the IMS private user identity (IMPI) that was loaded from the ISIM.
+     * @return the IMPI, or null if not present or not loaded
+     */
+    String getIsimImpi();
+
+    /**
+     * Returns the IMS home network domain name that was loaded from the ISIM.
+     * @return the IMS domain name, or null if not present or not loaded
+     */
+    String getIsimDomain();
+
+    /**
+     * Returns the IMS public user identities (IMPU) that were loaded from the ISIM.
+     * @return an array of IMPU strings, with one IMPU per string, or null if
+     *      not present or not loaded
+     */
+    String[] getIsimImpu();
+
+    /**
+     * Returns the IMS Service Table (IST) that was loaded from the ISIM.
+     * @return IMS Service Table or null if not present or not loaded
+     */
+    String getIsimIst();
+
+    /**
+     * Returns the IMS Proxy Call Session Control Function(PCSCF) that were loaded from the ISIM.
+     * @return an array of PCSCF strings with one PCSCF per string, or null if
+     *      not present or not loaded
+     */
+    String[] getIsimPcscf();
+
+    /**
+     * TODO: Deprecate and remove this interface. Superceded by getIccsimChallengeResponse.
+     * Returns the response of ISIM Authetification through RIL.
+     * @return the response of ISIM Authetification, or null if
+     *     the Authentification hasn't been successed or isn't present iphonesubinfo.
+     */
+    String getIsimChallengeResponse(String nonce);
+
+    /**
+     * Returns the response of the SIM application on the UICC to authentication
+     * challenge/response algorithm. The data string and challenge response are
+     * Base64 encoded Strings.
+     * Can support EAP-SIM, EAP-AKA with results encoded per 3GPP TS 31.102.
+     *
+     * @param subId subscription ID to be queried
+     * @param appType ICC application type (@see com.android.internal.telephony.PhoneConstants#APPTYPE_xxx)
+     * @param data authentication challenge data
+     * @return challenge response
+     */
+    String getIccSimChallengeResponse(long subId, int appType, String data);
 }

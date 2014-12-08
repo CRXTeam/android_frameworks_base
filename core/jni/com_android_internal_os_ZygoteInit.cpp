@@ -27,14 +27,8 @@
 #include <JNIHelp.h>
 #include "android_runtime/AndroidRuntime.h"
 
-#ifdef HAVE_ANDROID_OS
-#include <linux/capability.h>
-#include <linux/prctl.h>
+#include <sys/capability.h>
 #include <sys/prctl.h>
-extern "C" int capget(cap_user_header_t hdrp, cap_user_data_t datap);
-extern "C" int capset(cap_user_header_t hdrp, const cap_user_data_t datap);
-#endif
-
 
 namespace android {
 
@@ -45,14 +39,10 @@ namespace android {
 static jint com_android_internal_os_ZygoteInit_setreuid(
     JNIEnv* env, jobject clazz, jint ruid, jint euid)
 {
-    int err;
-
-    errno = 0;
-    err = setreuid(ruid, euid);
-
-    //LOGI("setreuid(%d,%d) err %d errno %d", ruid, euid, err, errno);
-
-    return errno;
+    if (setreuid(ruid, euid) < 0) {
+        return errno;
+    }
+    return 0;
 }
 
 /*
@@ -62,14 +52,10 @@ static jint com_android_internal_os_ZygoteInit_setreuid(
 static jint com_android_internal_os_ZygoteInit_setregid(
     JNIEnv* env, jobject clazz, jint rgid, jint egid)
 {
-    int err;
-
-    errno = 0;
-    err = setregid(rgid, egid);
-
-    //LOGI("setregid(%d,%d) err %d errno %d", rgid, egid, err, errno);
-
-    return errno;
+    if (setregid(rgid, egid) < 0) {
+        return errno;
+    }
+    return 0;
 }
 
 /*
@@ -79,13 +65,10 @@ static jint com_android_internal_os_ZygoteInit_setregid(
 static jint com_android_internal_os_ZygoteInit_setpgid(
     JNIEnv* env, jobject clazz, jint pid, jint pgid)
 {
-    int err;
-
-    errno = 0;
-
-    err = setpgid(pid, pgid);
-
-    return errno;
+    if (setpgid(pid, pgid) < 0) {
+        return errno;
+    }
+    return 0;
 }
 
 /*
@@ -105,7 +88,7 @@ static jint com_android_internal_os_ZygoteInit_getpgid(
     return ret;
 }
 
-static void com_android_internal_os_ZygoteInit_reopenStdio(JNIEnv* env, 
+static void com_android_internal_os_ZygoteInit_reopenStdio(JNIEnv* env,
         jobject clazz, jobject in, jobject out, jobject errfd)
 {
     int fd;
@@ -142,28 +125,6 @@ static void com_android_internal_os_ZygoteInit_reopenStdio(JNIEnv* env,
     } while (err < 0 && errno == EINTR);
 }
 
-static void com_android_internal_os_ZygoteInit_closeDescriptor(JNIEnv* env, 
-        jobject clazz, jobject descriptor)
-{
-    int fd;
-    int err;
-
-    fd = jniGetFDFromFileDescriptor(env, descriptor);
-
-    if  (env->ExceptionOccurred() != NULL) {
-        return;
-    }
-
-    do {
-        err = close(fd);
-    } while (err < 0 && errno == EINTR);
-
-    if (err < 0) {
-        jniThrowIOException(env, errno);
-        return;
-    }
-}
-
 static void com_android_internal_os_ZygoteInit_setCloseOnExec (JNIEnv *env,
     jobject clazz, jobject descriptor, jboolean flag)
 {
@@ -198,67 +159,11 @@ static void com_android_internal_os_ZygoteInit_setCloseOnExec (JNIEnv *env,
     }
 }
 
-static void com_android_internal_os_ZygoteInit_setCapabilities (JNIEnv *env,
-    jobject clazz, jlong permitted, jlong effective)
-{
-#ifdef HAVE_ANDROID_OS
-    struct __user_cap_header_struct capheader;
-    struct __user_cap_data_struct capdata;
-    int err;
-
-    memset (&capheader, 0, sizeof(capheader));
-    memset (&capdata, 0, sizeof(capdata));
-
-    capheader.version = _LINUX_CAPABILITY_VERSION;
-    capheader.pid = 0;
-
-    // As of this writing, capdata is __u32, but that's expected
-    // to change...
-    capdata.effective = effective;
-    capdata.permitted = permitted;
-
-    err = capset (&capheader, &capdata); 
-
-    if (err < 0) {
-        jniThrowIOException(env, errno);
-        return;
-    }
-#endif /* HAVE_ANDROID_OS */
-}
-
-static jlong com_android_internal_os_ZygoteInit_capgetPermitted (JNIEnv *env,
-    jobject clazz, jint pid)
-{
-#ifndef HAVE_ANDROID_OS
-    return (jlong)0;
-#else
-    struct __user_cap_header_struct capheader;
-    struct __user_cap_data_struct capdata;
-    int err;
-
-    memset (&capheader, 0, sizeof(capheader));
-    memset (&capdata, 0, sizeof(capdata));
-
-    capheader.version = _LINUX_CAPABILITY_VERSION;
-    capheader.pid = pid;
-
-    err = capget (&capheader, &capdata); 
-
-    if (err < 0) {
-        jniThrowIOException(env, errno);
-        return 0;
-    }
-
-    return (jlong) capdata.permitted;
-#endif /* HAVE_ANDROID_OS */
-}
-
 static jint com_android_internal_os_ZygoteInit_selectReadable (
-        JNIEnv *env, jobject clazz, jobjectArray fds) 
+        JNIEnv *env, jobject clazz, jobjectArray fds)
 {
     if (fds == NULL) {
-        jniThrowException(env, "java/lang/NullPointerException",
-            "fds == null");
+        jniThrowNullPointerException(env, "fds == null");
         return -1;
     }
 
@@ -322,7 +227,7 @@ static jint com_android_internal_os_ZygoteInit_selectReadable (
 }
 
 static jobject com_android_internal_os_ZygoteInit_createFileDescriptor (
-        JNIEnv *env, jobject clazz, jint fd) 
+        JNIEnv *env, jobject clazz, jint fd)
 {
     return jniCreateFileDescriptor(env, fd);
 }
@@ -340,18 +245,12 @@ static JNINativeMethod gMethods[] = {
       (void *) com_android_internal_os_ZygoteInit_setpgid },
     { "getpgid", "(I)I",
       (void *) com_android_internal_os_ZygoteInit_getpgid },
-    { "reopenStdio",   
+    { "reopenStdio",
         "(Ljava/io/FileDescriptor;Ljava/io/FileDescriptor;"
-        "Ljava/io/FileDescriptor;)V", 
+        "Ljava/io/FileDescriptor;)V",
             (void *) com_android_internal_os_ZygoteInit_reopenStdio},
-    { "closeDescriptor", "(Ljava/io/FileDescriptor;)V", 
-        (void *) com_android_internal_os_ZygoteInit_closeDescriptor},
-    { "setCloseOnExec", "(Ljava/io/FileDescriptor;Z)V", 
+    { "setCloseOnExec", "(Ljava/io/FileDescriptor;Z)V",
         (void *)  com_android_internal_os_ZygoteInit_setCloseOnExec},
-    { "setCapabilities", "(JJ)V", 
-        (void *) com_android_internal_os_ZygoteInit_setCapabilities },
-    { "capgetPermitted", "(I)J", 
-        (void *) com_android_internal_os_ZygoteInit_capgetPermitted },
     { "selectReadable", "([Ljava/io/FileDescriptor;)I",
         (void *) com_android_internal_os_ZygoteInit_selectReadable },
     { "createFileDescriptor", "(I)Ljava/io/FileDescriptor;",
@@ -364,4 +263,3 @@ int register_com_android_internal_os_ZygoteInit(JNIEnv* env)
 }
 
 }; // namespace android
-

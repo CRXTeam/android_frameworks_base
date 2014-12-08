@@ -16,6 +16,9 @@
 
 package android.net;
 
+import static android.util.Patterns.GOOD_IRI_CHAR;
+
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -37,13 +40,11 @@ import java.util.regex.Pattern;
  */
 public class WebAddress {
 
-    private final static String LOGTAG = "http";
-
-    public String mScheme;
-    public String mHost;
-    public int mPort;
-    public String mPath;
-    public String mAuthInfo;
+    private String mScheme;
+    private String mHost;
+    private int mPort;
+    private String mPath;
+    private String mAuthInfo;
 
     static final int MATCH_GROUP_SCHEME = 1;
     static final int MATCH_GROUP_AUTHORITY = 2;
@@ -52,11 +53,12 @@ public class WebAddress {
     static final int MATCH_GROUP_PATH = 5;
 
     static Pattern sAddressPattern = Pattern.compile(
-            /* scheme    */ "(?:(http|HTTP|https|HTTPS|file|FILE)\\:\\/\\/)?" +
+            /* scheme    */ "(?:(http|https|file)\\:\\/\\/)?" +
             /* authority */ "(?:([-A-Za-z0-9$_.+!*'(),;?&=]+(?:\\:[-A-Za-z0-9$_.+!*'(),;?&=]+)?)@)?" +
-            /* host      */ "([-A-Za-z0-9%]+(?:\\.[-A-Za-z0-9%]+)*)?" +
-            /* port      */ "(?:\\:([0-9]+))?" +
-            /* path      */ "(\\/?.*)?");
+            /* host      */ "([" + GOOD_IRI_CHAR + "%_-][" + GOOD_IRI_CHAR + "%_\\.-]*|\\[[0-9a-fA-F:\\.]+\\])?" +
+            /* port      */ "(?:\\:([0-9]*))?" +
+            /* path      */ "(\\/?[^#]*)?" +
+            /* anchor    */ ".*", Pattern.CASE_INSENSITIVE);
 
     /** parses given uriString. */
     public WebAddress(String address) throws ParseException {
@@ -76,13 +78,14 @@ public class WebAddress {
         String t;
         if (m.matches()) {
             t = m.group(MATCH_GROUP_SCHEME);
-            if (t != null) mScheme = t;
+            if (t != null) mScheme = t.toLowerCase(Locale.ROOT);
             t = m.group(MATCH_GROUP_AUTHORITY);
             if (t != null) mAuthInfo = t;
             t = m.group(MATCH_GROUP_HOST);
             if (t != null) mHost = t;
             t = m.group(MATCH_GROUP_PORT);
-            if (t != null) {
+            if (t != null && t.length() > 0) {
+                // The ':' character is not returned by the regex.
                 try {
                     mPort = Integer.parseInt(t);
                 } catch (NumberFormatException ex) {
@@ -118,6 +121,7 @@ public class WebAddress {
         if (mScheme.equals("")) mScheme = "http";
     }
 
+    @Override
     public String toString() {
         String port = "";
         if ((mPort != 443 && mScheme.equals("https")) ||
@@ -130,5 +134,45 @@ public class WebAddress {
         }
 
         return mScheme + "://" + authInfo + mHost + port + mPath;
+    }
+
+    public void setScheme(String scheme) {
+      mScheme = scheme;
+    }
+
+    public String getScheme() {
+      return mScheme;
+    }
+
+    public void setHost(String host) {
+      mHost = host;
+    }
+
+    public String getHost() {
+      return mHost;
+    }
+
+    public void setPort(int port) {
+      mPort = port;
+    }
+
+    public int getPort() {
+      return mPort;
+    }
+
+    public void setPath(String path) {
+      mPath = path;
+    }
+
+    public String getPath() {
+      return mPath;
+    }
+
+    public void setAuthInfo(String authInfo) {
+      mAuthInfo = authInfo;
+    }
+
+    public String getAuthInfo() {
+      return mAuthInfo;
     }
 }

@@ -62,31 +62,51 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
     private int mStringConversionColumn = -1;
     private CursorToStringConverter mCursorToStringConverter;
     private ViewBinder mViewBinder;
-    private String[] mOriginalFrom;
+
+    String[] mOriginalFrom;
 
     /**
-     * Constructor.
+     * Constructor the enables auto-requery.
+     *
+     * @deprecated This option is discouraged, as it results in Cursor queries
+     * being performed on the application's UI thread and thus can cause poor
+     * responsiveness or even Application Not Responding errors.  As an alternative,
+     * use {@link android.app.LoaderManager} with a {@link android.content.CursorLoader}.
+     */
+    @Deprecated
+    public SimpleCursorAdapter(Context context, int layout, Cursor c, String[] from, int[] to) {
+        super(context, layout, c);
+        mTo = to;
+        mOriginalFrom = from;
+        findColumns(c, from);
+    }
+
+    /**
+     * Standard constructor.
      * 
      * @param context The context where the ListView associated with this
      *            SimpleListItemFactory is running
      * @param layout resource identifier of a layout file that defines the views
-     *            for this list item. Thelayout file should include at least
+     *            for this list item. The layout file should include at least
      *            those named views defined in "to"
      * @param c The database cursor.  Can be null if the cursor is not available yet.
-     * @param from A list of column names representing the data to bind to the UI
+     * @param from A list of column names representing the data to bind to the UI.  Can be null 
+     *            if the cursor is not available yet.
      * @param to The views that should display column in the "from" parameter.
      *            These should all be TextViews. The first N views in this list
      *            are given the values of the first N columns in the from
-     *            parameter.
+     *            parameter.  Can be null if the cursor is not available yet.
+     * @param flags Flags used to determine the behavior of the adapter,
+     * as per {@link CursorAdapter#CursorAdapter(Context, Cursor, int)}.
      */
-    public SimpleCursorAdapter(Context context, int layout, Cursor c,
-                               String[] from, int[] to) {
-        super(context, layout, c);
+    public SimpleCursorAdapter(Context context, int layout, Cursor c, String[] from,
+            int[] to, int flags) {
+        super(context, layout, c, flags);
         mTo = to;
         mOriginalFrom = from;
-        findColumns(from);
+        findColumns(c, from);
     }
-    
+
     /**
      * Binds all of the field names passed into the "to" parameter of the
      * constructor with their corresponding cursor columns as specified in the
@@ -113,20 +133,25 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
      */
     @Override
     public void bindView(View view, Context context, Cursor cursor) {
-        for (int i = 0; i < mTo.length; i++) {
-            final View v = view.findViewById(mTo[i]);
-            if (v != null) {
-                String text = cursor.getString(mFrom[i]);
-                if (text == null) {
-                    text = "";
-                }
+        final ViewBinder binder = mViewBinder;
+        final int count = mTo.length;
+        final int[] from = mFrom;
+        final int[] to = mTo;
 
+        for (int i = 0; i < count; i++) {
+            final View v = view.findViewById(to[i]);
+            if (v != null) {
                 boolean bound = false;
-                if (mViewBinder != null) {
-                    bound = mViewBinder.setViewValue(v, cursor, mFrom[i]);
+                if (binder != null) {
+                    bound = binder.setViewValue(v, cursor, from[i]);
                 }
 
                 if (!bound) {
+                    String text = cursor.getString(from[i]);
+                    if (text == null) {
+                        text = "";
+                    }
+
                     if (v instanceof TextView) {
                         setViewText((TextView) v, text);
                     } else if (v instanceof ImageView) {
@@ -191,7 +216,7 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
     /**
      * Called by bindView() to set the text for a TextView but only if
      * there is no existing ViewBinder or if the existing ViewBinder cannot
-     * handle binding to an TextView.
+     * handle binding to a TextView.
      *
      * Intended to be overridden by Adapters that need to filter strings
      * retrieved from the database.
@@ -290,28 +315,56 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
         return super.convertToString(cursor);
     }
 
-    private void findColumns(String[] from) {
-        int i;
-        int count = from.length;
-        if (mFrom == null) {
-            mFrom = new int[count];
-        }
-        if (mCursor != null) {
+    /**
+     * Create a map from an array of strings to an array of column-id integers in cursor c.
+     * If c is null, the array will be discarded.
+     *
+     * @param c the cursor to find the columns from
+     * @param from the Strings naming the columns of interest
+     */
+    private void findColumns(Cursor c, String[] from) {
+        if (c != null) {
+            int i;
+            int count = from.length;
+            if (mFrom == null || mFrom.length != count) {
+                mFrom = new int[count];
+            }
             for (i = 0; i < count; i++) {
-                mFrom[i] = mCursor.getColumnIndexOrThrow(from[i]);
+                mFrom[i] = c.getColumnIndexOrThrow(from[i]);
             }
         } else {
-            for (i = 0; i < count; i++) {
-                mFrom[i] = -1;
-            }
+            mFrom = null;
         }
     }
 
     @Override
-    public void changeCursor(Cursor c) {
+    public Cursor swapCursor(Cursor c) {
+        // super.swapCursor() will notify observers before we have
+        // a valid mapping, make sure we have a mapping before this
+        // happens
+        findColumns(c, mOriginalFrom);
+        return super.swapCursor(c);
+    }
+    
+    /**
+     * Change the cursor and change the column-to-view mappings at the same time.
+     *  
+     * @param c The database cursor.  Can be null if the cursor is not available yet.
+     * @param from A list of column names representing the data to bind to the UI.  Can be null 
+     *            if the cursor is not available yet.
+     * @param to The views that should display column in the "from" parameter.
+     *            These should all be TextViews. The first N views in this list
+     *            are given the values of the first N columns in the from
+     *            parameter.  Can be null if the cursor is not available yet.
+     */
+    public void changeCursorAndColumns(Cursor c, String[] from, int[] to) {
+        mOriginalFrom = from;
+        mTo = to;
+        // super.changeCursor() will notify observers before we have
+        // a valid mapping, make sure we have a mapping before this
+        // happens
+        findColumns(c, mOriginalFrom);
         super.changeCursor(c);
-        // rescan columns in case cursor layout is different
-        findColumns(mOriginalFrom);
     }
 
     /**

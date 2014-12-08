@@ -19,6 +19,7 @@ package android.content.pm;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.PatternMatcher;
+import android.util.Printer;
 
 /**
  * Holds information about a specific
@@ -28,6 +29,7 @@ import android.os.PatternMatcher;
  */
 public final class ProviderInfo extends ComponentInfo
         implements Parcelable {
+    
     /** The name provider is published under content:// */
     public String authority = null;
     
@@ -56,6 +58,14 @@ public final class ProviderInfo extends ComponentInfo
      */
     public PatternMatcher[] uriPermissionPatterns = null;
     
+    /**
+     * If non-null, these are path-specific permissions that are allowed for
+     * accessing the provider.  Any permissions listed here will allow a
+     * holding client to access the provider, and the provider will check
+     * the URI it provides when making calls against the patterns here.
+     */
+    public PathPermission[] pathPermissions = null;
+    
     /** If true, this content provider allows multiple instances of itself
      *  to run in different process.  If false, a single instances is always
      *  run in {@link #processName}. */
@@ -64,8 +74,27 @@ public final class ProviderInfo extends ComponentInfo
     /** Used to control initialization order of single-process providers
      *  running in the same process.  Higher goes first. */
     public int initOrder = 0;
-    
-    /** Whether or not this provider is syncable. */
+
+    /**
+     * Bit in {@link #flags}: If set, a single instance of the provider will
+     * run for all users on the device.  Set from the
+     * {@link android.R.attr#singleUser} attribute.
+     */
+    public static final int FLAG_SINGLE_USER = 0x40000000;
+
+    /**
+     * Options that have been set in the provider declaration in the
+     * manifest.
+     * These include: {@link #FLAG_SINGLE_USER}.
+     */
+    public int flags = 0;
+
+    /**
+     * Whether or not this provider is syncable.
+     * @deprecated This flag is now being ignored. The current way to make a provider
+     * syncable is to provide a SyncAdapter service for a given provider/account type. 
+     */
+    @Deprecated
     public boolean isSyncable = false;
 
     public ProviderInfo() {
@@ -78,11 +107,19 @@ public final class ProviderInfo extends ComponentInfo
         writePermission = orig.writePermission;
         grantUriPermissions = orig.grantUriPermissions;
         uriPermissionPatterns = orig.uriPermissionPatterns;
+        pathPermissions = orig.pathPermissions;
         multiprocess = orig.multiprocess;
         initOrder = orig.initOrder;
+        flags = orig.flags;
         isSyncable = orig.isSyncable;
     }
-    
+
+    public void dump(Printer pw, String prefix) {
+        super.dumpFront(pw, prefix);
+        pw.println(prefix + "authority=" + authority);
+        pw.println(prefix + "flags=0x" + Integer.toHexString(flags));
+    }
+
     public int describeContents() {
         return 0;
     }
@@ -94,8 +131,10 @@ public final class ProviderInfo extends ComponentInfo
         out.writeString(writePermission);
         out.writeInt(grantUriPermissions ? 1 : 0);
         out.writeTypedArray(uriPermissionPatterns, parcelableFlags);
+        out.writeTypedArray(pathPermissions, parcelableFlags);
         out.writeInt(multiprocess ? 1 : 0);
         out.writeInt(initOrder);
+        out.writeInt(flags);
         out.writeInt(isSyncable ? 1 : 0);
     }
 
@@ -111,8 +150,7 @@ public final class ProviderInfo extends ComponentInfo
     };
 
     public String toString() {
-        return "ContentProviderInfo{name=" + authority + " className=" + name
-            + " isSyncable=" + (isSyncable ? "true" : "false") + "}";
+        return "ContentProviderInfo{name=" + authority + " className=" + name + "}";
     }
 
     private ProviderInfo(Parcel in) {
@@ -122,8 +160,10 @@ public final class ProviderInfo extends ComponentInfo
         writePermission = in.readString();
         grantUriPermissions = in.readInt() != 0;
         uriPermissionPatterns = in.createTypedArray(PatternMatcher.CREATOR);
+        pathPermissions = in.createTypedArray(PathPermission.CREATOR);
         multiprocess = in.readInt() != 0;
         initOrder = in.readInt();
+        flags = in.readInt();
         isSyncable = in.readInt() != 0;
     }
 }

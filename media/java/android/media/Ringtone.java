@@ -19,17 +19,15 @@ package android.media;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.res.AssetFileDescriptor;
+import android.content.res.Resources.NotFoundException;
 import android.database.Cursor;
-import android.media.AudioManager;
-import android.media.MediaPlayer;
 import android.net.Uri;
-import android.os.ParcelFileDescriptor;
-import android.provider.DrmStore;
+import android.os.Binder;
+import android.os.RemoteException;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.util.Log;
 
-import java.io.FileDescriptor;
 import java.io.IOException;
 
 /**
@@ -42,7 +40,8 @@ import java.io.IOException;
  * @see RingtoneManager
  */
 public class Ringtone {
-    private static String TAG = "Ringtone";
+    private static final String TAG = "Ringtone";
+    private static final boolean LOGD = true;
 
     private static final String[] MEDIA_COLUMNS = new String[] {
         MediaStore.Audio.Media._ID,
@@ -50,48 +49,83 @@ public class Ringtone {
         MediaStore.Audio.Media.TITLE
     };
 
-    private static final String[] DRM_COLUMNS = new String[] {
-        DrmStore.Audio._ID,
-        DrmStore.Audio.DATA,
-        DrmStore.Audio.TITLE
-    };
+    private final Context mContext;
+    private final AudioManager mAudioManager;
+    private final boolean mAllowRemote;
+    private final IRingtonePlayer mRemotePlayer;
+    private final Binder mRemoteToken;
 
-    private MediaPlayer mAudio;
+    private MediaPlayer mLocalPlayer;
 
     private Uri mUri;
     private String mTitle;
-    private FileDescriptor mFileDescriptor;
-    private AssetFileDescriptor mAssetFileDescriptor;
 
-    private int mStreamType = AudioManager.STREAM_RING;
+    private AudioAttributes mAudioAttributes = new AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build();
 
-    private Context mContext;
-
-    Ringtone(Context context) {
+    /** {@hide} */
+    public Ringtone(Context context, boolean allowRemote) {
         mContext = context;
+        mAudioManager = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
+        mAllowRemote = allowRemote;
+        mRemotePlayer = allowRemote ? mAudioManager.getRingtonePlayer() : null;
+        mRemoteToken = allowRemote ? new Binder() : null;
     }
 
     /**
      * Sets the stream type where this ringtone will be played.
      * 
      * @param streamType The stream, see {@link AudioManager}.
+     * @deprecated use {@link #setAudioAttributes(AudioAttributes)}
      */
+    @Deprecated
     public void setStreamType(int streamType) {
-        mStreamType = streamType;
+        setAudioAttributes(new AudioAttributes.Builder()
+                .setInternalLegacyStreamType(streamType)
+                .build());
     }
 
     /**
      * Gets the stream type where this ringtone will be played.
      * 
      * @return The stream type, see {@link AudioManager}.
+     * @deprecated use of stream types is deprecated, see
+     *     {@link #setAudioAttributes(AudioAttributes)}
      */
+    @Deprecated
     public int getStreamType() {
-        return mStreamType;
+        return AudioAttributes.toLegacyStreamType(mAudioAttributes);
     }
 
     /**
-     * Returns a human-presentable title for ringtone. Looks in media and DRM
-     * content providers. If not in either, uses the filename
+     * Sets the {@link AudioAttributes} for this ringtone.
+     * @param attributes the non-null attributes characterizing this ringtone.
+     */
+    public void setAudioAttributes(AudioAttributes attributes)
+            throws IllegalArgumentException {
+        if (attributes == null) {
+            throw new IllegalArgumentException("Invalid null AudioAttributes for Ringtone");
+        }
+        mAudioAttributes = attributes;
+        // The audio attributes have to be set before the media player is prepared.
+        // Re-initialize it.
+        setUri(mUri);
+    }
+
+    /**
+     * Returns the {@link AudioAttributes} used by this object.
+     * @return the {@link AudioAttributes} that were set with
+     *     {@link #setAudioAttributes(AudioAttributes)} or the default attributes if none were set.
+     */
+    public AudioAttributes getAudioAttributes() {
+        return mAudioAttributes;
+    }
+
+    /**
+     * Returns a human-presentable title for ringtone. Looks in media
+     * content provider. If not in either, uses the filename
      * 
      * @param context A context used for querying. 
      */
@@ -111,26 +145,39 @@ public class Ringtone {
 
             if (Settings.AUTHORITY.equals(authority)) {
                 if (followSettingsUri) {
-                    Uri actualUri = RingtoneManager.getActualDefaultRingtoneUri(context,
-                            RingtoneManager.getDefaultType(uri));
+                    Uri actualUri;
+                    if (RingtoneManager.getDefaultType(uri) == RingtoneManager.TYPE_RINGTONE) {
+                        actualUri = RingtoneManager.getActualRingtoneUriBySubId(context,
+                             RingtoneManager.getDefaultRingtoneSubIdByUri(uri));
+                    } else {
+                        actualUri = RingtoneManager.getActualDefaultRingtoneUri(context,
+                             RingtoneManager.getDefaultType(uri));
+                    }
                     String actualTitle = getTitle(context, actualUri, false);
                     title = context
                             .getString(com.android.internal.R.string.ringtone_default_with_actual,
                                     actualTitle);
                 }
             } else {
-                
-                if (DrmStore.AUTHORITY.equals(authority)) {
-                    cursor = res.query(uri, DRM_COLUMNS, null, null, null);
-                } else if (MediaStore.AUTHORITY.equals(authority)) {
-                    cursor = res.query(uri, MEDIA_COLUMNS, null, null, null);
+                try {
+                    if (MediaStore.AUTHORITY.equals(authority)) {
+                        cursor = res.query(uri, MEDIA_COLUMNS, null, null, null);
+                    }
+                } catch (SecurityException e) {
+                    // missing cursor is handled below
                 }
-                
-                if (cursor != null && cursor.getCount() == 1) {
-                    cursor.moveToFirst();
-                    return cursor.getString(2);
-                } else {
-                    title = uri.getLastPathSegment();
+
+                try {
+                    if (cursor != null && cursor.getCount() == 1) {
+                        cursor.moveToFirst();
+                        return cursor.getString(2);
+                    } else {
+                        title = uri.getLastPathSegment();
+                    }
+                } finally {
+                    if (cursor != null) {
+                        cursor.close();
+                    }
                 }
             }
         }
@@ -145,53 +192,81 @@ public class Ringtone {
         
         return title;
     }
-    
-    private void openMediaPlayer() throws IOException {
-        mAudio = new MediaPlayer();
-        if (mUri != null) {
-            mAudio.setDataSource(mContext, mUri);
-        } else if (mFileDescriptor != null) {
-            mAudio.setDataSource(mFileDescriptor);
-        } else if (mAssetFileDescriptor != null) {
-            mAudio.setDataSource(mAssetFileDescriptor.getFileDescriptor(),
-                    mAssetFileDescriptor.getStartOffset(),
-                    mAssetFileDescriptor.getLength());
-        } else {
-            throw new IOException("No data source set.");
-        }
-        mAudio.setAudioStreamType(mStreamType);
-        mAudio.prepare();
-    }
 
-    void open(FileDescriptor fd) throws IOException {
-        mFileDescriptor = fd;
-        openMediaPlayer();
-    }
+    /**
+     * Set {@link Uri} to be used for ringtone playback. Attempts to open
+     * locally, otherwise will delegate playback to remote
+     * {@link IRingtonePlayer}.
+     *
+     * @hide
+     */
+    public void setUri(Uri uri) {
+        destroyLocalPlayer();
 
-    void open(AssetFileDescriptor fd) throws IOException {
-        mAssetFileDescriptor = fd;
-        openMediaPlayer();
-    }
-
-    void open(Uri uri) throws IOException {
         mUri = uri;
-        openMediaPlayer();
+        if (mUri == null) {
+            return;
+        }
+
+        // TODO: detect READ_EXTERNAL and specific content provider case, instead of relying on throwing
+
+        // try opening uri locally before delegating to remote player
+        mLocalPlayer = new MediaPlayer();
+        try {
+            mLocalPlayer.setDataSource(mContext, mUri);
+            mLocalPlayer.setAudioAttributes(mAudioAttributes);
+            mLocalPlayer.prepare();
+
+        } catch (SecurityException e) {
+            destroyLocalPlayer();
+            if (!mAllowRemote) {
+                Log.w(TAG, "Remote playback not allowed: " + e);
+            }
+        } catch (IOException e) {
+            destroyLocalPlayer();
+            if (!mAllowRemote) {
+                Log.w(TAG, "Remote playback not allowed: " + e);
+            }
+        }
+
+        if (LOGD) {
+            if (mLocalPlayer != null) {
+                Log.d(TAG, "Successfully created local player");
+            } else {
+                Log.d(TAG, "Problem opening; delegating to remote player");
+            }
+        }
     }
-    
+
+    /** {@hide} */
+    public Uri getUri() {
+        return mUri;
+    }
+
     /**
      * Plays the ringtone.
      */
     public void play() {
-        if (mAudio == null) {
-            try {
-                openMediaPlayer();
-            } catch (Exception ex) {
-                Log.e(TAG, "play() caught ", ex);
-                mAudio = null;
+        if (mLocalPlayer != null) {
+            // do not play ringtones if stream volume is 0
+            // (typically because ringer mode is silent).
+            if (mAudioManager.getStreamVolume(
+                    AudioAttributes.toLegacyStreamType(mAudioAttributes)) != 0) {
+                mLocalPlayer.start();
             }
-        }
-        if (mAudio != null) {
-            mAudio.start();
+        } else if (mAllowRemote && (mRemotePlayer != null)) {
+            final Uri canonicalUri = mUri.getCanonicalUri();
+            try {
+                mRemotePlayer.play(mRemoteToken, canonicalUri, mAudioAttributes);
+            } catch (RemoteException e) {
+                if (!playFallbackRingtone()) {
+                    Log.w(TAG, "Problem playing ringtone: " + e);
+                }
+            }
+        } else {
+            if (!playFallbackRingtone()) {
+                Log.w(TAG, "Neither local nor remote playback available");
+            }
         }
     }
 
@@ -199,10 +274,22 @@ public class Ringtone {
      * Stops a playing ringtone.
      */
     public void stop() {
-        if (mAudio != null) {
-            mAudio.reset();
-            mAudio.release();
-            mAudio = null;
+        if (mLocalPlayer != null) {
+            destroyLocalPlayer();
+        } else if (mAllowRemote && (mRemotePlayer != null)) {
+            try {
+                mRemotePlayer.stop(mRemoteToken);
+            } catch (RemoteException e) {
+                Log.w(TAG, "Problem stopping ringtone: " + e);
+            }
+        }
+    }
+
+    private void destroyLocalPlayer() {
+        if (mLocalPlayer != null) {
+            mLocalPlayer.reset();
+            mLocalPlayer.release();
+            mLocalPlayer = null;
         }
     }
 
@@ -212,7 +299,59 @@ public class Ringtone {
      * @return True if playing, false otherwise.
      */
     public boolean isPlaying() {
-        return mAudio != null && mAudio.isPlaying();
+        if (mLocalPlayer != null) {
+            return mLocalPlayer.isPlaying();
+        } else if (mAllowRemote && (mRemotePlayer != null)) {
+            try {
+                return mRemotePlayer.isPlaying(mRemoteToken);
+            } catch (RemoteException e) {
+                Log.w(TAG, "Problem checking ringtone: " + e);
+                return false;
+            }
+        } else {
+            Log.w(TAG, "Neither local nor remote playback available");
+            return false;
+        }
+    }
+
+    private boolean playFallbackRingtone() {
+        if (mAudioManager.getStreamVolume(AudioAttributes.toLegacyStreamType(mAudioAttributes))
+                != 0) {
+            int subId = RingtoneManager.getDefaultRingtoneSubIdByUri(mUri);
+            if (subId != -1 &&
+                    RingtoneManager.getActualRingtoneUriBySubId(mContext, subId) != null) {
+                // Default ringtone, try fallback ringtone.
+                try {
+                    AssetFileDescriptor afd = mContext.getResources().openRawResourceFd(
+                            com.android.internal.R.raw.fallbackring);
+                    if (afd != null) {
+                        mLocalPlayer = new MediaPlayer();
+                        if (afd.getDeclaredLength() < 0) {
+                            mLocalPlayer.setDataSource(afd.getFileDescriptor());
+                        } else {
+                            mLocalPlayer.setDataSource(afd.getFileDescriptor(),
+                                    afd.getStartOffset(),
+                                    afd.getDeclaredLength());
+                        }
+                        mLocalPlayer.setAudioAttributes(mAudioAttributes);
+                        mLocalPlayer.prepare();
+                        mLocalPlayer.start();
+                        afd.close();
+                        return true;
+                    } else {
+                        Log.e(TAG, "Could not load fallback ringtone");
+                    }
+                } catch (IOException ioe) {
+                    destroyLocalPlayer();
+                    Log.e(TAG, "Failed to open fallback ringtone");
+                } catch (NotFoundException nfe) {
+                    Log.e(TAG, "Fallback ringtone does not exist");
+                }
+            } else {
+                Log.w(TAG, "not playing fallback for " + mUri);
+            }
+        }
+        return false;
     }
 
     void setTitle(String title) {

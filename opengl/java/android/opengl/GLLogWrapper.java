@@ -932,83 +932,83 @@ class GLLogWrapper extends GLWrapperBase {
         boolean convertWholeBuffer = (byteCount < 0);
         if (input instanceof ByteBuffer) {
             ByteBuffer input2 = (ByteBuffer) input;
+            int position = input2.position();
             if (convertWholeBuffer) {
-                byteCount = input2.limit();
+                byteCount = input2.limit() - position;
             }
             result = ByteBuffer.allocate(byteCount).order(input2.order());
-            int position = input2.position();
             for (int i = 0; i < byteCount; i++) {
                 result.put(input2.get());
             }
             input2.position(position);
         } else if (input instanceof CharBuffer) {
             CharBuffer input2 = (CharBuffer) input;
+            int position = input2.position();
             if (convertWholeBuffer) {
-                byteCount = input2.limit() * 2;
+                byteCount = (input2.limit() - position) * 2;
             }
             result = ByteBuffer.allocate(byteCount).order(input2.order());
             CharBuffer result2 = result.asCharBuffer();
-            int position = input2.position();
             for (int i = 0; i < byteCount / 2; i++) {
                 result2.put(input2.get());
             }
             input2.position(position);
         } else if (input instanceof ShortBuffer) {
             ShortBuffer input2 = (ShortBuffer) input;
+            int position = input2.position();
             if (convertWholeBuffer) {
-                byteCount = input2.limit() * 2;
+                byteCount = (input2.limit() - position)* 2;
             }
             result = ByteBuffer.allocate(byteCount).order(input2.order());
             ShortBuffer result2 = result.asShortBuffer();
-            int position = input2.position();
             for (int i = 0; i < byteCount / 2; i++) {
                 result2.put(input2.get());
             }
             input2.position(position);
         } else if (input instanceof IntBuffer) {
             IntBuffer input2 = (IntBuffer) input;
+            int position = input2.position();
             if (convertWholeBuffer) {
-                byteCount = input2.limit() * 4;
+                byteCount = (input2.limit() - position) * 4;
             }
             result = ByteBuffer.allocate(byteCount).order(input2.order());
             IntBuffer result2 = result.asIntBuffer();
-            int position = input2.position();
             for (int i = 0; i < byteCount / 4; i++) {
                 result2.put(input2.get());
             }
             input2.position(position);
         } else if (input instanceof FloatBuffer) {
             FloatBuffer input2 = (FloatBuffer) input;
+            int position = input2.position();
             if (convertWholeBuffer) {
-                byteCount = input2.limit() * 4;
+                byteCount = (input2.limit() - position) * 4;
             }
             result = ByteBuffer.allocate(byteCount).order(input2.order());
             FloatBuffer result2 = result.asFloatBuffer();
-            int position = input2.position();
             for (int i = 0; i < byteCount / 4; i++) {
                 result2.put(input2.get());
             }
             input2.position(position);
         } else if (input instanceof DoubleBuffer) {
             DoubleBuffer input2 = (DoubleBuffer) input;
+            int position = input2.position();
             if (convertWholeBuffer) {
-                byteCount = input2.limit() * 8;
+                byteCount = (input2.limit() - position) * 8;
             }
             result = ByteBuffer.allocate(byteCount).order(input2.order());
             DoubleBuffer result2 = result.asDoubleBuffer();
-            int position = input2.position();
             for (int i = 0; i < byteCount / 8; i++) {
                 result2.put(input2.get());
             }
             input2.position(position);
         } else if (input instanceof LongBuffer) {
             LongBuffer input2 = (LongBuffer) input;
+            int position = input2.position();
             if (convertWholeBuffer) {
-                byteCount = input2.limit() * 8;
+                byteCount = (input2.limit() - position) * 8;
             }
             result = ByteBuffer.allocate(byteCount).order(input2.order());
             LongBuffer result2 = result.asLongBuffer();
-            int position = input2.position();
             for (int i = 0; i < byteCount / 8; i++) {
                 result2.put(input2.get());
             }
@@ -1064,8 +1064,8 @@ class GLLogWrapper extends GLWrapperBase {
         }
         builder.append(" ");
         builder.append(name + ":{");
-        if (pointer == null) {
-            builder.append("undefined");
+        if (pointer == null || pointer.mTempByteBuffer == null ) {
+            builder.append("undefined }");
             return;
         }
         if (pointer.mStride < 0) {
@@ -1517,7 +1517,7 @@ class GLLogWrapper extends GLWrapperBase {
         arg("count", count);
         startLogIndices();
         for (int i = 0; i < count; i++) {
-            doElement(mStringBuilder, i, first + count);
+            doElement(mStringBuilder, i, first + i);
         }
         endLogIndices();
         end();
@@ -2767,230 +2767,1122 @@ class GLLogWrapper extends GLWrapperBase {
         return valid;
     }
 
-    // Unsupported GL11 methods
-
     public void glBindBuffer(int target, int buffer) {
-        throw new UnsupportedOperationException();
+        begin("glBindBuffer");
+        arg("target", target);
+        arg("buffer", buffer);
+        end();
+        mgl11.glBindBuffer(target, buffer);
+        checkError();
     }
 
     public void glBufferData(int target, int size, Buffer data, int usage) {
-        throw new UnsupportedOperationException();
+        begin("glBufferData");
+        arg("target", target);
+        arg("size", size);
+        arg("data", data.toString());
+        arg("usage", usage);
+        end();
+        mgl11.glBufferData(target, size, data, usage);
+        checkError();
     }
 
     public void glBufferSubData(int target, int offset, int size, Buffer data) {
-        throw new UnsupportedOperationException();
+        begin("glBufferSubData");
+        arg("target", target);
+        arg("offset", offset);
+        arg("size", size);
+        arg("data", data.toString());
+        end();
+        mgl11.glBufferSubData(target, offset, size, data);
+        checkError();
     }
 
     public void glColor4ub(byte red, byte green, byte blue, byte alpha) {
-        throw new UnsupportedOperationException();
+        begin("glColor4ub");
+        arg("red", red);
+        arg("green", green);
+        arg("blue", blue);
+        arg("alpha", alpha);
+        end();
+        mgl11.glColor4ub(red, green, blue, alpha);
+        checkError();
     }
 
     public void glDeleteBuffers(int n, int[] buffers, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glDeleteBuffers");
+        arg("n", n);
+        arg("buffers", buffers.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glDeleteBuffers(n, buffers, offset);
+        checkError();
     }
 
     public void glDeleteBuffers(int n, IntBuffer buffers) {
-        throw new UnsupportedOperationException();
+        begin("glDeleteBuffers");
+        arg("n", n);
+        arg("buffers", buffers.toString());
+        end();
+        mgl11.glDeleteBuffers(n, buffers);
+        checkError();
     }
 
     public void glGenBuffers(int n, int[] buffers, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glGenBuffers");
+        arg("n", n);
+        arg("buffers", buffers.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGenBuffers(n, buffers, offset);
+        checkError();
     }
 
     public void glGenBuffers(int n, IntBuffer buffers) {
-        throw new UnsupportedOperationException();
+        begin("glGenBuffers");
+        arg("n", n);
+        arg("buffers", buffers.toString());
+        end();
+        mgl11.glGenBuffers(n, buffers);
+        checkError();
     }
 
     public void glGetBooleanv(int pname, boolean[] params, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glGetBooleanv");
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetBooleanv(pname, params, offset);
+        checkError();
     }
 
     public void glGetBooleanv(int pname, IntBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glGetBooleanv");
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetBooleanv(pname, params);
+        checkError();
     }
 
-    public void glGetBufferParameteriv(int target, int pname, int[] params, int offset) {
-        throw new UnsupportedOperationException();
+    public void glGetBufferParameteriv(int target, int pname, int[] params,
+            int offset) {
+        begin("glGetBufferParameteriv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetBufferParameteriv(target, pname, params, offset);
+        checkError();
     }
 
     public void glGetBufferParameteriv(int target, int pname, IntBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glGetBufferParameteriv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetBufferParameteriv(target, pname, params);
+        checkError();
     }
 
     public void glGetClipPlanef(int pname, float[] eqn, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glGetClipPlanef");
+        arg("pname", pname);
+        arg("eqn", eqn.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetClipPlanef(pname, eqn, offset);
+        checkError();
     }
 
     public void glGetClipPlanef(int pname, FloatBuffer eqn) {
-        throw new UnsupportedOperationException();
+        begin("glGetClipPlanef");
+        arg("pname", pname);
+        arg("eqn", eqn.toString());
+        end();
+        mgl11.glGetClipPlanef(pname, eqn);
+        checkError();
     }
 
     public void glGetClipPlanex(int pname, int[] eqn, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glGetClipPlanex");
+        arg("pname", pname);
+        arg("eqn", eqn.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetClipPlanex(pname, eqn, offset);
     }
 
     public void glGetClipPlanex(int pname, IntBuffer eqn) {
-        throw new UnsupportedOperationException();
+        begin("glGetClipPlanex");
+        arg("pname", pname);
+        arg("eqn", eqn.toString());
+        end();
+        mgl11.glGetClipPlanex(pname, eqn);
+        checkError();
     }
 
     public void glGetFixedv(int pname, int[] params, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glGetFixedv");
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetFixedv(pname, params, offset);
     }
 
     public void glGetFixedv(int pname, IntBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glGetFixedv");
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetFixedv(pname, params);
+        checkError();
     }
 
     public void glGetFloatv(int pname, float[] params, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glGetFloatv");
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetFloatv(pname, params, offset);
     }
 
     public void glGetFloatv(int pname, FloatBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glGetFloatv");
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetFloatv(pname, params);
+        checkError();
     }
 
     public void glGetLightfv(int light, int pname, float[] params, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glGetLightfv");
+        arg("light", light);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetLightfv(light, pname, params, offset);
+        checkError();
     }
 
     public void glGetLightfv(int light, int pname, FloatBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glGetLightfv");
+        arg("light", light);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetLightfv(light, pname, params);
+        checkError();
     }
 
     public void glGetLightxv(int light, int pname, int[] params, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glGetLightxv");
+        arg("light", light);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetLightxv(light, pname, params, offset);
+        checkError();
     }
 
     public void glGetLightxv(int light, int pname, IntBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glGetLightxv");
+        arg("light", light);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetLightxv(light, pname, params);
+        checkError();
     }
 
-    public void glGetMaterialfv(int face, int pname, float[] params, int offset) {
-        throw new UnsupportedOperationException();
+    public void glGetMaterialfv(int face, int pname, float[] params,
+            int offset) {
+        begin("glGetMaterialfv");
+        arg("face", face);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetMaterialfv(face, pname, params, offset);
+        checkError();
     }
 
     public void glGetMaterialfv(int face, int pname, FloatBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glGetMaterialfv");
+        arg("face", face);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetMaterialfv(face, pname, params);
+        checkError();
     }
 
     public void glGetMaterialxv(int face, int pname, int[] params, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glGetMaterialxv");
+        arg("face", face);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetMaterialxv(face, pname, params, offset);
+        checkError();
     }
 
     public void glGetMaterialxv(int face, int pname, IntBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glGetMaterialxv");
+        arg("face", face);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetMaterialxv(face, pname, params);
+        checkError();
     }
 
     public void glGetTexEnviv(int env, int pname, int[] params, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glGetTexEnviv");
+        arg("env", env);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetTexEnviv(env, pname, params, offset);
+        checkError();
     }
 
     public void glGetTexEnviv(int env, int pname, IntBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glGetTexEnviv");
+        arg("env", env);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetTexEnviv(env, pname, params);
+        checkError();
     }
 
     public void glGetTexEnvxv(int env, int pname, int[] params, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glGetTexEnviv");
+        arg("env", env);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetTexEnviv(env, pname, params, offset);
+        checkError();
     }
 
     public void glGetTexEnvxv(int env, int pname, IntBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glGetTexEnviv");
+        arg("env", env);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetTexEnvxv(env, pname, params);
+        checkError();
     }
 
     public void glGetTexParameterfv(int target, int pname, float[] params, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glGetTexParameterfv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetTexParameterfv(target, pname, params, offset);
+        checkError();
     }
 
     public void glGetTexParameterfv(int target, int pname, FloatBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glGetTexParameterfv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetTexParameterfv(target, pname, params);
+        checkError();
     }
 
     public void glGetTexParameteriv(int target, int pname, int[] params, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glGetTexParameteriv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetTexEnviv(target, pname, params, offset);
+        checkError();
     }
 
     public void glGetTexParameteriv(int target, int pname, IntBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glGetTexParameteriv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetTexParameteriv(target, pname, params);
+        checkError();
     }
 
-    public void glGetTexParameterxv(int target, int pname, int[] params, int offset) {
-        throw new UnsupportedOperationException();
+    public void glGetTexParameterxv(int target, int pname, int[] params,
+            int offset) {
+        begin("glGetTexParameterxv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glGetTexParameterxv(target, pname, params, offset);
+        checkError();
     }
 
     public void glGetTexParameterxv(int target, int pname, IntBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glGetTexParameterxv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetTexParameterxv(target, pname, params);
+        checkError();
     }
 
     public boolean glIsBuffer(int buffer) {
-        throw new UnsupportedOperationException();
+        begin("glIsBuffer");
+        arg("buffer", buffer);
+        end();
+        boolean result = mgl11.glIsBuffer(buffer);
+        checkError();
+        return result;
     }
 
     public boolean glIsEnabled(int cap) {
-        throw new UnsupportedOperationException();
+        begin("glIsEnabled");
+        arg("cap", cap);
+        end();
+        boolean result = mgl11.glIsEnabled(cap);
+        checkError();
+        return result;
     }
 
     public boolean glIsTexture(int texture) {
-        throw new UnsupportedOperationException();
+        begin("glIsTexture");
+        arg("texture", texture);
+        end();
+        boolean result = mgl11.glIsTexture(texture);
+        checkError();
+        return result;
     }
 
     public void glPointParameterf(int pname, float param) {
-        throw new UnsupportedOperationException();
+        begin("glPointParameterf");
+        arg("pname", pname);
+        arg("param", param);
+        end();
+        mgl11.glPointParameterf( pname, param);
+        checkError();
     }
 
     public void glPointParameterfv(int pname, float[] params, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glPointParameterfv");
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glPointParameterfv(pname, params, offset);
+        checkError();
     }
 
     public void glPointParameterfv(int pname, FloatBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glPointParameterfv");
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glPointParameterfv(pname, params);
+        checkError();
     }
 
     public void glPointParameterx(int pname, int param) {
-        throw new UnsupportedOperationException();
+        begin("glPointParameterfv");
+        arg("pname", pname);
+        arg("param", param);
+        end();
+        mgl11.glPointParameterx( pname, param);
+        checkError();
     }
 
     public void glPointParameterxv(int pname, int[] params, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glPointParameterxv");
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glPointParameterxv(pname, params, offset);
+        checkError();
     }
 
     public void glPointParameterxv(int pname, IntBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glPointParameterxv");
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glPointParameterxv( pname, params);
+        checkError();
     }
 
     public void glPointSizePointerOES(int type, int stride, Buffer pointer) {
-        throw new UnsupportedOperationException();
+        begin("glPointSizePointerOES");
+        arg("type", type);
+        arg("stride", stride);
+        arg("params", pointer.toString());
+        end();
+        mgl11.glPointSizePointerOES( type, stride, pointer);
+        checkError();
     }
 
     public void glTexEnvi(int target, int pname, int param) {
-        throw new UnsupportedOperationException();
+        begin("glTexEnvi");
+        arg("target", target);
+        arg("pname", pname);
+        arg("param", param);
+        end();
+        mgl11.glTexEnvi(target, pname, param);
+        checkError();
     }
 
     public void glTexEnviv(int target, int pname, int[] params, int offset) {
-        throw new UnsupportedOperationException();
+        begin("glTexEnviv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glTexEnviv(target, pname, params, offset);
+        checkError();
     }
 
     public void glTexEnviv(int target, int pname, IntBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glTexEnviv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glTexEnviv( target, pname, params);
+        checkError();
     }
 
-    public void glTexParameterfv(int target, int pname, float[] params, int offset) {
-        throw new UnsupportedOperationException();
+    public void glTexParameterfv(int target, int pname, float[] params,
+            int offset) {
+        begin("glTexParameterfv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glTexParameterfv( target, pname, params, offset);
+        checkError();
     }
 
     public void glTexParameterfv(int target, int pname, FloatBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glTexParameterfv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glTexParameterfv(target, pname, params);
+        checkError();
     }
 
     public void glTexParameteri(int target, int pname, int param) {
-        throw new UnsupportedOperationException();
+        begin("glTexParameterxv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("param", param);
+        end();
+        mgl11.glTexParameteri(target, pname, param);
+        checkError();
     }
 
-    public void glTexParameterxv(int target, int pname, int[] params, int offset) {
-        throw new UnsupportedOperationException();
+    public void glTexParameterxv(int target, int pname, int[] params,
+            int offset) {
+        begin("glTexParameterxv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11.glTexParameterxv(target, pname, params, offset);
+        checkError();
     }
 
     public void glTexParameterxv(int target, int pname, IntBuffer params) {
-        throw new UnsupportedOperationException();
+        begin("glTexParameterxv");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glTexParameterxv(target, pname, params);
+        checkError();
+    }
+
+
+    public void glColorPointer(int size, int type, int stride, int offset) {
+        begin("glColorPointer");
+        arg("size", size);
+        arg("type", type);
+        arg("stride", stride);
+        arg("offset", offset);
+        end();
+        mgl11.glColorPointer(size, type, stride, offset);
+        checkError();
+    }
+
+    public void glDrawElements(int mode, int count, int type, int offset) {
+        begin("glDrawElements");
+        arg("mode", mode);
+        arg("count", count);
+        arg("type", type);
+        arg("offset", offset);
+        end();
+        mgl11.glDrawElements(mode, count, type, offset);
+        checkError();
+    }
+
+    public void glGetPointerv(int pname, Buffer[] params) {
+        begin("glGetPointerv");
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11.glGetPointerv(pname, params);
+        checkError();
+    }
+
+    public void glNormalPointer(int type, int stride, int offset) {
+        begin("glNormalPointer");
+        arg("type", type);
+        arg("stride", stride);
+        arg("offset", offset);
+        end();
+        mgl11.glNormalPointer(type, stride, offset);
+    }
+
+    public void glTexCoordPointer(int size, int type, int stride, int offset) {
+        begin("glTexCoordPointer");
+        arg("size", size);
+        arg("type", type);
+        arg("stride", stride);
+        arg("offset", offset);
+        end();
+        mgl11.glTexCoordPointer(size, type, stride, offset);
+    }
+
+    public void glVertexPointer(int size, int type, int stride, int offset) {
+        begin("glVertexPointer");
+        arg("size", size);
+        arg("type", type);
+        arg("stride", stride);
+        arg("offset", offset);
+        end();
+        mgl11.glVertexPointer(size, type, stride, offset);
+    }
+
+    public void glCurrentPaletteMatrixOES(int matrixpaletteindex) {
+        begin("glCurrentPaletteMatrixOES");
+        arg("matrixpaletteindex", matrixpaletteindex);
+        end();
+        mgl11Ext.glCurrentPaletteMatrixOES(matrixpaletteindex);
+        checkError();
+    }
+
+    public void glLoadPaletteFromModelViewMatrixOES() {
+        begin("glLoadPaletteFromModelViewMatrixOES");
+        end();
+        mgl11Ext.glLoadPaletteFromModelViewMatrixOES();
+        checkError();
+    }
+
+    public void glMatrixIndexPointerOES(int size, int type, int stride,
+            Buffer pointer) {
+        begin("glMatrixIndexPointerOES");
+        argPointer(size, type, stride, pointer);
+        end();
+        mgl11Ext.glMatrixIndexPointerOES(size, type, stride, pointer);
+        checkError();
+    }
+
+    public void glMatrixIndexPointerOES(int size, int type, int stride,
+            int offset) {
+        begin("glMatrixIndexPointerOES");
+        arg("size", size);
+        arg("type", type);
+        arg("stride", stride);
+        arg("offset", offset);
+        end();
+        mgl11Ext.glMatrixIndexPointerOES(size, type, stride, offset);
+        checkError();
+    }
+
+    public void glWeightPointerOES(int size, int type, int stride,
+            Buffer pointer) {
+        begin("glWeightPointerOES");
+        argPointer(size, type, stride, pointer);
+        end();
+        mgl11Ext.glWeightPointerOES(size, type, stride, pointer);
+        checkError();
+    }
+
+    public void glWeightPointerOES(int size, int type, int stride, int offset) {
+        begin("glWeightPointerOES");
+        arg("size", size);
+        arg("type", type);
+        arg("stride", stride);
+        arg("offset", offset);
+        end();
+        mgl11Ext.glWeightPointerOES(size, type, stride, offset);
+        checkError();
+    }
+
+    @Override
+    public void glBindFramebufferOES(int target, int framebuffer) {
+        begin("glBindFramebufferOES");
+        arg("target", target);
+        arg("framebuffer", framebuffer);
+        end();
+        mgl11ExtensionPack.glBindFramebufferOES(target, framebuffer);
+        checkError();
+    }
+
+    @Override
+    public void glBindRenderbufferOES(int target, int renderbuffer) {
+        begin("glBindRenderbufferOES");
+        arg("target", target);
+        arg("renderbuffer", renderbuffer);
+        end();
+        mgl11ExtensionPack.glBindRenderbufferOES(target, renderbuffer);
+        checkError();
+    }
+
+    @Override
+    public void glBlendEquation(int mode) {
+        begin("glBlendEquation");
+        arg("mode", mode);
+        end();
+        mgl11ExtensionPack.glBlendEquation(mode);
+        checkError();
+    }
+
+    @Override
+    public void glBlendEquationSeparate(int modeRGB, int modeAlpha) {
+        begin("glBlendEquationSeparate");
+        arg("modeRGB", modeRGB);
+        arg("modeAlpha", modeAlpha);
+        end();
+        mgl11ExtensionPack.glBlendEquationSeparate(modeRGB, modeAlpha);
+        checkError();
+    }
+
+    @Override
+    public void glBlendFuncSeparate(int srcRGB, int dstRGB, int srcAlpha,
+            int dstAlpha) {
+        begin("glBlendFuncSeparate");
+        arg("srcRGB", srcRGB);
+        arg("dstRGB", dstRGB);
+        arg("srcAlpha", srcAlpha);
+        arg("dstAlpha", dstAlpha);
+        end();
+        mgl11ExtensionPack.glBlendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha);
+        checkError();
+    }
+
+    @Override
+    public int glCheckFramebufferStatusOES(int target) {
+        begin("glCheckFramebufferStatusOES");
+        arg("target", target);
+        end();
+        int result = mgl11ExtensionPack.glCheckFramebufferStatusOES(target);
+        checkError();
+        return result;
+    }
+
+    @Override
+    public void glDeleteFramebuffersOES(int n, int[] framebuffers, int offset) {
+        begin("glDeleteFramebuffersOES");
+        arg("n", n);
+        arg("framebuffers", framebuffers.toString());
+        arg("offset", offset);
+        end();
+        mgl11ExtensionPack.glDeleteFramebuffersOES(n, framebuffers, offset);
+        checkError();
+    }
+
+    @Override
+    public void glDeleteFramebuffersOES(int n, IntBuffer framebuffers) {
+        begin("glDeleteFramebuffersOES");
+        arg("n", n);
+        arg("framebuffers", framebuffers.toString());
+        end();
+        mgl11ExtensionPack.glDeleteFramebuffersOES(n, framebuffers);
+        checkError();
+    }
+
+    @Override
+    public void glDeleteRenderbuffersOES(int n, int[] renderbuffers, int offset) {
+        begin("glDeleteRenderbuffersOES");
+        arg("n", n);
+        arg("renderbuffers", renderbuffers.toString());
+        arg("offset", offset);
+        end();
+        mgl11ExtensionPack.glDeleteRenderbuffersOES(n, renderbuffers, offset);
+        checkError();
+    }
+
+    @Override
+    public void glDeleteRenderbuffersOES(int n, IntBuffer renderbuffers) {
+        begin("glDeleteRenderbuffersOES");
+        arg("n", n);
+        arg("renderbuffers", renderbuffers.toString());
+        end();
+        mgl11ExtensionPack.glDeleteRenderbuffersOES(n, renderbuffers);
+        checkError();
+    }
+
+    @Override
+    public void glFramebufferRenderbufferOES(int target, int attachment,
+            int renderbuffertarget, int renderbuffer) {
+        begin("glFramebufferRenderbufferOES");
+        arg("target", target);
+        arg("attachment", attachment);
+        arg("renderbuffertarget", renderbuffertarget);
+        arg("renderbuffer", renderbuffer);
+        end();
+        mgl11ExtensionPack.glFramebufferRenderbufferOES(target, attachment, renderbuffertarget, renderbuffer);
+        checkError();
+    }
+
+    @Override
+    public void glFramebufferTexture2DOES(int target, int attachment,
+            int textarget, int texture, int level) {
+        begin("glFramebufferTexture2DOES");
+        arg("target", target);
+        arg("attachment", attachment);
+        arg("textarget", textarget);
+        arg("texture", texture);
+        arg("level", level);
+        end();
+        mgl11ExtensionPack.glFramebufferTexture2DOES(target, attachment, textarget, texture, level);
+        checkError();
+    }
+
+    @Override
+    public void glGenerateMipmapOES(int target) {
+        begin("glGenerateMipmapOES");
+        arg("target", target);
+        end();
+        mgl11ExtensionPack.glGenerateMipmapOES(target);
+        checkError();
+    }
+
+    @Override
+    public void glGenFramebuffersOES(int n, int[] framebuffers, int offset) {
+        begin("glGenFramebuffersOES");
+        arg("n", n);
+        arg("framebuffers", framebuffers.toString());
+        arg("offset", offset);
+        end();
+        mgl11ExtensionPack.glGenFramebuffersOES(n, framebuffers, offset);
+        checkError();
+    }
+
+    @Override
+    public void glGenFramebuffersOES(int n, IntBuffer framebuffers) {
+        begin("glGenFramebuffersOES");
+        arg("n", n);
+        arg("framebuffers", framebuffers.toString());
+        end();
+        mgl11ExtensionPack.glGenFramebuffersOES(n, framebuffers);
+        checkError();
+    }
+
+    @Override
+    public void glGenRenderbuffersOES(int n, int[] renderbuffers, int offset) {
+        begin("glGenRenderbuffersOES");
+        arg("n", n);
+        arg("renderbuffers", renderbuffers.toString());
+        arg("offset", offset);
+        end();
+        mgl11ExtensionPack.glGenRenderbuffersOES(n, renderbuffers, offset);
+        checkError();
+    }
+
+    @Override
+    public void glGenRenderbuffersOES(int n, IntBuffer renderbuffers) {
+        begin("glGenRenderbuffersOES");
+        arg("n", n);
+        arg("renderbuffers", renderbuffers.toString());
+        end();
+        mgl11ExtensionPack.glGenRenderbuffersOES(n, renderbuffers);
+        checkError();
+    }
+
+    @Override
+    public void glGetFramebufferAttachmentParameterivOES(int target,
+            int attachment, int pname, int[] params, int offset) {
+        begin("glGetFramebufferAttachmentParameterivOES");
+        arg("target", target);
+        arg("attachment", attachment);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11ExtensionPack.glGetFramebufferAttachmentParameterivOES(target, attachment, pname, params, offset);
+        checkError();
+    }
+
+    @Override
+    public void glGetFramebufferAttachmentParameterivOES(int target,
+            int attachment, int pname, IntBuffer params) {
+        begin("glGetFramebufferAttachmentParameterivOES");
+        arg("target", target);
+        arg("attachment", attachment);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11ExtensionPack.glGetFramebufferAttachmentParameterivOES(target, attachment, pname, params);
+        checkError();
+    }
+
+    @Override
+    public void glGetRenderbufferParameterivOES(int target, int pname,
+            int[] params, int offset) {
+        begin("glGetRenderbufferParameterivOES");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11ExtensionPack.glGetRenderbufferParameterivOES(target, pname, params, offset);
+        checkError();
+    }
+
+    @Override
+    public void glGetRenderbufferParameterivOES(int target, int pname,
+            IntBuffer params) {
+        begin("glGetRenderbufferParameterivOES");
+        arg("target", target);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11ExtensionPack.glGetRenderbufferParameterivOES(target, pname, params);
+        checkError();
+    }
+
+    @Override
+    public void glGetTexGenfv(int coord, int pname, float[] params, int offset) {
+        begin("glGetTexGenfv");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11ExtensionPack.glGetTexGenfv(coord, pname, params, offset);
+        checkError();
+    }
+
+    @Override
+    public void glGetTexGenfv(int coord, int pname, FloatBuffer params) {
+        begin("glGetTexGenfv");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11ExtensionPack.glGetTexGenfv(coord, pname, params);
+        checkError();
+    }
+
+    @Override
+    public void glGetTexGeniv(int coord, int pname, int[] params, int offset) {
+        begin("glGetTexGeniv");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11ExtensionPack.glGetTexGeniv(coord, pname, params, offset);
+        checkError();
+    }
+
+    @Override
+    public void glGetTexGeniv(int coord, int pname, IntBuffer params) {
+        begin("glGetTexGeniv");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11ExtensionPack.glGetTexGeniv(coord, pname, params);
+        checkError();
+    }
+
+    @Override
+    public void glGetTexGenxv(int coord, int pname, int[] params, int offset) {
+        begin("glGetTexGenxv");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11ExtensionPack.glGetTexGenxv(coord, pname, params, offset);
+        checkError();
+    }
+
+    @Override
+    public void glGetTexGenxv(int coord, int pname, IntBuffer params) {
+        begin("glGetTexGenxv");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11ExtensionPack.glGetTexGenxv(coord, pname, params);
+        checkError();
+    }
+
+    @Override
+    public boolean glIsFramebufferOES(int framebuffer) {
+        begin("glIsFramebufferOES");
+        arg("framebuffer", framebuffer);
+        end();
+        boolean result = mgl11ExtensionPack.glIsFramebufferOES(framebuffer);
+        checkError();
+        return result;
+    }
+
+    @Override
+    public boolean glIsRenderbufferOES(int renderbuffer) {
+        begin("glIsRenderbufferOES");
+        arg("renderbuffer", renderbuffer);
+        end();
+        mgl11ExtensionPack.glIsRenderbufferOES(renderbuffer);
+        checkError();
+        return false;
+    }
+
+    @Override
+    public void glRenderbufferStorageOES(int target, int internalformat,
+            int width, int height) {
+        begin("glRenderbufferStorageOES");
+        arg("target", target);
+        arg("internalformat", internalformat);
+        arg("width", width);
+        arg("height", height);
+        end();
+        mgl11ExtensionPack.glRenderbufferStorageOES(target, internalformat, width, height);
+        checkError();
+    }
+
+    @Override
+    public void glTexGenf(int coord, int pname, float param) {
+        begin("glTexGenf");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("param", param);
+        end();
+        mgl11ExtensionPack.glTexGenf(coord, pname, param);
+        checkError();
+    }
+
+    @Override
+    public void glTexGenfv(int coord, int pname, float[] params, int offset) {
+        begin("glTexGenfv");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11ExtensionPack.glTexGenfv(coord, pname, params, offset);
+        checkError();
+    }
+
+    @Override
+    public void glTexGenfv(int coord, int pname, FloatBuffer params) {
+        begin("glTexGenfv");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11ExtensionPack.glTexGenfv(coord, pname, params);
+        checkError();
+    }
+
+    @Override
+    public void glTexGeni(int coord, int pname, int param) {
+        begin("glTexGeni");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("param", param);
+        end();
+        mgl11ExtensionPack.glTexGeni(coord, pname, param);
+        checkError();
+    }
+
+    @Override
+    public void glTexGeniv(int coord, int pname, int[] params, int offset) {
+        begin("glTexGeniv");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11ExtensionPack.glTexGeniv(coord, pname, params, offset);
+        checkError();
+    }
+
+    @Override
+    public void glTexGeniv(int coord, int pname, IntBuffer params) {
+        begin("glTexGeniv");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11ExtensionPack.glTexGeniv(coord, pname, params);
+        checkError();
+    }
+
+    @Override
+    public void glTexGenx(int coord, int pname, int param) {
+        begin("glTexGenx");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("param", param);
+        end();
+        mgl11ExtensionPack.glTexGenx(coord, pname, param);
+        checkError();
+    }
+
+    @Override
+    public void glTexGenxv(int coord, int pname, int[] params, int offset) {
+        begin("glTexGenxv");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("params", params.toString());
+        arg("offset", offset);
+        end();
+        mgl11ExtensionPack.glTexGenxv(coord, pname, params, offset);
+        checkError();
+    }
+
+    @Override
+    public void glTexGenxv(int coord, int pname, IntBuffer params) {
+        begin("glTexGenxv");
+        arg("coord", coord);
+        arg("pname", pname);
+        arg("params", params.toString());
+        end();
+        mgl11ExtensionPack.glTexGenxv(coord, pname, params);
+        checkError();
     }
 
     private class PointerInfo {
@@ -3009,6 +3901,9 @@ class GLLogWrapper extends GLWrapperBase {
         public int mStride;
         public Buffer mPointer;
         public ByteBuffer mTempByteBuffer; // Only valid during glDrawXXX calls
+
+        public PointerInfo() {
+        }
 
         public PointerInfo(int size, int type, int stride, Buffer pointer) {
             mSize = size;
@@ -3039,7 +3934,7 @@ class GLLogWrapper extends GLWrapperBase {
         }
 
         public void bindByteBuffer() {
-            mTempByteBuffer = toByteBuffer(-1, mPointer);
+            mTempByteBuffer = mPointer == null ? null : toByteBuffer(-1, mPointer);
         }
 
         public void unbindByteBuffer() {
@@ -3051,10 +3946,10 @@ class GLLogWrapper extends GLWrapperBase {
     private boolean mLogArgumentNames;
     private int mArgCount;
 
-    private PointerInfo mColorPointer;
-    private PointerInfo mNormalPointer;
-    private PointerInfo mTexCoordPointer;
-    private PointerInfo mVertexPointer;
+    private PointerInfo mColorPointer = new PointerInfo();
+    private PointerInfo mNormalPointer = new PointerInfo();
+    private PointerInfo mTexCoordPointer = new PointerInfo();
+    private PointerInfo mVertexPointer = new PointerInfo();
 
     boolean mColorArrayEnabled;
     boolean mNormalArrayEnabled;

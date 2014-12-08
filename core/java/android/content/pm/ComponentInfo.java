@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2008 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package android.content.pm;
 
 import android.graphics.drawable.Drawable;
@@ -27,6 +43,13 @@ public class ComponentInfo extends PackageItemInfo {
     public String processName;
 
     /**
+     * A string resource identifier (in the package's resources) containing
+     * a user-readable description of the component.  From the "description"
+     * attribute or, if not set, 0.
+     */
+    public int descriptionRes;
+    
+    /**
      * Indicates whether or not this component may be instantiated.  Note that this value can be
      * overriden by the one in its parent {@link ApplicationInfo}.
      */
@@ -47,6 +70,7 @@ public class ComponentInfo extends PackageItemInfo {
         super(orig);
         applicationInfo = orig.applicationInfo;
         processName = orig.processName;
+        descriptionRes = orig.descriptionRes;
         enabled = orig.enabled;
         exported = orig.exported;
     }
@@ -74,23 +98,12 @@ public class ComponentInfo extends PackageItemInfo {
         }
         return name;
     }
-    
-    @Override public Drawable loadIcon(PackageManager pm) {
-        ApplicationInfo ai = applicationInfo;
-        Drawable dr;
-        if (icon != 0) {
-            dr = pm.getDrawable(packageName, icon, ai);
-            if (dr != null) {
-                return dr;
-            }
-        }
-        if (ai.icon != 0) {
-            dr = pm.getDrawable(packageName, ai.icon, ai);
-            if (dr != null) {
-                return dr;
-            }
-        }
-        return pm.getDefaultActivityIcon();
+
+    /**
+     * Return whether this component and its enclosing application are enabled.
+     */
+    public boolean isEnabled() {
+        return enabled && applicationInfo.enabled;
     }
     
     /**
@@ -103,11 +116,36 @@ public class ComponentInfo extends PackageItemInfo {
     public final int getIconResource() {
         return icon != 0 ? icon : applicationInfo.icon;
     }
+
+    /**
+     * Return the logo resource identifier to use for this component.  If
+     * the component defines a logo, that is used; else, the application
+     * logo is used.
+     *
+     * @return The logo associated with this component.
+     */
+    public final int getLogoResource() {
+        return logo != 0 ? logo : applicationInfo.logo;
+    }
     
+    /**
+     * Return the banner resource identifier to use for this component. If the
+     * component defines a banner, that is used; else, the application banner is
+     * used.
+     *
+     * @return The banner associated with this component.
+     */
+    public final int getBannerResource() {
+        return banner != 0 ? banner : applicationInfo.banner;
+    }
+
     protected void dumpFront(Printer pw, String prefix) {
         super.dumpFront(pw, prefix);
         pw.println(prefix + "enabled=" + enabled + " exported=" + exported
                 + " processName=" + processName);
+        if (descriptionRes != 0) {
+            pw.println(prefix + "description=" + descriptionRes);
+        }
     }
     
     protected void dumpBack(Printer pw, String prefix) {
@@ -124,15 +162,47 @@ public class ComponentInfo extends PackageItemInfo {
         super.writeToParcel(dest, parcelableFlags);
         applicationInfo.writeToParcel(dest, parcelableFlags);
         dest.writeString(processName);
+        dest.writeInt(descriptionRes);
         dest.writeInt(enabled ? 1 : 0);
         dest.writeInt(exported ? 1 : 0);
     }
-
+    
     protected ComponentInfo(Parcel source) {
         super(source);
         applicationInfo = ApplicationInfo.CREATOR.createFromParcel(source);
         processName = source.readString();
+        descriptionRes = source.readInt();
         enabled = (source.readInt() != 0);
         exported = (source.readInt() != 0);
+    }
+    
+    /**
+     * @hide
+     */
+    @Override
+    public Drawable loadDefaultIcon(PackageManager pm) {
+        return applicationInfo.loadIcon(pm);
+    }
+    
+    /**
+     * @hide
+     */
+    @Override protected Drawable loadDefaultBanner(PackageManager pm) {
+        return applicationInfo.loadBanner(pm);
+    }
+
+    /**
+     * @hide
+     */
+    @Override
+    protected Drawable loadDefaultLogo(PackageManager pm) {
+        return applicationInfo.loadLogo(pm);
+    }
+    
+    /**
+     * @hide
+     */
+    @Override protected ApplicationInfo getApplicationInfo() {
+        return applicationInfo;
     }
 }

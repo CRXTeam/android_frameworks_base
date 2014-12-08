@@ -32,20 +32,27 @@ import android.widget.RemoteViews.RemoteView;
  * <p><strong>XML attributes</strong></p> <p> See {@link
  * android.R.styleable#ViewGroup ViewGroup Attributes}, {@link
  * android.R.styleable#View View Attributes}</p>
+ * 
+ * @deprecated Use {@link android.widget.FrameLayout}, {@link android.widget.RelativeLayout}
+ *             or a custom layout instead.
  */
+@Deprecated
 @RemoteView
 public class AbsoluteLayout extends ViewGroup {
     public AbsoluteLayout(Context context) {
-        super(context);
+        this(context, null);
     }
 
     public AbsoluteLayout(Context context, AttributeSet attrs) {
-        super(context, attrs);
+        this(context, attrs, 0);
     }
 
-    public AbsoluteLayout(Context context, AttributeSet attrs,
-            int defStyle) {
-        super(context, attrs, defStyle);
+    public AbsoluteLayout(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public AbsoluteLayout(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
     }
 
     @Override
@@ -84,8 +91,8 @@ public class AbsoluteLayout extends ViewGroup {
         maxHeight = Math.max(maxHeight, getSuggestedMinimumHeight());
         maxWidth = Math.max(maxWidth, getSuggestedMinimumWidth());
         
-        setMeasuredDimension(resolveSize(maxWidth, widthMeasureSpec),
-                resolveSize(maxHeight, heightMeasureSpec));
+        setMeasuredDimension(resolveSizeAndState(maxWidth, widthMeasureSpec, 0),
+                resolveSizeAndState(maxHeight, heightMeasureSpec, 0));
     }
 
     /**
@@ -137,6 +144,11 @@ public class AbsoluteLayout extends ViewGroup {
         return new LayoutParams(p);
     }
 
+    @Override
+    public boolean shouldDelayChildPressedState() {
+        return false;
+    }
+
     /**
      * Per-child layout information associated with AbsoluteLayout.
      * See
@@ -157,9 +169,9 @@ public class AbsoluteLayout extends ViewGroup {
          * Creates a new set of layout parameters with the specified width,
          * height and location.
          *
-         * @param width the width, either {@link #FILL_PARENT},
+         * @param width the width, either {@link #MATCH_PARENT},
                   {@link #WRAP_CONTENT} or a fixed size in pixels
-         * @param height the height, either {@link #FILL_PARENT},
+         * @param height the height, either {@link #MATCH_PARENT},
                   {@link #WRAP_CONTENT} or a fixed size in pixels
          * @param x the X location of the child
          * @param y the Y location of the child
@@ -183,7 +195,7 @@ public class AbsoluteLayout extends ViewGroup {
          * </ul>
          *
          * @param c the application environment
-         * @param attrs the set of attributes fom which to extract the layout
+         * @param attrs the set of attributes from which to extract the layout
          *              parameters values
          */
         public LayoutParams(Context c, AttributeSet attrs) {

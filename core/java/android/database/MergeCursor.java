@@ -92,32 +92,6 @@ public class MergeCursor extends AbstractCursor
         return false;
     }
 
-    /**
-     * @hide
-     * @deprecated
-     */
-    @Override
-    public boolean deleteRow()
-    {
-        return mCursor.deleteRow();
-    }
-    
-    /**
-     * @hide
-     * @deprecated
-     */
-    @Override
-    public boolean commitUpdates() {
-        int length = mCursors.length;
-        for (int i = 0 ; i < length ; i++) {
-            if (mCursors[i] != null) {
-                mCursors[i].commitUpdates();
-            }
-        }
-        onChange(true);
-        return true;
-    }
-
     @Override
     public String getString(int column)
     {
@@ -155,6 +129,11 @@ public class MergeCursor extends AbstractCursor
     }
 
     @Override
+    public int getType(int column) {
+        return mCursor.getType(column);
+    }
+
+    @Override
     public boolean isNull(int column)
     {
         return mCursor.isNull(column);
@@ -185,6 +164,7 @@ public class MergeCursor extends AbstractCursor
                 mCursors[i].deactivate();
             }
         }
+        super.deactivate();
     }
 
     @Override
@@ -194,6 +174,7 @@ public class MergeCursor extends AbstractCursor
             if (mCursors[i] == null) continue;
             mCursors[i].close();
         }
+        super.close();
     }
 
     @Override

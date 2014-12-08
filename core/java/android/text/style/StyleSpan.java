@@ -18,7 +18,10 @@ package android.text.style;
 
 import android.graphics.Paint;
 import android.graphics.Typeface;
+import android.os.Parcel;
+import android.text.ParcelableSpan;
 import android.text.TextPaint;
+import android.text.TextUtils;
 
 /**
  * 
@@ -28,33 +31,49 @@ import android.text.TextPaint;
  * you get bold italic.  You can't turn off a style from the base style.
  *
  */
-public class StyleSpan extends MetricAffectingSpan {
+public class StyleSpan extends MetricAffectingSpan implements ParcelableSpan {
 
-	private int mStyle;
+    private final int mStyle;
 
-	/**
-	 * 
-	 * @param style An integer constant describing the style for this span. Examples
-	 * include bold, italic, and normal. Values are constants defined 
-	 * in {@link android.graphics.Typeface}.
-	 */
-	public StyleSpan(int style) {
-		mStyle = style;
-	}
+    /**
+     * 
+     * @param style An integer constant describing the style for this span. Examples
+     * include bold, italic, and normal. Values are constants defined 
+     * in {@link android.graphics.Typeface}.
+     */
+    public StyleSpan(int style) {
+        mStyle = style;
+    }
 
-	/**
-	 * Returns the style constant defined in {@link android.graphics.Typeface}. 
-	 */
-	public int getStyle() {
-		return mStyle;
-	}
+    public StyleSpan(Parcel src) {
+        mStyle = src.readInt();
+    }
+    
+    public int getSpanTypeId() {
+        return TextUtils.STYLE_SPAN;
+    }
+    
+    public int describeContents() {
+        return 0;
+    }
 
-	@Override
+    public void writeToParcel(Parcel dest, int flags) {
+        dest.writeInt(mStyle);
+    }
+
+    /**
+     * Returns the style constant defined in {@link android.graphics.Typeface}. 
+     */
+    public int getStyle() {
+        return mStyle;
+    }
+
+    @Override
     public void updateDrawState(TextPaint ds) {
         apply(ds, mStyle);
     }
 
-	@Override
+    @Override
     public void updateMeasureState(TextPaint paint) {
         apply(paint, mStyle);
     }

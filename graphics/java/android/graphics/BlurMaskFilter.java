@@ -16,13 +16,34 @@
 
 package android.graphics;
 
+/**
+ * This takes a mask, and blurs its edge by the specified radius. Whether or
+ * or not to include the original mask, and whether the blur goes outside,
+ * inside, or straddles, the original mask's border, is controlled by the
+ * Blur enum.
+ */
 public class BlurMaskFilter extends MaskFilter {
 
     public enum Blur {
-        NORMAL(0),  //!< fuzzy inside and outside
-        SOLID(1),   //!< solid inside, fuzzy outside
-        OUTER(2),   //!< nothing inside, fuzzy outside
-        INNER(3);   //!< fuzzy inside, nothing outside
+        /**
+         * Blur inside and outside the original border.
+         */
+        NORMAL(0),
+
+        /**
+         * Draw solid inside the border, blur outside.
+         */
+        SOLID(1),
+
+        /**
+         * Draw nothing inside the border, blur outside.
+         */
+        OUTER(2),
+
+        /**
+         * Blur inside the border, draw nothing outside.
+         */
+        INNER(3);
         
         Blur(int value) {
             native_int = value;
@@ -41,5 +62,5 @@ public class BlurMaskFilter extends MaskFilter {
         native_instance = nativeConstructor(radius, style.native_int);
     }
 
-    private static native int nativeConstructor(float radius, int style);
+    private static native long nativeConstructor(float radius, int style);
 }

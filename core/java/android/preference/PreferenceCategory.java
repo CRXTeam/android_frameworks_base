@@ -16,20 +16,30 @@
 
 package android.preference;
 
-import java.util.Map;
-
 import android.content.Context;
 import android.util.AttributeSet;
 
 /**
- * The {@link PreferenceCategory} class is used to group {@link Preference}s
+ * Used to group {@link Preference} objects
  * and provide a disabled title above the group.
+ * 
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For information about building a settings UI with Preferences,
+ * read the <a href="{@docRoot}guide/topics/ui/settings.html">Settings</a>
+ * guide.</p>
+ * </div>
  */
 public class PreferenceCategory extends PreferenceGroup {
     private static final String TAG = "PreferenceCategory";
-    
-    public PreferenceCategory(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+
+    public PreferenceCategory(
+            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+    }
+
+    public PreferenceCategory(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
     }
 
     public PreferenceCategory(Context context, AttributeSet attrs) {
@@ -55,4 +65,8 @@ public class PreferenceCategory extends PreferenceGroup {
         return false;
     }
     
+    @Override
+    public boolean shouldDisableDependents() {
+        return !super.isEnabled();
+    }
 }

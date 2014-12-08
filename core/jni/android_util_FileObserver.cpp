@@ -67,28 +67,36 @@ static void android_os_fileobserver_observe(JNIEnv* env, jobject object, jint fd
             if (errno == EINTR)
                 continue;
 
-            LOGE("***** ERROR! android_os_fileobserver_observe() got a short event!");
+            ALOGE("***** ERROR! android_os_fileobserver_observe() got a short event!");
             return;
         }
         
-    	while (num_bytes >= (int)sizeof(*event))
-    	{
-			int event_size;
-			event = (struct inotify_event *)(event_buf + event_pos);
-			
+        while (num_bytes >= (int)sizeof(*event))
+        {
+            int event_size;
+            event = (struct inotify_event *)(event_buf + event_pos);
+
             jstring path = NULL;
             
             if (event->len > 0)
             {
                 path = env->NewStringUTF(event->name);
             }
-            
-		    env->CallVoidMethod(object, method_onEvent, event->wd, event->mask, path);
-		    
-		    event_size = sizeof(*event) + event->len;
-			num_bytes -= event_size;
-			event_pos += event_size;
-		}
+
+            env->CallVoidMethod(object, method_onEvent, event->wd, event->mask, path);
+            if (env->ExceptionCheck()) {
+                env->ExceptionDescribe();
+                env->ExceptionClear();
+            }
+            if (path != NULL)
+            {
+                env->DeleteLocalRef(path);
+            }
+
+            event_size = sizeof(*event) + event->len;
+            num_bytes -= event_size;
+            event_pos += event_size;
+        }
     }
     
 #endif // HAVE_INOTIFY
@@ -140,14 +148,14 @@ int register_android_os_FileObserver(JNIEnv* env)
 
     if (clazz == NULL)
 	{
-        LOGE("Can't find android/os/FileObserver$ObserverThread");
+        ALOGE("Can't find android/os/FileObserver$ObserverThread");
         return -1;
     }
 
     method_onEvent = env->GetMethodID(clazz, "onEvent", "(IILjava/lang/String;)V");
     if (method_onEvent == NULL)
     {
-        LOGE("Can't find FileObserver.onEvent(int, int, String)");
+        ALOGE("Can't find FileObserver.onEvent(int, int, String)");
         return -1;
     }
 

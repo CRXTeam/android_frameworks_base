@@ -18,11 +18,15 @@ package android.text.method;
 
 import android.view.KeyEvent;
 import android.view.KeyCharacterMap.KeyData;
-import android.util.SparseIntArray;
+import android.text.InputType;
 import android.text.Spannable;
 
 /**
  * For dialing-only text entry
+ * <p></p>
+ * As for all implementations of {@link KeyListener}, this class is only concerned
+ * with hardware keyboards.  Software input methods have no obligation to trigger
+ * the methods in this class.
  */
 public class DialerKeyListener extends NumberKeyListener
 {
@@ -40,19 +44,23 @@ public class DialerKeyListener extends NumberKeyListener
         return sInstance;
     }
 
+    public int getInputType() {
+        return InputType.TYPE_CLASS_PHONE;
+    }
+    
     /**
      * Overrides the superclass's lookup method to prefer the number field
      * from the KeyEvent.
      */
     protected int lookup(KeyEvent event, Spannable content) {
-        int meta = getMetaState(content);
+        int meta = getMetaState(content, event);
         int number = event.getNumber();
 
         /*
          * Prefer number if no meta key is active, or if it produces something
          * valid and the meta lookup does not.
          */
-        if ((meta & (KeyEvent.META_ALT_ON | KeyEvent.META_SHIFT_ON)) == 0) {
+        if ((meta & (MetaKeyKeyListener.META_ALT_ON | MetaKeyKeyListener.META_SHIFT_ON)) == 0) {
             if (number != 0) {
                 return number;
             }
@@ -102,7 +110,7 @@ public class DialerKeyListener extends NumberKeyListener
      */
     public static final char[] CHARACTERS = new char[] {
             '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '#', '*',
-            '+', '-', '(', ')', ',', '/', 'N', '.', ' '
+            '+', '-', '(', ')', ',', '/', 'N', '.', ' ', ';'
         };
 
     private static DialerKeyListener sInstance;

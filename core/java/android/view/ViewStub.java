@@ -20,8 +20,11 @@ import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
 import android.util.AttributeSet;
+import android.widget.RemoteViews.RemoteView;
 
 import com.android.internal.R;
+
+import java.lang.ref.WeakReference;
 
 /**
  * A ViewStub is an invisible, zero-sized View that can be used to lazily inflate
@@ -64,10 +67,14 @@ import com.android.internal.R;
  * @attr ref android.R.styleable#ViewStub_inflatedId
  * @attr ref android.R.styleable#ViewStub_layout
  */
+@RemoteView
 public final class ViewStub extends View {
     private int mLayoutResource = 0;
     private int mInflatedId;
 
+    private WeakReference<View> mInflatedViewRef;
+
+    private LayoutInflater mInflater;
     private OnInflateListener mInflateListener;
 
     public ViewStub(Context context) {
@@ -90,16 +97,21 @@ public final class ViewStub extends View {
     }
 
     @SuppressWarnings({"UnusedDeclaration"})
-    public ViewStub(Context context, AttributeSet attrs, int defStyle) {
-        TypedArray a = context.obtainStyledAttributes(attrs, com.android.internal.R.styleable.ViewStub,
-                defStyle, 0);
+    public ViewStub(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public ViewStub(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        TypedArray a = context.obtainStyledAttributes(
+                attrs, com.android.internal.R.styleable.ViewStub, defStyleAttr, defStyleRes);
 
         mInflatedId = a.getResourceId(R.styleable.ViewStub_inflatedId, NO_ID);
         mLayoutResource = a.getResourceId(R.styleable.ViewStub_layout, 0);
 
         a.recycle();
 
-        a = context.obtainStyledAttributes(attrs, com.android.internal.R.styleable.View, defStyle, 0);
+        a = context.obtainStyledAttributes(
+                attrs, com.android.internal.R.styleable.View, defStyleAttr, defStyleRes);
         mID = a.getResourceId(R.styleable.View_id, NO_ID);
         a.recycle();
 
@@ -136,6 +148,7 @@ public final class ViewStub extends View {
      * @see #getInflatedId()
      * @attr ref android.R.styleable#ViewStub_inflatedId
      */
+    @android.view.RemotableViewMethod
     public void setInflatedId(int inflatedId) {
         mInflatedId = inflatedId;
     }
@@ -168,8 +181,24 @@ public final class ViewStub extends View {
      * @see #inflate()
      * @attr ref android.R.styleable#ViewStub_layout
      */
+    @android.view.RemotableViewMethod
     public void setLayoutResource(int layoutResource) {
         mLayoutResource = layoutResource;
+    }
+
+    /**
+     * Set {@link LayoutInflater} to use in {@link #inflate()}, or {@code null}
+     * to use the default.
+     */
+    public void setLayoutInflater(LayoutInflater inflater) {
+        mInflater = inflater;
+    }
+
+    /**
+     * Get current {@link LayoutInflater} used in {@link #inflate()}.
+     */
+    public LayoutInflater getLayoutInflater() {
+        return mInflater;
     }
 
     @Override
@@ -188,18 +217,28 @@ public final class ViewStub extends View {
     /**
      * When visibility is set to {@link #VISIBLE} or {@link #INVISIBLE},
      * {@link #inflate()} is invoked and this StubbedView is replaced in its parent
-     * by the inflated layout resource.
+     * by the inflated layout resource. After that calls to this function are passed
+     * through to the inflated view.
      *
      * @param visibility One of {@link #VISIBLE}, {@link #INVISIBLE}, or {@link #GONE}.
      *
      * @see #inflate() 
      */
     @Override
+    @android.view.RemotableViewMethod
     public void setVisibility(int visibility) {
-        super.setVisibility(visibility);
-
-        if (visibility == VISIBLE || visibility == INVISIBLE) {
-            inflate();
+        if (mInflatedViewRef != null) {
+            View view = mInflatedViewRef.get();
+            if (view != null) {
+                view.setVisibility(visibility);
+            } else {
+                throw new IllegalStateException("setVisibility called on un-referenced view");
+            }
+        } else {
+            super.setVisibility(visibility);
+            if (visibility == VISIBLE || visibility == INVISIBLE) {
+                inflate();
+            }
         }
     }
 
@@ -216,7 +255,12 @@ public final class ViewStub extends View {
         if (viewParent != null && viewParent instanceof ViewGroup) {
             if (mLayoutResource != 0) {
                 final ViewGroup parent = (ViewGroup) viewParent;
-                final LayoutInflater factory = LayoutInflater.from(mContext);
+                final LayoutInflater factory;
+                if (mInflater != null) {
+                    factory = mInflater;
+                } else {
+                    factory = LayoutInflater.from(mContext);
+                }
                 final View view = factory.inflate(mLayoutResource, parent,
                         false);
 
@@ -233,6 +277,8 @@ public final class ViewStub extends View {
                 } else {
                     parent.addView(view, index);
                 }
+
+                mInflatedViewRef = new WeakReference<View>(view);
 
                 if (mInflateListener != null) {
                     mInflateListener.onInflate(this, view);

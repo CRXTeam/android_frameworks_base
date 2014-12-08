@@ -31,10 +31,12 @@ import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.TextView;
 
 /**
- * The {@link DialogPreference} class is a base class for preferences that are
+ * A base class for {@link Preference} objects that are
  * dialog-based. These preferences will, when clicked, open a dialog showing the
  * actual preference controls.
  * 
@@ -62,12 +64,13 @@ public abstract class DialogPreference extends Preference implements
 
     /** Which button was clicked. */
     private int mWhichButtonClicked;
-    
-    public DialogPreference(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
-        
-        TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.DialogPreference, defStyle, 0);
+
+    public DialogPreference(
+            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.DialogPreference, defStyleAttr, defStyleRes);
         mDialogTitle = a.getString(com.android.internal.R.styleable.DialogPreference_dialogTitle);
         if (mDialogTitle == null) {
             // Fallback on the regular title of the preference
@@ -81,13 +84,20 @@ public abstract class DialogPreference extends Preference implements
         mDialogLayoutResId = a.getResourceId(com.android.internal.R.styleable.DialogPreference_dialogLayout,
                 mDialogLayoutResId);
         a.recycle();
-        
+    }
+
+    public DialogPreference(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
     }
 
     public DialogPreference(Context context, AttributeSet attrs) {
         this(context, attrs, com.android.internal.R.attr.dialogPreferenceStyle);
     }
-    
+
+    public DialogPreference(Context context) {
+        this(context, null);
+    }
+
     /**
      * Sets the title of the dialog. This will be shown on subsequent dialogs.
      * 
@@ -159,7 +169,7 @@ public abstract class DialogPreference extends Preference implements
      * @param dialogIconRes The icon, as a resource ID.
      */
     public void setDialogIcon(int dialogIconRes) {
-        mDialogIcon = getContext().getResources().getDrawable(dialogIconRes);
+        mDialogIcon = getContext().getDrawable(dialogIconRes);
     }
     
     /**
@@ -259,6 +269,8 @@ public abstract class DialogPreference extends Preference implements
     
     @Override
     protected void onClick() {
+        if (mDialog != null && mDialog.isShowing()) return;
+
         showDialog(null);
     }
 
@@ -270,10 +282,26 @@ public abstract class DialogPreference extends Preference implements
      * @param state Optional instance state to restore on the dialog
      */
     protected void showDialog(Bundle state) {
+        // Create the dialog
+        final Dialog dialog = mDialog = createDialog();
+        if (state != null) {
+            dialog.onRestoreInstanceState(state);
+        }
+        if (needInputMethod()) {
+            requestInputMethod(dialog);
+        }
+        dialog.setOnDismissListener(this);
+        dialog.show();
+    }
+
+    /**
+     * @hide
+     */
+    protected Dialog createDialog() {
         Context context = getContext();
 
-        mWhichButtonClicked = DialogInterface.BUTTON2;
-        
+        mWhichButtonClicked = DialogInterface.BUTTON_NEGATIVE;
+
         mBuilder = new AlertDialog.Builder(context)
             .setTitle(mDialogTitle)
             .setIcon(mDialogIcon)
@@ -287,20 +315,32 @@ public abstract class DialogPreference extends Preference implements
         } else {
             mBuilder.setMessage(mDialogMessage);
         }
-        
+
         onPrepareDialogBuilder(mBuilder);
-        
+
         getPreferenceManager().registerOnActivityDestroyListener(this);
-        
-        // Create the dialog
-        final Dialog dialog = mDialog = mBuilder.create();
-        if (state != null) {
-            dialog.onRestoreInstanceState(state);
-        }
-        dialog.setOnDismissListener(this);
-        dialog.show();
+
+        return mBuilder.create();
     }
-    
+
+    /**
+     * Returns whether the preference needs to display a soft input method when the dialog
+     * is displayed. Default is false. Subclasses should override this method if they need
+     * the soft input method brought up automatically.
+     * @hide
+     */
+    protected boolean needInputMethod() {
+        return false;
+    }
+
+    /**
+     * Sets the required flags on the dialog window to enable input method window to show up.
+     */
+    private void requestInputMethod(Dialog dialog) {
+        Window window = dialog.getWindow();
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+    }
+
     /**
      * Creates the content view for the dialog (if a custom content view is
      * required). By default, it inflates the dialog layout resource if it is
@@ -314,8 +354,7 @@ public abstract class DialogPreference extends Preference implements
             return null;
         }
         
-        LayoutInflater inflater = (LayoutInflater) getContext().getSystemService(
-                Context.LAYOUT_INFLATER_SERVICE);
+        LayoutInflater inflater = LayoutInflater.from(mBuilder.getContext());
         return inflater.inflate(mDialogLayoutResId, null);
     }
     
@@ -356,7 +395,7 @@ public abstract class DialogPreference extends Preference implements
         getPreferenceManager().unregisterOnActivityDestroyListener(this);
         
         mDialog = null;
-        onDialogClosed(mWhichButtonClicked == DialogInterface.BUTTON1);
+        onDialogClosed(mWhichButtonClicked == DialogInterface.BUTTON_POSITIVE);
     }
 
     /**
@@ -367,6 +406,15 @@ public abstract class DialogPreference extends Preference implements
      *            the negative button was clicked or the dialog was canceled (false).
      */
     protected void onDialogClosed(boolean positiveResult) {
+    }
+
+    /**
+     * Gets the dialog that is shown by this preference.
+     * 
+     * @return The dialog, or null if a dialog is not being shown.
+     */
+    public Dialog getDialog() {
+        return mDialog;
     }
 
     /**

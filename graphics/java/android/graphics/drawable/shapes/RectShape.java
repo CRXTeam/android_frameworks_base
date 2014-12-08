@@ -17,6 +17,7 @@
 package android.graphics.drawable.shapes;
 
 import android.graphics.Canvas;
+import android.graphics.Outline;
 import android.graphics.Paint;
 import android.graphics.RectF;
 
@@ -28,10 +29,7 @@ import android.graphics.RectF;
  */
 public class RectShape extends Shape {
     private RectF mRect = new RectF();
-    
-    /**
-     * RectShape constructor.
-     */
+
     public RectShape() {}
     
     @Override
@@ -40,14 +38,28 @@ public class RectShape extends Shape {
     }
 
     @Override
+    public void getOutline(Outline outline) {
+        final RectF rect = rect();
+        outline.setRect((int) Math.ceil(rect.left), (int) Math.ceil(rect.top),
+                (int) Math.floor(rect.right), (int) Math.floor(rect.bottom));
+    }
+
+    @Override
     protected void onResize(float width, float height) {
         mRect.set(0, 0, width, height);
     }
-    
+
     /**
      * Returns the RectF that defines this rectangle's bounds.
      */
     protected final RectF rect() {
         return mRect;
+    }
+
+    @Override
+    public RectShape clone() throws CloneNotSupportedException {
+        final RectShape shape = (RectShape) super.clone();
+        shape.mRect = new RectF(mRect);
+        return shape;
     }
 }

@@ -17,14 +17,14 @@
 package android.content.res;
 
 import android.os.ParcelFileDescriptor;
-import android.util.Config;
 import android.util.Log;
+import android.util.SparseArray;
 import android.util.TypedValue;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Locale;
+import java.util.HashMap;
 
 /**
  * Provides access to an application's raw asset files; see {@link Resources}
@@ -33,7 +33,7 @@ import java.util.Locale;
  * files that have been bundled with the application as a simple stream of
  * bytes.
  */
-public final class AssetManager {
+public final class AssetManager implements AutoCloseable {
     /* modes used when opening an asset */
 
     /**
@@ -58,23 +58,25 @@ public final class AssetManager {
     public static final int ACCESS_BUFFER = 3;
 
     private static final String TAG = "AssetManager";
-    private static final boolean localLOGV = Config.LOGV || false;
+    private static final boolean localLOGV = false || false;
     
-    private static final Object mSync = new Object();
-    private static final TypedValue mValue = new TypedValue();
-    private static final long[] mOffsets = new long[2];
-    private static AssetManager mSystem = null;
+    private static final boolean DEBUG_REFS = false;
+    
+    private static final Object sSync = new Object();
+    /*package*/ static AssetManager sSystem = null;
 
+    private final TypedValue mValue = new TypedValue();
+    private final long[] mOffsets = new long[2];
+    
     // For communication with native code.
-    private int mObject;
+    private long mObject;
 
     private StringBlock mStringBlocks[] = null;
     
     private int mNumRefs = 1;
     private boolean mOpen = true;
-    private String mAssetDir;
-    private String mAppName;
-
+    private HashMap<Long, RuntimeException> mRefStacks;
+ 
     /**
      * Create a new AssetManager containing only the basic system assets.
      * Applications will not generally use this method, instead retrieving the
@@ -83,25 +85,35 @@ public final class AssetManager {
      * {@hide}
      */
     public AssetManager() {
-        synchronized (mSync) {
-            init();
+        synchronized (this) {
+            if (DEBUG_REFS) {
+                mNumRefs = 0;
+                incRefsLocked(this.hashCode());
+            }
+            init(false);
             if (localLOGV) Log.v(TAG, "New asset manager: " + this);
             ensureSystemAssets();
         }
     }
 
     private static void ensureSystemAssets() {
-        synchronized (mSync) {
-            if (mSystem == null) {
+        synchronized (sSync) {
+            if (sSystem == null) {
                 AssetManager system = new AssetManager(true);
-                system.makeStringBlocks(false);
-                mSystem = system;
+                system.makeStringBlocks(null);
+                sSystem = system;
             }
         }
     }
     
     private AssetManager(boolean isSystem) {
-        init();
+        if (DEBUG_REFS) {
+            synchronized (this) {
+                mNumRefs = 0;
+                incRefsLocked(this.hashCode());
+            }
+        }
+        init(true);
         if (localLOGV) Log.v(TAG, "New asset manager: " + this);
     }
 
@@ -112,19 +124,19 @@ public final class AssetManager {
      */
     public static AssetManager getSystem() {
         ensureSystemAssets();
-        return mSystem;
+        return sSystem;
     }
 
     /**
      * Close this asset manager.
      */
     public void close() {
-        synchronized(mSync) {
+        synchronized(this) {
             //System.out.println("Release: num=" + mNumRefs
             //                   + ", released=" + mReleased);
             if (mOpen) {
                 mOpen = false;
-                decRefsLocked();
+                decRefsLocked(this.hashCode());
             }
         }
     }
@@ -134,9 +146,9 @@ public final class AssetManager {
      * identifier for the current configuration / skin.
      */
     /*package*/ final CharSequence getResourceText(int ident) {
-        synchronized (mSync) {
+        synchronized (this) {
             TypedValue tmpValue = mValue;
-            int block = loadResourceValue(ident, tmpValue, true);
+            int block = loadResourceValue(ident, (short) 0, tmpValue, true);
             if (block >= 0) {
                 if (tmpValue.type == TypedValue.TYPE_STRING) {
                     return mStringBlocks[block].get(tmpValue.data);
@@ -152,7 +164,7 @@ public final class AssetManager {
      * identifier for the current configuration / skin.
      */
     /*package*/ final CharSequence getResourceBagText(int ident, int bagEntryId) {
-        synchronized (mSync) {
+        synchronized (this) {
             TypedValue tmpValue = mValue;
             int block = loadResourceBagValue(ident, bagEntryId, tmpValue, true);
             if (block >= 0) {
@@ -177,10 +189,11 @@ public final class AssetManager {
 
 
     /*package*/ final boolean getResourceValue(int ident,
+                                               int density,
                                                TypedValue outValue,
                                                boolean resolveRefs)
     {
-        int block = loadResourceValue(ident, outValue, resolveRefs);
+        int block = loadResourceValue(ident, (short) density, outValue, resolveRefs);
         if (block >= 0) {
             if (outValue.type != TypedValue.TYPE_STRING) {
                 return true;
@@ -211,7 +224,7 @@ public final class AssetManager {
         return retArray;
     }
     
-    /*package*/ final boolean getThemeValue(int theme, int ident,
+    /*package*/ final boolean getThemeValue(long theme, int ident,
             TypedValue outValue, boolean resolveRefs) {
         int block = loadThemeAttributeValue(theme, ident, outValue, resolveRefs);
         if (block >= 0) {
@@ -221,6 +234,7 @@ public final class AssetManager {
             StringBlock[] blocks = mStringBlocks;
             if (blocks == null) {
                 ensureStringBlocks();
+                blocks = mStringBlocks;
             }
             outValue.string = blocks[block].get(outValue.data);
             return true;
@@ -230,34 +244,32 @@ public final class AssetManager {
 
     /*package*/ final void ensureStringBlocks() {
         if (mStringBlocks == null) {
-            synchronized (mSync) {
+            synchronized (this) {
                 if (mStringBlocks == null) {
-                    makeStringBlocks(true);
+                    makeStringBlocks(sSystem.mStringBlocks);
                 }
             }
         }
     }
 
-    private final void makeStringBlocks(boolean copyFromSystem) {
-        final int sysNum = copyFromSystem ? mSystem.mStringBlocks.length : 0;
+    /*package*/ final void makeStringBlocks(StringBlock[] seed) {
+        final int seedNum = (seed != null) ? seed.length : 0;
         final int num = getStringBlockCount();
         mStringBlocks = new StringBlock[num];
         if (localLOGV) Log.v(TAG, "Making string blocks for " + this
                 + ": " + num);
         for (int i=0; i<num; i++) {
-            if (i < sysNum) {
-                mStringBlocks[i] = mSystem.mStringBlocks[i];
+            if (i < seedNum) {
+                mStringBlocks[i] = seed[i];
             } else {
                 mStringBlocks[i] = new StringBlock(getNativeStringBlock(i), true);
             }
         }
     }
 
-    /*package*/ final CharSequence getPooledString(int block, int id) {
-        //System.out.println("Get pooled: block=" + block
-        //                   + ", id=#" + Integer.toHexString(id)
-        //                   + ", blocks=" + mStringBlocks);
-        return mStringBlocks[block-1].get(id);
+    /*package*/ final CharSequence getPooledStringForCookie(int cookie, int id) {
+        // Cookies map to string blocks starting at 1.
+        return mStringBlocks[cookie - 1].get(id);
     }
 
     /**
@@ -294,14 +306,15 @@ public final class AssetManager {
      */
     public final InputStream open(String fileName, int accessMode)
         throws IOException {
-        synchronized (mSync) {
+        synchronized (this) {
             if (!mOpen) {
                 throw new RuntimeException("Assetmanager has been closed");
             }
-            int asset = openAsset(fileName, accessMode);
+            long asset = openAsset(fileName, accessMode);
             if (asset != 0) {
-                mNumRefs++;
-                return new AssetInputStream(asset);
+                AssetInputStream res = new AssetInputStream(asset);
+                incRefsLocked(res.hashCode());
+                return res;
             }
         }
         throw new FileNotFoundException("Asset file: " + fileName);
@@ -309,7 +322,7 @@ public final class AssetManager {
 
     public final AssetFileDescriptor openFd(String fileName)
             throws IOException {
-        synchronized (mSync) {
+        synchronized (this) {
             if (!mOpen) {
                 throw new RuntimeException("Assetmanager has been closed");
             }
@@ -385,14 +398,15 @@ public final class AssetManager {
      */
     public final InputStream openNonAsset(int cookie, String fileName, int accessMode)
         throws IOException {
-        synchronized (mSync) {
+        synchronized (this) {
             if (!mOpen) {
                 throw new RuntimeException("Assetmanager has been closed");
             }
-            int asset = openNonAssetNative(cookie, fileName, accessMode);
+            long asset = openNonAssetNative(cookie, fileName, accessMode);
             if (asset != 0) {
-                mNumRefs++;
-                return new AssetInputStream(asset);
+                AssetInputStream res = new AssetInputStream(asset);
+                incRefsLocked(res.hashCode());
+                return res;
             }
         }
         throw new FileNotFoundException("Asset absolute file: " + fileName);
@@ -405,7 +419,7 @@ public final class AssetManager {
     
     public final AssetFileDescriptor openNonAssetFd(int cookie,
             String fileName) throws IOException {
-        synchronized (mSync) {
+        synchronized (this) {
             if (!mOpen) {
                 throw new RuntimeException("Assetmanager has been closed");
             }
@@ -464,51 +478,75 @@ public final class AssetManager {
      */
     /*package*/ final XmlBlock openXmlBlockAsset(int cookie, String fileName)
         throws IOException {
-        synchronized (mSync) {
+        synchronized (this) {
             if (!mOpen) {
                 throw new RuntimeException("Assetmanager has been closed");
             }
-            int xmlBlock = openXmlAssetNative(cookie, fileName);
+            long xmlBlock = openXmlAssetNative(cookie, fileName);
             if (xmlBlock != 0) {
-                mNumRefs++;
-                return new XmlBlock(this, xmlBlock);
+                XmlBlock res = new XmlBlock(this, xmlBlock);
+                incRefsLocked(res.hashCode());
+                return res;
             }
         }
         throw new FileNotFoundException("Asset XML file: " + fileName);
     }
 
-    /*package*/ void xmlBlockGone() {
-        synchronized (mSync) {
-            decRefsLocked();
+    /*package*/ void xmlBlockGone(int id) {
+        synchronized (this) {
+            decRefsLocked(id);
         }
     }
 
-    /*package*/ final int createTheme() {
-        synchronized (mSync) {
+    /*package*/ final long createTheme() {
+        synchronized (this) {
             if (!mOpen) {
                 throw new RuntimeException("Assetmanager has been closed");
             }
-            mNumRefs++;
-            return newTheme();
+            long res = newTheme();
+            incRefsLocked(res);
+            return res;
         }
     }
 
-    /*package*/ final void releaseTheme(int theme) {
-        synchronized (mSync) {
+    /*package*/ final void releaseTheme(long theme) {
+        synchronized (this) {
             deleteTheme(theme);
-            decRefsLocked();
+            decRefsLocked(theme);
         }
     }
 
     protected void finalize() throws Throwable {
-        destroy();
+        try {
+            if (DEBUG_REFS && mNumRefs != 0) {
+                Log.w(TAG, "AssetManager " + this
+                        + " finalized with non-zero refs: " + mNumRefs);
+                if (mRefStacks != null) {
+                    for (RuntimeException e : mRefStacks.values()) {
+                        Log.w(TAG, "Reference from here", e);
+                    }
+                }
+            }
+            destroy();
+        } finally {
+            super.finalize();
+        }
     }
     
     public final class AssetInputStream extends InputStream {
+        /**
+         * @hide
+         */
         public final int getAssetInt() {
+            throw new UnsupportedOperationException();
+        }
+        /**
+         * @hide
+         */
+        public final long getNativeAsset() {
             return mAsset;
         }
-        private AssetInputStream(int asset)
+        private AssetInputStream(long asset)
         {
             mAsset = asset;
             mLength = getAssetLength(asset);
@@ -524,11 +562,11 @@ public final class AssetManager {
             return len > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int)len;
         }
         public final void close() throws IOException {
-            synchronized (AssetManager.mSync) {
+            synchronized (AssetManager.this) {
                 if (mAsset != 0) {
                     destroyAsset(mAsset);
                     mAsset = 0;
-                    decRefsLocked();
+                    decRefsLocked(hashCode());
                 }
             }
         }
@@ -560,18 +598,68 @@ public final class AssetManager {
             close();
         }
 
-        private int mAsset;
+        private long mAsset;
         private long mLength;
         private long mMarkPos;
     }
 
     /**
      * Add an additional set of assets to the asset manager.  This can be
-     * either a directory or ZIP file.  Not for use by applications.  A
-     * zero return value indicates failure.
+     * either a directory or ZIP file.  Not for use by applications.  Returns
+     * the cookie of the added asset, or 0 on failure.
      * {@hide}
      */
-    public native final int addAssetPath(String path);
+    public final int addAssetPath(String path) {
+        synchronized (this) {
+            int res = addAssetPathNative(path);
+            if (mStringBlocks != null) {
+                makeStringBlocks(mStringBlocks);
+            }
+            return res;
+        }
+    }
+
+    private native final int addAssetPathNative(String path);
+
+     /**
+     * Add a set of assets to overlay an already added set of assets.
+     *
+     * This is only intended for application resources. System wide resources
+     * are handled before any Java code is executed.
+     *
+     * {@hide}
+     */
+    public final int addOverlayPath(String idmapPath) {
+        synchronized (this) {
+            int res = addOverlayPathNative(idmapPath);
+            if (mStringBlocks != null) {
+                makeStringBlocks(mStringBlocks);
+            }
+            return res;
+        }
+    }
+
+    private native final int addOverlayPathNative(String idmapPath);
+
+    /**
+     * Add multiple sets of assets to the asset manager at once.  See
+     * {@link #addAssetPath(String)} for more information.  Returns array of
+     * cookies for each added asset with 0 indicating failure, or null if
+     * the input array of paths is null.
+     * {@hide}
+     */
+    public final int[] addAssetPaths(String[] paths) {
+        if (paths == null) {
+            return null;
+        }
+
+        int[] cookies = new int[paths.length];
+        for (int i = 0; i < paths.length; i++) {
+            cookies[i] = addAssetPath(paths[i]);
+        }
+
+        return cookies;
+    }
 
     /**
      * Determine whether the state in this asset manager is up-to-date with
@@ -601,7 +689,8 @@ public final class AssetManager {
     public native final void setConfiguration(int mcc, int mnc, String locale,
             int orientation, int touchscreen, int density, int keyboard,
             int keyboardHidden, int navigation, int screenWidth, int screenHeight,
-            int majorVersion);
+            int smallestScreenWidthDp, int screenWidthDp, int screenHeightDp,
+            int screenLayout, int uiMode, int majorVersion);
 
     /**
      * Retrieve the resource identifier for the given resource name.
@@ -615,43 +704,47 @@ public final class AssetManager {
     /*package*/ native final String getResourceTypeName(int resid);
     /*package*/ native final String getResourceEntryName(int resid);
     
-    private native final int openAsset(String fileName, int accessMode);
+    private native final long openAsset(String fileName, int accessMode);
     private final native ParcelFileDescriptor openAssetFd(String fileName,
             long[] outOffsets) throws IOException;
-    private native final int openNonAssetNative(int cookie, String fileName,
+    private native final long openNonAssetNative(int cookie, String fileName,
             int accessMode);
     private native ParcelFileDescriptor openNonAssetFdNative(int cookie,
             String fileName, long[] outOffsets) throws IOException;
-    private native final void destroyAsset(int asset);
-    private native final int readAssetChar(int asset);
-    private native final int readAsset(int asset, byte[] b, int off, int len);
-    private native final long seekAsset(int asset, long offset, int whence);
-    private native final long getAssetLength(int asset);
-    private native final long getAssetRemainingLength(int asset);
+    private native final void destroyAsset(long asset);
+    private native final int readAssetChar(long asset);
+    private native final int readAsset(long asset, byte[] b, int off, int len);
+    private native final long seekAsset(long asset, long offset, int whence);
+    private native final long getAssetLength(long asset);
+    private native final long getAssetRemainingLength(long asset);
 
     /** Returns true if the resource was found, filling in mRetStringBlock and
      *  mRetData. */
-    private native final int loadResourceValue(int ident, TypedValue outValue,
-                                               boolean resolve);
+    private native final int loadResourceValue(int ident, short density, TypedValue outValue,
+            boolean resolve);
     /** Returns true if the resource was found, filling in mRetStringBlock and
      *  mRetData. */
     private native final int loadResourceBagValue(int ident, int bagEntryId, TypedValue outValue,
                                                boolean resolve);
-    /*package*/ static final int STYLE_NUM_ENTRIES = 5;
+    /*package*/ static final int STYLE_NUM_ENTRIES = 6;
     /*package*/ static final int STYLE_TYPE = 0;
     /*package*/ static final int STYLE_DATA = 1;
     /*package*/ static final int STYLE_ASSET_COOKIE = 2;
     /*package*/ static final int STYLE_RESOURCE_ID = 3;
     /*package*/ static final int STYLE_CHANGING_CONFIGURATIONS = 4;
-    /*package*/ native static final boolean applyStyle(int theme,
-            int defStyleAttr, int defStyleRes, int xmlParser,
+    /*package*/ static final int STYLE_DENSITY = 5;
+    /*package*/ native static final boolean applyStyle(long theme,
+            int defStyleAttr, int defStyleRes, long xmlParser,
+            int[] inAttrs, int[] outValues, int[] outIndices);
+    /*package*/ native static final boolean resolveAttrs(long theme,
+            int defStyleAttr, int defStyleRes, int[] inValues,
             int[] inAttrs, int[] outValues, int[] outIndices);
     /*package*/ native final boolean retrieveAttributes(
-            int xmlParser, int[] inAttrs, int[] outValues, int[] outIndices);
+            long xmlParser, int[] inAttrs, int[] outValues, int[] outIndices);
     /*package*/ native final int getArraySize(int resource);
     /*package*/ native final int retrieveArray(int resource, int[] outValues);
     private native final int getStringBlockCount();
-    private native final int getNativeStringBlock(int block);
+    private native final long getNativeStringBlock(int block);
 
     /**
      * {@hide}
@@ -661,32 +754,58 @@ public final class AssetManager {
     /**
      * {@hide}
      */
+    public native final SparseArray<String> getAssignedPackageIdentifiers();
+
+    /**
+     * {@hide}
+     */
     public native static final int getGlobalAssetCount();
+    
+    /**
+     * {@hide}
+     */
+    public native static final String getAssetAllocations();
     
     /**
      * {@hide}
      */
     public native static final int getGlobalAssetManagerCount();
     
-    private native final int newTheme();
-    private native final void deleteTheme(int theme);
-    /*package*/ native static final void applyThemeStyle(int theme, int styleRes, boolean force);
-    /*package*/ native static final void copyTheme(int dest, int source);
-    /*package*/ native static final int loadThemeAttributeValue(int theme, int ident,
+    private native final long newTheme();
+    private native final void deleteTheme(long theme);
+    /*package*/ native static final void applyThemeStyle(long theme, int styleRes, boolean force);
+    /*package*/ native static final void copyTheme(long dest, long source);
+    /*package*/ native static final int loadThemeAttributeValue(long theme, int ident,
                                                                 TypedValue outValue,
                                                                 boolean resolve);
-    /*package*/ native static final void dumpTheme(int theme, int priority, String tag, String prefix);
+    /*package*/ native static final void dumpTheme(long theme, int priority, String tag, String prefix);
 
-    private native final int openXmlAssetNative(int cookie, String fileName);
+    private native final long openXmlAssetNative(int cookie, String fileName);
 
     private native final String[] getArrayStringResource(int arrayRes);
     private native final int[] getArrayStringInfo(int arrayRes);
     /*package*/ native final int[] getArrayIntResource(int arrayRes);
+    /*package*/ native final int[] getStyleAttributes(int themeRes);
 
-    private native final void init();
+    private native final void init(boolean isSystem);
     private native final void destroy();
 
-    private final void decRefsLocked() {
+    private final void incRefsLocked(long id) {
+        if (DEBUG_REFS) {
+            if (mRefStacks == null) {
+                mRefStacks = new HashMap<Long, RuntimeException>();
+            }
+            RuntimeException ex = new RuntimeException();
+            ex.fillInStackTrace();
+            mRefStacks.put(id, ex);
+        }
+        mNumRefs++;
+    }
+    
+    private final void decRefsLocked(long id) {
+        if (DEBUG_REFS && mRefStacks != null) {
+            mRefStacks.remove(id);
+        }
         mNumRefs--;
         //System.out.println("Dec streams: mNumRefs=" + mNumRefs
         //                   + " mReleased=" + mReleased);

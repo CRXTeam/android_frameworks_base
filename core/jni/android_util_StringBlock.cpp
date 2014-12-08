@@ -2,27 +2,28 @@
 **
 ** Copyright 2006, The Android Open Source Project
 **
-** Licensed under the Apache License, Version 2.0 (the "License"); 
-** you may not use this file except in compliance with the License. 
-** You may obtain a copy of the License at 
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
 **
-**     http://www.apache.org/licenses/LICENSE-2.0 
+**     http://www.apache.org/licenses/LICENSE-2.0
 **
-** Unless required by applicable law or agreed to in writing, software 
-** distributed under the License is distributed on an "AS IS" BASIS, 
-** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. 
-** See the License for the specific language governing permissions and 
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
 ** limitations under the License.
 */
 
 #define LOG_TAG "StringBlock"
 
 #include "jni.h"
+#include "JNIHelp.h"
 #include <utils/misc.h>
 #include <android_runtime/AndroidRuntime.h>
 #include <utils/Log.h>
 
-#include <utils/ResourceTypes.h>
+#include <androidfw/ResourceTypes.h>
 
 #include <stdio.h>
 
@@ -30,28 +31,18 @@ namespace android {
 
 // ----------------------------------------------------------------------------
 
-static void doThrow(JNIEnv* env, const char* exc, const char* msg = NULL)
-{
-    jclass npeClazz;
-
-    npeClazz = env->FindClass(exc);
-    LOG_FATAL_IF(npeClazz == NULL, "Unable to find class %s", exc);
-
-    env->ThrowNew(npeClazz, msg);
-}
-
-static jint android_content_StringBlock_nativeCreate(JNIEnv* env, jobject clazz,
+static jlong android_content_StringBlock_nativeCreate(JNIEnv* env, jobject clazz,
                                                   jbyteArray bArray,
                                                   jint off, jint len)
 {
     if (bArray == NULL) {
-        doThrow(env, "java/lang/NullPointerException");
+        jniThrowNullPointerException(env, NULL);
         return 0;
     }
 
     jsize bLen = env->GetArrayLength(bArray);
     if (off < 0 || off >= bLen || len < 0 || len > bLen || (off+len) > bLen) {
-        doThrow(env, "java/lang/IndexOutOfBoundsException");
+        jniThrowException(env, "java/lang/IndexOutOfBoundsException", NULL);
         return 0;
     }
 
@@ -60,19 +51,20 @@ static jint android_content_StringBlock_nativeCreate(JNIEnv* env, jobject clazz,
     env->ReleaseByteArrayElements(bArray, b, 0);
 
     if (osb == NULL || osb->getError() != NO_ERROR) {
-        doThrow(env, "java/lang/IllegalArgumentException");
+        jniThrowException(env, "java/lang/IllegalArgumentException", NULL);
+        delete osb;
         return 0;
     }
 
-    return (jint)osb;
+    return reinterpret_cast<jlong>(osb);
 }
 
 static jint android_content_StringBlock_nativeGetSize(JNIEnv* env, jobject clazz,
-                                                   jint token)
+                                                   jlong token)
 {
-    ResStringPool* osb = (ResStringPool*)token;
+    ResStringPool* osb = reinterpret_cast<ResStringPool*>(token);
     if (osb == NULL) {
-        doThrow(env, "java/lang/NullPointerException");
+        jniThrowNullPointerException(env, NULL);
         return 0;
     }
 
@@ -80,18 +72,23 @@ static jint android_content_StringBlock_nativeGetSize(JNIEnv* env, jobject clazz
 }
 
 static jstring android_content_StringBlock_nativeGetString(JNIEnv* env, jobject clazz,
-                                                        jint token, jint idx)
+                                                        jlong token, jint idx)
 {
-    ResStringPool* osb = (ResStringPool*)token;
+    ResStringPool* osb = reinterpret_cast<ResStringPool*>(token);
     if (osb == NULL) {
-        doThrow(env, "java/lang/NullPointerException");
+        jniThrowNullPointerException(env, NULL);
         return 0;
     }
 
     size_t len;
+    const char* str8 = osb->string8At(idx, &len);
+    if (str8 != NULL) {
+        return env->NewStringUTF(str8);
+    }
+
     const char16_t* str = osb->stringAt(idx, &len);
     if (str == NULL) {
-        doThrow(env, "java/lang/IndexOutOfBoundsException");
+        jniThrowException(env, "java/lang/IndexOutOfBoundsException", NULL);
         return 0;
     }
 
@@ -99,11 +96,11 @@ static jstring android_content_StringBlock_nativeGetString(JNIEnv* env, jobject 
 }
 
 static jintArray android_content_StringBlock_nativeGetStyle(JNIEnv* env, jobject clazz,
-                                                         jint token, jint idx)
+                                                         jlong token, jint idx)
 {
-    ResStringPool* osb = (ResStringPool*)token;
+    ResStringPool* osb = reinterpret_cast<ResStringPool*>(token);
     if (osb == NULL) {
-        doThrow(env, "java/lang/NullPointerException");
+        jniThrowNullPointerException(env, NULL);
         return NULL;
     }
 
@@ -124,8 +121,7 @@ static jintArray android_content_StringBlock_nativeGetStyle(JNIEnv* env, jobject
     }
 
     jintArray array = env->NewIntArray((num*sizeof(ResStringPool_span))/sizeof(jint));
-    if (array == NULL) {
-        doThrow(env, "java/lang/OutOfMemoryError");
+    if (array == NULL) { // NewIntArray already threw OutOfMemoryError.
         return NULL;
     }
 
@@ -142,31 +138,12 @@ static jintArray android_content_StringBlock_nativeGetStyle(JNIEnv* env, jobject
     return array;
 }
 
-static jint android_content_StringBlock_nativeIndexOfString(JNIEnv* env, jobject clazz,
-                                                         jint token, jstring str)
-{
-    ResStringPool* osb = (ResStringPool*)token;
-    if (osb == NULL || str == NULL) {
-        doThrow(env, "java/lang/NullPointerException");
-        return 0;
-    }
-
-    const char16_t* str16 = env->GetStringChars(str, NULL);
-    jsize strLen = env->GetStringLength(str);
-
-    ssize_t idx = osb->indexOfString(str16, strLen);
-
-    env->ReleaseStringChars(str, str16);
-
-    return idx;
-}
-
 static void android_content_StringBlock_nativeDestroy(JNIEnv* env, jobject clazz,
-                                                   jint token)
+                                                   jlong token)
 {
-    ResStringPool* osb = (ResStringPool*)token;
+    ResStringPool* osb = reinterpret_cast<ResStringPool*>(token);
     if (osb == NULL) {
-        doThrow(env, "java/lang/NullPointerException");
+        jniThrowNullPointerException(env, NULL);
         return;
     }
 
@@ -180,17 +157,15 @@ static void android_content_StringBlock_nativeDestroy(JNIEnv* env, jobject clazz
  */
 static JNINativeMethod gStringBlockMethods[] = {
     /* name, signature, funcPtr */
-    { "nativeCreate",      "([BII)I",
+    { "nativeCreate",      "([BII)J",
             (void*) android_content_StringBlock_nativeCreate },
-    { "nativeGetSize",      "(I)I",
+    { "nativeGetSize",      "(J)I",
             (void*) android_content_StringBlock_nativeGetSize },
-    { "nativeGetString",    "(II)Ljava/lang/String;",
+    { "nativeGetString",    "(JI)Ljava/lang/String;",
             (void*) android_content_StringBlock_nativeGetString },
-    { "nativeGetStyle",    "(II)[I",
+    { "nativeGetStyle",    "(JI)[I",
             (void*) android_content_StringBlock_nativeGetStyle },
-    { "nativeIndexOfString","(ILjava/lang/String;)I",
-            (void*) android_content_StringBlock_nativeIndexOfString },
-    { "nativeDestroy",      "(I)V",
+    { "nativeDestroy",      "(J)V",
             (void*) android_content_StringBlock_nativeDestroy },
 };
 
@@ -201,4 +176,3 @@ int register_android_content_StringBlock(JNIEnv* env)
 }
 
 }; // namespace android
-

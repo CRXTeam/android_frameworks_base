@@ -57,14 +57,19 @@ typedef struct method_type {
     buffer_type open_paren_token;
     arg_type* args;
     buffer_type close_paren_token;
+    bool hasId;
+    buffer_type equals_token;
+    buffer_type id;
     // XXX missing comments/copy text here
     buffer_type semicolon_token;
     buffer_type* comments_token; // points into this structure, DO NOT DELETE
+    int assigned_id;
 } method_type;
 
 enum {
-    PARCELABLE_TYPE = 12,
-    INTERFACE_TYPE
+    USER_DATA_TYPE = 12,
+    INTERFACE_TYPE_BINDER,
+    INTERFACE_TYPE_RPC
 };
 
 typedef struct document_item_type {
@@ -72,13 +77,21 @@ typedef struct document_item_type {
     struct document_item_type* next;
 } document_item_type;
 
-typedef struct parcelable_type {
+
+// for user_data_type.flattening_methods
+enum {
+    PARCELABLE_DATA = 0x1,
+    RPC_DATA = 0x2
+};
+
+typedef struct user_data_type {
     document_item_type document_item;
-    buffer_type parcelable_token;
+    buffer_type keyword_token; // only the first one
     char* package;
     buffer_type name;
     buffer_type semicolon_token;
-} parcelable_type;
+    int flattening_methods;
+} user_data_type;
 
 typedef struct interface_type {
     document_item_type document_item;
@@ -100,7 +113,7 @@ typedef union lexer_type {
     method_type* method;
     interface_item_type* interface_item;
     interface_type* interface_obj;
-    parcelable_type* parcelable;
+    user_data_type* user_data;
     document_item_type* document_item;
 } lexer_type;
 

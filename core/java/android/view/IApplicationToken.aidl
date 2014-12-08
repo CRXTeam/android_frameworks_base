@@ -20,9 +20,10 @@ package android.view;
 /** {@hide} */
 interface IApplicationToken
 {
+    void windowsDrawn();
     void windowsVisible();
     void windowsGone();
-    boolean keyDispatchingTimedOut();
+    boolean keyDispatchingTimedOut(String reason);
     long getKeyDispatchingTimeout();
 }
 

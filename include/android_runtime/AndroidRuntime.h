@@ -20,7 +20,7 @@
 #define _RUNTIME_ANDROID_RUNTIME_H
 
 #include <utils/Errors.h>
-#include <utils/IBinder.h>
+#include <binder/IBinder.h>
 #include <utils/String8.h>
 #include <utils/String16.h>
 #include <utils/Vector.h>
@@ -30,12 +30,22 @@
 
 
 namespace android {
-    
+
 class AndroidRuntime
 {
 public:
-    AndroidRuntime();
+    AndroidRuntime(char* argBlockStart, size_t argBlockSize);
     virtual ~AndroidRuntime();
+
+    enum StartMode {
+        Zygote,
+        SystemServer,
+        Application,
+        Tool,
+    };
+
+    void setArgv0(const char* argv0);
+    void addOption(const char* optionString, void* extra_info = NULL);
 
     /**
      * Register a set of methods in the specified class.
@@ -44,28 +54,33 @@ public:
         const char* className, const JNINativeMethod* gMethods, int numMethods);
 
     /**
-     * Call a static Java function that takes no arguments and returns void.
-     */
-    status_t callStatic(const char* className, const char* methodName);
-
-    /**
      * Call a class's static main method with the given arguments,
      */
-    status_t callMain(const char* className, int argc, const char* const argv[]);
+    status_t callMain(const String8& className, jclass clazz, const Vector<String8>& args);
 
     /**
-     * Find a class, with the input either of the form 
+     * Find a class, with the input either of the form
      * "package/class" or "package.class".
      */
     static jclass findClass(JNIEnv* env, const char* className);
 
-    int addVmArguments(int argc, const char* const argv[]);
+    void start(const char *classname, const Vector<String8>& options);
 
-    void start(const char *classname, const bool startSystemServer);
-    void start();       // start in android.util.RuntimeInit
+    void exit(int code);
+
+    void setExitWithoutCleanup(bool exitWithoutCleanup) {
+        mExitWithoutCleanup = exitWithoutCleanup;
+    }
 
     static AndroidRuntime* getRuntime();
-    
+
+    /**
+     * This gets called after the VM has been created, but before we
+     * run any code. Override it to make any FindClass calls that need
+     * to use CLASSPATH.
+     */
+    virtual void onVmCreated(JNIEnv* env);
+
     /**
      * This gets called after the JavaVM has initialized.  Override it
      * with the system's native entry point.
@@ -77,17 +92,16 @@ public:
      * fork. Override it to initialize threads, etc. Upon return, the
      * correct static main will be invoked.
      */
-    virtual void onZygoteInit() {};
-
+    virtual void onZygoteInit() { }
 
     /**
-     * Called when the Java application exits.  The default
-     * implementation calls exit(code).
+     * Called when the Java application exits to perform additional cleanup actions
+     * before the process is terminated.
      */
-    virtual void onExit(int code);
+    virtual void onExit(int code) { }
 
     /** create a new thread that is visible from Java */
-    static void createJavaThread(const char* name, void (*start)(void *),
+    static android_thread_id_t createJavaThread(const char* name, void (*start)(void *),
         void* arg);
 
     /** return a pointer to the VM running in this process */
@@ -96,10 +110,33 @@ public:
     /** return a pointer to the JNIEnv pointer for this thread */
     static JNIEnv* getJNIEnv();
 
+    /** return a new string corresponding to 'className' with all '.'s replaced by '/'s. */
+    static char* toSlashClassName(const char* className);
+
+    /** Create a Java string from an ASCII or Latin-1 string */
+    static jstring NewStringLatin1(JNIEnv* env, const char* bytes);
+
 private:
     static int startReg(JNIEnv* env);
+    bool parseRuntimeOption(const char* property,
+                            char* buffer,
+                            const char* runtimeArg,
+                            const char* defaultArg = "");
+    bool parseCompilerOption(const char* property,
+                             char* buffer,
+                             const char* compilerArg,
+                             const char* quotingArg);
+    bool parseCompilerRuntimeOption(const char* property,
+                                    char* buffer,
+                                    const char* runtimeArg,
+                                    const char* quotingArg);
+    void parseExtraOpts(char* extraOptsBuf, const char* quotingArg);
+    int startVm(JavaVM** pJavaVM, JNIEnv** pEnv);
 
     Vector<JavaVMOption> mOptions;
+    bool mExitWithoutCleanup;
+    char* const mArgBlockStart;
+    const size_t mArgBlockLength;
 
     /* JNI JavaVM pointer */
     static JavaVM* mJavaVM;
@@ -108,7 +145,7 @@ private:
      * Thread creation helpers.
      */
     static int javaCreateThreadEtc(
-                                android_thread_func_t entryFunction, 
+                                android_thread_func_t entryFunction,
                                 void* userData,
                                 const char* threadName,
                                 int32_t threadPriority,
@@ -116,9 +153,6 @@ private:
                                 android_thread_id_t* threadId);
     static int javaThreadShell(void* args);
 };
-
-// Returns the Unix file descriptor for a ParcelFileDescriptor object
-extern int getParcelFileDescriptorFD(JNIEnv* env, jobject object);
 
 }
 

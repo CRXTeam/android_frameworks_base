@@ -37,15 +37,35 @@ import java.util.List;
  * reverse geocoded location description may vary, for example one
  * might contain the full street address of the closest building, while
  * another might contain only a city name and postal code.
+ *
+ * The Geocoder class requires a backend service that is not included in
+ * the core android framework.  The Geocoder query methods will return an
+ * empty list if there no backend service in the platform.  Use the
+ * isPresent() method to determine whether a Geocoder implementation
+ * exists.
  */
 public final class Geocoder {
     private static final String TAG = "Geocoder";
 
-    private String mLanguage;
-    private String mCountry;
-    private String mVariant;
-    private String mAppName;
+    private GeocoderParams mParams;
     private ILocationManager mService;
+
+    /**
+     * Returns true if the Geocoder methods getFromLocation and
+     * getFromLocationName are implemented.  Lack of network
+     * connectivity may still cause these methods to return null or
+     * empty lists.
+     */
+    public static boolean isPresent() {
+        IBinder b = ServiceManager.getService(Context.LOCATION_SERVICE);
+        ILocationManager lm = ILocationManager.Stub.asInterface(b);
+        try {
+            return lm.geocoderIsPresent();
+        } catch (RemoteException e) {
+            Log.e(TAG, "isPresent: got RemoteException", e);
+            return false;
+        }
+    }
 
     /**
      * Constructs a Geocoder whose responses will be localized for the
@@ -60,11 +80,7 @@ public final class Geocoder {
         if (locale == null) {
             throw new NullPointerException("locale == null");
         }
-        mLanguage = locale.getLanguage();
-        mCountry = locale.getCountry();
-        mVariant = locale.getVariant();
-        mAppName = context.getPackageName();
-
+        mParams = new GeocoderParams(context, locale);
         IBinder b = ServiceManager.getService(Context.LOCATION_SERVICE);
         mService = ILocationManager.Stub.asInterface(b);
     }
@@ -94,8 +110,8 @@ public final class Geocoder {
      * @param longitude the longitude a point for the search
      * @param maxResults max number of addresses to return. Smaller numbers (1 to 5) are recommended
      *
-     * @return a list of Address objects or null if no matches were
-     * found.
+     * @return a list of Address objects. Returns null or empty list if no matches were
+     * found or there is no backend service available.
      *
      * @throws IllegalArgumentException if latitude is
      * less than -90 or greater than 90
@@ -115,7 +131,7 @@ public final class Geocoder {
         try {
             List<Address> results = new ArrayList<Address>();
             String ex =  mService.getFromLocation(latitude, longitude, maxResults,
-                mLanguage, mCountry, mVariant, mAppName, results);
+                mParams, results);
             if (ex != null) {
                 throw new IOException(ex);
             } else {
@@ -143,7 +159,8 @@ public final class Geocoder {
      * @param locationName a user-supplied description of a location
      * @param maxResults max number of results to return. Smaller numbers (1 to 5) are recommended
      *
-     * @return a list of Address objects or null if no matches were found.
+     * @return a list of Address objects. Returns null or empty list if no matches were
+     * found or there is no backend service available.
      *
      * @throws IllegalArgumentException if locationName is null
      * @throws IOException if the network is unavailable or any other
@@ -156,7 +173,7 @@ public final class Geocoder {
         try {
             List<Address> results = new ArrayList<Address>();
             String ex = mService.getFromLocationName(locationName,
-                0, 0, 0, 0, maxResults, mLanguage, mCountry, mVariant, mAppName, results);
+                0, 0, 0, 0, maxResults, mParams, results);
             if (ex != null) {
                 throw new IOException(ex);
             } else {
@@ -192,7 +209,8 @@ public final class Geocoder {
      * @param upperRightLatitude the latitude of the upper right corner of the bounding box
      * @param upperRightLongitude the longitude of the upper right corner of the bounding box
      *
-     * @return a list of Address objects or null if no matches were found.
+     * @return a list of Address objects. Returns null or empty list if no matches were
+     * found or there is no backend service available.
      *
      * @throws IllegalArgumentException if locationName is null
      * @throws IllegalArgumentException if any latitude is
@@ -228,7 +246,7 @@ public final class Geocoder {
             ArrayList<Address> result = new ArrayList<Address>();
             String ex =  mService.getFromLocationName(locationName,
                 lowerLeftLatitude, lowerLeftLongitude, upperRightLatitude, upperRightLongitude,
-                maxResults, mLanguage, mCountry, mVariant, mAppName, new ArrayList<Address>());
+                maxResults, mParams, result);
             if (ex != null) {
                 throw new IOException(ex);
             } else {

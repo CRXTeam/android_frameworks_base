@@ -16,291 +16,245 @@
 
 package android.net;
 
-import java.io.FileWriter;
-import java.io.IOException;
-
-import android.os.Handler;
-import android.os.Message;
-import android.os.SystemProperties;
-import android.os.PowerManager;
 import android.content.Context;
-import android.text.TextUtils;
-import android.util.Config;
-import android.util.Log;
+import android.os.Handler;
+import android.os.Messenger;
+
+import static com.android.internal.util.Protocol.BASE_NETWORK_STATE_TRACKER;
 
 /**
- * Each subclass of this class keeps track of the state of connectivity
- * of a network interface. All state information for a network should
- * be kept in a Tracker class. This superclass manages the
- * network-type-independent aspects of network state.
+ * Interface provides the {@link com.android.server.ConnectivityService}
+ * with three services. Events to the ConnectivityService when
+ * changes occur, an API for controlling the network and storage
+ * for network specific information.
+ *
+ * The Connectivity will call startMonitoring before any other
+ * method is called.
  *
  * {@hide}
  */
-public abstract class NetworkStateTracker extends Handler {
-
-    protected NetworkInfo mNetworkInfo;
-    protected Context mContext;
-    protected Handler mTarget;
-
-    private static boolean DBG = Config.LOGV; 
-    private static final String TAG = "NetworkStateTracker";
-    
-    public static final int EVENT_STATE_CHANGED = 1;
-    public static final int EVENT_SCAN_RESULTS_AVAILABLE = 2;
-    /**
-     * arg1: 1 to show, 0 to hide
-     * arg2: ID of the notification
-     * obj: Notification (if showing)
-     */
-    public static final int EVENT_NOTIFICATION_CHANGED = 3;
-    public static final int EVENT_CONFIGURATION_CHANGED = 4;
-
-    public NetworkStateTracker(Context context, Handler target, int networkType) {
-        super();
-        mContext = context;
-        mTarget = target;
-        this.mNetworkInfo = new NetworkInfo(networkType);
-    }
-
-    public NetworkInfo getNetworkInfo() {
-        return mNetworkInfo;
-    }
+public interface NetworkStateTracker {
 
     /**
-     * Return the list of DNS servers associated with this network.
-     * @return a list of the IP addresses of the DNS servers available
-     * for the network.
+     * -------------------------------------------------------------
+     * Event Interface back to ConnectivityService.
+     *
+     * The events that are to be sent back to the Handler passed
+     * to startMonitoring when the particular event occurs.
+     * -------------------------------------------------------------
      */
-    public abstract String[] getNameServers();
+
+    /**
+     * The network state has changed and the NetworkInfo object
+     * contains the new state.
+     *
+     * msg.what = EVENT_STATE_CHANGED
+     * msg.obj = NetworkInfo object
+     */
+    public static final int EVENT_STATE_CHANGED = BASE_NETWORK_STATE_TRACKER;
+
+    /**
+     * msg.what = EVENT_CONFIGURATION_CHANGED
+     * msg.obj = NetworkInfo object
+     */
+    public static final int EVENT_CONFIGURATION_CHANGED = BASE_NETWORK_STATE_TRACKER + 1;
+
+    /**
+     * msg.what = EVENT_RESTORE_DEFAULT_NETWORK
+     * msg.obj = FeatureUser object
+     */
+    public static final int EVENT_RESTORE_DEFAULT_NETWORK = BASE_NETWORK_STATE_TRACKER + 2;
+
+    /**
+     * msg.what = EVENT_NETWORK_SUBTYPE_CHANGED
+     * msg.obj = NetworkInfo object
+     */
+    public static final int EVENT_NETWORK_SUBTYPE_CHANGED = BASE_NETWORK_STATE_TRACKER + 3;
+
+    /**
+     * msg.what = EVENT_NETWORK_CONNECTED
+     * msg.obj = LinkProperties object
+     */
+    public static final int EVENT_NETWORK_CONNECTED = BASE_NETWORK_STATE_TRACKER + 4;
+
+    /**
+     * msg.what = EVENT_NETWORK_CONNECTION_DISCONNECTED
+     * msg.obj = LinkProperties object, same iface name
+     */
+    public static final int EVENT_NETWORK_DISCONNECTED = BASE_NETWORK_STATE_TRACKER + 5;
+
+    /**
+     * -------------------------------------------------------------
+     * Control Interface
+     * -------------------------------------------------------------
+     */
+    /**
+     * Begin monitoring data connectivity.
+     *
+     * This is the first method called when this interface is used.
+     *
+     * @param context is the current Android context
+     * @param target is the Hander to which to return the events.
+     */
+    public void startMonitoring(Context context, Handler target);
+
+    /**
+     * Fetch NetworkInfo for the network
+     */
+    public NetworkInfo getNetworkInfo();
+
+    /**
+     * Return the LinkProperties for the connection.
+     *
+     * @return a copy of the LinkProperties, is never null.
+     */
+    public LinkProperties getLinkProperties();
+
+    /**
+     * @return a copy of this connections capabilities, may be empty but never null.
+     */
+    public NetworkCapabilities getNetworkCapabilities();
+
+    /**
+     * Get interesting information about this network link
+     * @return a copy of link information, null if not available
+     */
+    public LinkQualityInfo getLinkQualityInfo();
 
     /**
      * Return the system properties name associated with the tcp buffer sizes
      * for this network.
      */
-    public abstract String getTcpBufferSizesPropName();
-
-    /**
-     * Return the IP addresses of the DNS servers available for this
-     * network interface.
-     * @param propertyNames the names of the system properties whose values
-     * give the IP addresses. Properties with no values are skipped.
-     * @return an array of {@code String}s containing the IP addresses
-     * of the DNS servers, in dot-notation. This may have fewer
-     * non-null entries than the list of names passed in, since
-     * some of the passed-in names may have empty values.
-     */
-    static protected String[] getNameServerList(String[] propertyNames) {
-        String[] dnsAddresses = new String[propertyNames.length];
-        int i, j;
-
-        for (i = 0, j = 0; i < propertyNames.length; i++) {
-            String value = SystemProperties.get(propertyNames[i]);
-            // The GSM layer sometimes sets a bogus DNS server address of
-            // 0.0.0.0
-            if (!TextUtils.isEmpty(value) && !TextUtils.equals(value, "0.0.0.0")) {
-                dnsAddresses[j++] = value;
-            }
-        }
-        return dnsAddresses;
-    }
-
-    /**
-     * Reads the network specific TCP buffer sizes from SystemProperties
-     * net.tcp.buffersize.[default|wifi|umts|edge|gprs] and set them for system
-     * wide use
-     */
-   public void updateNetworkSettings() {
-        String key = getTcpBufferSizesPropName();
-        String bufferSizes = SystemProperties.get(key);
-
-        if (bufferSizes.length() == 0) {
-            Log.e(TAG, key + " not found in system properties. Using defaults");
-
-            // Setting to default values so we won't be stuck to previous values
-            key = "net.tcp.buffersize.default";
-            bufferSizes = SystemProperties.get(key);
-        }
-
-        // Set values in kernel
-        if (bufferSizes.length() != 0) {
-            if (DBG) {
-                Log.v(TAG, "Setting TCP values: [" + bufferSizes
-                        + "] which comes from [" + key + "]");
-            }
-            setBufferSize(bufferSizes);
-        }
-    }
-
-    /**
-     * Release the wakelock, if any, that may be held while handling a
-     * disconnect operation.
-     */
-    public void releaseWakeLock() {
-    }
-
-    /**
-     * Writes TCP buffer sizes to /sys/kernel/ipv4/tcp_[r/w]mem_[min/def/max]
-     * which maps to /proc/sys/net/ipv4/tcp_rmem and tcpwmem
-     * 
-     * @param bufferSizes in the format of "readMin, readInitial, readMax,
-     *        writeMin, writeInitial, writeMax"
-     */
-    private void setBufferSize(String bufferSizes) {
-        try {
-            String[] values = bufferSizes.split(",");
-
-            if (values.length == 6) {
-              final String prefix = "/sys/kernel/ipv4/tcp_";
-                stringToFile(prefix + "rmem_min", values[0]);
-                stringToFile(prefix + "rmem_def", values[1]);
-                stringToFile(prefix + "rmem_max", values[2]);
-                stringToFile(prefix + "wmem_min", values[3]);
-                stringToFile(prefix + "wmem_def", values[4]);
-                stringToFile(prefix + "wmem_max", values[5]);
-            } else {
-                Log.e(TAG, "Invalid buffersize string: " + bufferSizes);
-            }
-        } catch (IOException e) {
-            Log.e(TAG, "Can't set tcp buffer sizes:" + e);
-        }
-    }
-
-    /**
-     * Writes string to file. Basically same as "echo -n $string > $filename"
-     * 
-     * @param filename
-     * @param string
-     * @throws IOException
-     */
-    private void stringToFile(String filename, String string) throws IOException {
-        FileWriter out = new FileWriter(filename);
-        try {
-            out.write(string);
-        } finally {
-            out.close();
-        }
-    }
-
-    /**
-     * Record the detailed state of a network, and if it is a
-     * change from the previous state, send a notification to
-     * any listeners.
-     * @param state the new @{code DetailedState}
-     */
-    public void setDetailedState(NetworkInfo.DetailedState state) {
-        setDetailedState(state, null, null);
-    }
-
-    /**
-     * Record the detailed state of a network, and if it is a
-     * change from the previous state, send a notification to
-     * any listeners.
-     * @param state the new @{code DetailedState}
-     * @param reason a {@code String} indicating a reason for the state change,
-     * if one was supplied. May be {@code null}.
-     * @param extraInfo optional {@code String} providing extra information about the state change
-     */
-    public void setDetailedState(NetworkInfo.DetailedState state, String reason, String extraInfo) {
-        if (state != mNetworkInfo.getDetailedState()) {
-            boolean wasConnecting = (mNetworkInfo.getState() == NetworkInfo.State.CONNECTING);
-            String lastReason = mNetworkInfo.getReason();
-            /*
-             * If a reason was supplied when the CONNECTING state was entered, and no
-             * reason was supplied for entering the CONNECTED state, then retain the
-             * reason that was supplied when going to CONNECTING.
-             */
-            if (wasConnecting && state == NetworkInfo.DetailedState.CONNECTED && reason == null
-                    && lastReason != null)
-                reason = lastReason;
-            mNetworkInfo.setDetailedState(state, reason, extraInfo);
-            Message msg = mTarget.obtainMessage(EVENT_STATE_CHANGED, mNetworkInfo);
-            msg.sendToTarget();
-        }
-    }
-
-    protected void setDetailedStateInternal(NetworkInfo.DetailedState state) {
-        mNetworkInfo.setDetailedState(state, null, null);
-    }
-
-    /**
-     * Send a  notification that the results of a scan for network access
-     * points has completed, and results are available.
-     */
-    protected void sendScanResultsAvailable() {
-        Message msg = mTarget.obtainMessage(EVENT_SCAN_RESULTS_AVAILABLE, mNetworkInfo);
-        msg.sendToTarget();
-    }
-
-    public abstract void startMonitoring();
+    public String getTcpBufferSizesPropName();
 
     /**
      * Disable connectivity to a network
      * @return {@code true} if a teardown occurred, {@code false} if the
      * teardown did not occur.
      */
-    public abstract boolean teardown();
+    public boolean teardown();
 
     /**
      * Reenable connectivity to a network after a {@link #teardown()}.
+     * @return {@code true} if we're connected or expect to be connected
      */
-    public abstract boolean reconnect();
+    public boolean reconnect();
+
+    /**
+     * Captive portal check has completed
+     */
+    public void captivePortalCheckCompleted(boolean isCaptive);
 
     /**
      * Turn the wireless radio off for a network.
      * @param turnOn {@code true} to turn the radio on, {@code false}
      */
-    public abstract boolean setRadio(boolean turnOn);
+    public boolean setRadio(boolean turnOn);
 
     /**
      * Returns an indication of whether this network is available for
      * connections. A value of {@code false} means that some quasi-permanent
      * condition prevents connectivity to this network.
+     *
+     * NOTE that this is broken on multi-connection devices.  Should be fixed in J release
+     * TODO - fix on multi-pdp devices
      */
-    public abstract boolean isAvailable();
+    public boolean isAvailable();
 
     /**
-     * Tells the underlying networking system that the caller wants to
-     * begin using the named feature. The interpretation of {@code feature}
-     * is completely up to each networking implementation.
-     * @param feature the name of the feature to be used
-     * @param callingPid the process ID of the process that is issuing this request
-     * @param callingUid the user ID of the process that is issuing this request
-     * @return an integer value representing the outcome of the request.
-     * The interpretation of this value is specific to each networking
-     * implementation+feature combination, except that the value {@code -1}
-     * always indicates failure.
+     * User control of data connection through this network, typically persisted
+     * internally.
      */
-    public abstract int startUsingNetworkFeature(String feature, int callingPid, int callingUid);
+    public void setUserDataEnable(boolean enabled);
 
     /**
-     * Tells the underlying networking system that the caller is finished
-     * using the named feature. The interpretation of {@code feature}
-     * is completely up to each networking implementation.
-     * @param feature the name of the feature that is no longer needed.
-     * @param callingPid the process ID of the process that is issuing this request
-     * @param callingUid the user ID of the process that is issuing this request
-     * @return an integer value representing the outcome of the request.
-     * The interpretation of this value is specific to each networking
-     * implementation+feature combination, except that the value {@code -1}
-     * always indicates failure.
+     * Policy control of data connection through this network, typically not
+     * persisted internally. Usually used when {@link NetworkPolicy#limitBytes}
+     * is passed.
      */
-    public abstract int stopUsingNetworkFeature(String feature, int callingPid, int callingUid);
+    public void setPolicyDataEnable(boolean enabled);
 
     /**
-     * Ensure that a network route exists to deliver traffic to the specified
-     * host via this network interface.
-     * @param hostAddress the IP address of the host to which the route is desired
-     * @return {@code true} on success, {@code false} on failure
+     * -------------------------------------------------------------
+     * Storage API used by ConnectivityService for saving
+     * Network specific information.
+     * -------------------------------------------------------------
      */
-    public boolean requestRouteToHost(int hostAddress) {
-        return false;
-    }
 
     /**
-     * Interprets scan results. This will be called at a safe time for
-     * processing, and from a safe thread.
+     * Check if private DNS route is set for the network
      */
-    public void interpretScanResultsAvailable() {
-    }
+    public boolean isPrivateDnsRouteSet();
+
+    /**
+     * Set a flag indicating private DNS route is set
+     */
+    public void privateDnsRouteSet(boolean enabled);
+
+    /**
+     * Check if default route is set
+     */
+    public boolean isDefaultRouteSet();
+
+    /**
+     * Set a flag indicating default route is set for the network
+     */
+    public void defaultRouteSet(boolean enabled);
+
+    /**
+     * Check if tear down was requested
+     */
+    public boolean isTeardownRequested();
+
+    /**
+     * Indicate tear down requested from connectivity
+     */
+    public void setTeardownRequested(boolean isRequested);
+
+    /**
+     * An external dependency has been met/unmet
+     */
+    public void setDependencyMet(boolean met);
+
+    /**
+     * Informs the state tracker that another interface is stacked on top of it.
+     **/
+    public void addStackedLink(LinkProperties link);
+
+    /**
+     * Informs the state tracker that a stacked interface has been removed.
+     **/
+    public void removeStackedLink(LinkProperties link);
+
+    /*
+     * Called once to setup async channel between this and
+     * the underlying network specific code.
+     */
+    public void supplyMessenger(Messenger messenger);
+
+    /*
+     * Network interface name that we'll lookup for sampling data
+     */
+    public String getNetworkInterfaceName();
+
+    /*
+     * Save the starting sample
+     */
+    public void startSampling(SamplingDataTracker.SamplingSnapshot s);
+
+    /*
+     * Save the ending sample
+     */
+    public void stopSampling(SamplingDataTracker.SamplingSnapshot s);
+
+    /*
+     * Record the current netId
+     */
+    public void setNetId(int netId);
+
+    /*
+     * ?
+     */
+    public Network getNetwork();
 
 }

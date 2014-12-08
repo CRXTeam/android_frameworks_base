@@ -7,9 +7,18 @@
 #ifndef RESOURCE_TABLE_H
 #define RESOURCE_TABLE_H
 
+#include "ConfigDescription.h"
 #include "StringPool.h"
 #include "SourcePos.h"
+#include "ResourceFilter.h"
 
+#include <map>
+#include <queue>
+#include <set>
+
+using namespace std;
+
+class XMLNode;
 class ResourceTable;
 
 enum {
@@ -18,13 +27,32 @@ enum {
     XML_COMPILE_COMPACT_WHITESPACE = 1<<2,
     XML_COMPILE_STRIP_WHITESPACE = 1<<3,
     XML_COMPILE_STRIP_RAW_VALUES = 1<<4,
+    XML_COMPILE_UTF8 = 1<<5,
     
     XML_COMPILE_STANDARD_RESOURCE =
             XML_COMPILE_STRIP_COMMENTS | XML_COMPILE_ASSIGN_ATTRIBUTE_IDS
             | XML_COMPILE_STRIP_WHITESPACE | XML_COMPILE_STRIP_RAW_VALUES
 };
 
-status_t compileXmlFile(const sp<AaptAssets>& assets,
+status_t compileXmlFile(const Bundle* bundle,
+                        const sp<AaptAssets>& assets,
+                        const String16& resourceName,
+                        const sp<AaptFile>& target,
+                        ResourceTable* table,
+                        int options = XML_COMPILE_STANDARD_RESOURCE);
+
+status_t compileXmlFile(const Bundle* bundle,
+                        const sp<AaptAssets>& assets,
+                        const String16& resourceName,
+                        const sp<AaptFile>& target,
+                        const sp<AaptFile>& outTarget,
+                        ResourceTable* table,
+                        int options = XML_COMPILE_STANDARD_RESOURCE);
+
+status_t compileXmlFile(const Bundle* bundle,
+                        const sp<AaptAssets>& assets,
+                        const String16& resourceName,
+                        const sp<XMLNode>& xmlTree,
                         const sp<AaptFile>& target,
                         ResourceTable* table,
                         int options = XML_COMPILE_STANDARD_RESOURCE);
@@ -33,6 +61,7 @@ status_t compileResourceFile(Bundle* bundle,
                              const sp<AaptAssets>& assets,
                              const sp<AaptFile>& in,
                              const ResTable_config& defParams,
+                             const bool overwrite,
                              ResourceTable* outTable);
 
 struct AccessorCookie
@@ -49,14 +78,46 @@ struct AccessorCookie
     }
 };
 
+// Holds the necessary information to compile the
+// resource.
+struct CompileResourceWorkItem {
+    String16 resourceName;
+    String8 resPath;
+    sp<AaptFile> file;
+};
+
 class ResourceTable : public ResTable::Accessor
 {
 public:
+    // The type of package to build.
+    enum PackageType {
+        App,
+        System,
+        SharedLibrary,
+        AppFeature
+    };
+
     class Package;
     class Type;
     class Entry;
 
-    ResourceTable(Bundle* bundle, const String16& assetsPackage);
+    ResourceTable(Bundle* bundle, const String16& assetsPackage, PackageType type);
+
+    const String16& getAssetsPackage() const {
+        return mAssetsPackage;
+    }
+
+    /**
+     * Returns the queue of resources that need to be compiled.
+     * This is only used for resources that have been generated
+     * during the compilation phase. If they were just added
+     * to the AaptAssets, then they may be skipped over
+     * and would mess up iteration order for the existing
+     * resources.
+     */
+    queue<CompileResourceWorkItem>& getWorkQueue() {
+        return mWorkQueue;
+    }
 
     status_t addIncludedResources(Bundle* bundle, const sp<AaptAssets>& assets);
 
@@ -74,7 +135,8 @@ public:
                       const Vector<StringPool::entry_style_span>* style = NULL,
                       const ResTable_config* params = NULL,
                       const bool doSetIndex = false,
-                      const int32_t format = ResTable_map::TYPE_ANY);
+                      const int32_t format = ResTable_map::TYPE_ANY,
+                      const bool overwrite = false);
 
     status_t startBag(const SourcePos& pos,
                     const String16& package,
@@ -82,6 +144,7 @@ public:
                     const String16& name,
                     const String16& bagParent,
                     const ResTable_config* params = NULL,
+                    bool overlay = false,
                     bool replace = false,
                     bool isId = false);
     
@@ -102,6 +165,11 @@ public:
                        const String16& type,
                        const String16& name) const;
 
+    bool hasBagOrEntry(const String16& package,
+                       const String16& type,
+                       const String16& name,
+                       const ResTable_config& config) const;
+
     bool hasBagOrEntry(const String16& ref,
                        const String16* defType = NULL,
                        const String16* defPackage = NULL);
@@ -117,11 +185,21 @@ public:
                            const String16& name,
                            const String16& comment);
     
+    void canAddEntry(const SourcePos& pos,
+        const String16& package, const String16& type, const String16& name);
+        
     size_t size() const;
     size_t numLocalResources() const;
     bool hasResources() const;
 
-    sp<AaptFile> flatten(Bundle*);
+    status_t modifyForCompat(const Bundle* bundle);
+    status_t modifyForCompat(const Bundle* bundle,
+                             const String16& resourceName,
+                             const sp<AaptFile>& file,
+                             const sp<XMLNode>& root);
+
+    sp<AaptFile> flatten(Bundle* bundle, const sp<const ResourceFilter>& filter,
+            const bool isBase);
 
     static inline uint32_t makeResId(uint32_t packageId,
                                      uint32_t typeId,
@@ -136,12 +214,14 @@ public:
 
     uint32_t getResId(const String16& package,
                       const String16& type,
-                      const String16& name) const;
+                      const String16& name,
+                      bool onlyPublic = true) const;
 
     uint32_t getResId(const String16& ref,
                       const String16* defType = NULL,
                       const String16* defPackage = NULL,
-                      const char** outErrorMsg = NULL) const;
+                      const char** outErrorMsg = NULL,
+                      bool onlyPublic = true) const;
 
     static bool isValidResourceName(const String16& s);
     
@@ -151,12 +231,18 @@ public:
                        uint32_t attrID,
                        const Vector<StringPool::entry_style_span>* style = NULL,
                        String16* outStr = NULL, void* accessorCookie = NULL,
-                       uint32_t attrType = ResTable_map::TYPE_ANY);
+                       uint32_t attrType = ResTable_map::TYPE_ANY,
+                       const String8* configTypeName = NULL,
+                       const ConfigDescription* config = NULL);
 
     status_t assignResourceIds();
     status_t addSymbols(const sp<AaptSymbols>& outSymbols = NULL);
+    void addLocalization(const String16& name, const String8& locale, const SourcePos& src);
+    status_t validateLocalizations(void);
 
-    status_t flatten(Bundle*, const sp<AaptFile>& dest);
+    status_t flatten(Bundle* bundle, const sp<const ResourceFilter>& filter,
+            const sp<AaptFile>& dest, const bool isBase);
+    status_t flattenLibraryTable(const sp<AaptFile>& dest, const Vector<sp<Package> >& libs);
 
     void writePublicDefinitions(const String16& package, FILE* fp);
 
@@ -228,6 +314,10 @@ public:
             : mName(name), mType(TYPE_UNKNOWN),
               mItemFormat(ResTable_map::TYPE_ANY), mNameIndex(-1), mPos(pos)
         { }
+
+        Entry(const Entry& entry);
+        Entry& operator=(const Entry& entry);
+
         virtual ~Entry() { }
 
         enum type {
@@ -243,17 +333,22 @@ public:
         String16 getParent() const { return mParent; }
 
         status_t makeItABag(const SourcePos& sourcePos);
-        
+
+        status_t emptyBag(const SourcePos& sourcePos);
+ 
         status_t setItem(const SourcePos& pos,
                          const String16& value,
                          const Vector<StringPool::entry_style_span>* style = NULL,
-                         int32_t format = ResTable_map::TYPE_ANY);
+                         int32_t format = ResTable_map::TYPE_ANY,
+                         const bool overwrite = false);
 
         status_t addToBag(const SourcePos& pos,
                           const String16& key, const String16& value,
                           const Vector<StringPool::entry_style_span>* style = NULL,
                           bool replace=false, bool isId = false,
                           int32_t format = ResTable_map::TYPE_ANY);
+
+        status_t removeFromBag(const String16& key);
 
         // Index of the entry's name string in the key pool.
         int32_t getNameIndex() const { return mNameIndex; }
@@ -268,7 +363,10 @@ public:
         status_t assignResourceIds(ResourceTable* table,
                                    const String16& package);
 
-        status_t prepareFlatten(StringPool* strings, ResourceTable* table);
+        status_t prepareFlatten(StringPool* strings, ResourceTable* table,
+               const String8* configTypeName, const ConfigDescription* config);
+
+        status_t remapStringValue(StringPool* strings);
 
         ssize_t flatten(Bundle*, const sp<AaptFile>& data, bool isPublic);
 
@@ -284,37 +382,6 @@ public:
         int32_t mNameIndex;
         uint32_t mParentId;
         SourcePos mPos;
-    };
-
-    struct ConfigDescription : public ResTable_config {
-        ConfigDescription() {
-            memset(this, 0, sizeof(*this));
-            size = sizeof(ResTable_config);
-        }
-        ConfigDescription(const ResTable_config&o) {
-            *static_cast<ResTable_config*>(this) = o;
-            size = sizeof(ResTable_config);
-        }
-        ConfigDescription(const ConfigDescription&o) {
-            *static_cast<ResTable_config*>(this) = o;
-        }
-        
-        ConfigDescription& operator=(const ResTable_config& o) {
-            *static_cast<ResTable_config*>(this) = o;
-            size = sizeof(ResTable_config);
-            return *this;
-        }
-        ConfigDescription& operator=(const ConfigDescription& o) {
-            *static_cast<ResTable_config*>(this) = o;
-            return *this;
-        }
-        
-        inline bool operator<(const ConfigDescription& o) const { return compare(o) < 0; }
-        inline bool operator<=(const ConfigDescription& o) const { return compare(o) <= 0; }
-        inline bool operator==(const ConfigDescription& o) const { return compare(o) == 0; }
-        inline bool operator!=(const ConfigDescription& o) const { return compare(o) != 0; }
-        inline bool operator>=(const ConfigDescription& o) const { return compare(o) >= 0; }
-        inline bool operator>(const ConfigDescription& o) const { return compare(o) > 0; }
     };
     
     class ConfigList : public RefBase {
@@ -391,12 +458,16 @@ public:
         status_t addPublic(const SourcePos& pos,
                            const String16& name,
                            const uint32_t ident);
-
+                           
+        void canAddEntry(const String16& name);
+        
         String16 getName() const { return mName; }
         sp<Entry> getEntry(const String16& entry,
                            const SourcePos& pos,
                            const ResTable_config* config = NULL,
-                           bool doSetIndex = false);
+                           bool doSetIndex = false,
+                           bool overlay = false,
+                           bool autoAddOverlay = false);
 
         const SourcePos& getFirstPublicSourcePos() const { return *mFirstPublicSourcePos; }
 
@@ -412,6 +483,8 @@ public:
         const DefaultKeyedVector<String16, sp<ConfigList> >& getConfigs() const { return mConfigs; }
         const Vector<sp<ConfigList> >& getOrderedConfigs() const { return mOrderedConfigs; }
 
+        const SortedVector<String16>& getCanAddEntries() const { return mCanAddEntries; }
+        
         const SourcePos& getPos() const { return mPos; }
     private:
         String16 mName;
@@ -420,6 +493,7 @@ public:
         SortedVector<ConfigDescription> mUniqueConfigs;
         DefaultKeyedVector<String16, sp<ConfigList> > mConfigs;
         Vector<sp<ConfigList> > mOrderedConfigs;
+        SortedVector<String16> mCanAddEntries;
         int32_t mPublicIndex;
         int32_t mIndex;
         SourcePos mPos;
@@ -427,7 +501,7 @@ public:
 
     class Package : public RefBase {
     public:
-        Package(const String16& name, ssize_t includedId=-1);
+        Package(const String16& name, size_t packageId);
         virtual ~Package() { }
 
         String16 getName() const { return mName; }
@@ -435,7 +509,7 @@ public:
                          const SourcePos& pos,
                          bool doSetIndex = false);
 
-        ssize_t getAssignedId() const { return mIncludedId; }
+        size_t getAssignedId() const { return mPackageId; }
 
         const ResStringPool& getTypeStrings() const { return mTypeStrings; }
         uint32_t indexOfTypeString(const String16& s) const { return mTypeStringsMapping.valueFor(s); }
@@ -458,7 +532,7 @@ public:
                             DefaultKeyedVector<String16, uint32_t>* mappings);
 
         const String16 mName;
-        const ssize_t mIncludedId;
+        const size_t mPackageId;
         DefaultKeyedVector<String16, sp<Type> > mTypes;
         Vector<sp<Type> > mOrderedTypes;
         sp<AaptFile> mTypeStringsData;
@@ -480,41 +554,33 @@ private:
                        const String16& type,
                        const String16& name,
                        const SourcePos& pos,
+                       bool overlay,
                        const ResTable_config* config = NULL,
                        bool doSetIndex = false);
     sp<const Entry> getEntry(uint32_t resID,
                              const ResTable_config* config = NULL) const;
+    sp<ConfigList> getConfigList(const String16& package,
+                                 const String16& type,
+                                 const String16& name) const;
     const Item* getItem(uint32_t resID, uint32_t attrID) const;
     bool getItemValue(uint32_t resID, uint32_t attrID,
                       Res_value* outValue);
+    bool isAttributeFromL(uint32_t attrId);
 
 
     String16 mAssetsPackage;
+    PackageType mPackageType;
     sp<AaptAssets> mAssets;
-    DefaultKeyedVector<String16, DefaultKeyedVector<String16, uint32_t> > mPublicNames;
+    uint32_t mTypeIdOffset;
     DefaultKeyedVector<String16, sp<Package> > mPackages;
     Vector<sp<Package> > mOrderedPackages;
-    uint32_t mNextPackageId;
-    bool mHaveAppPackage;
-    bool mIsAppPackage;
     size_t mNumLocal;
     SourcePos mCurrentXmlPos;
     Bundle* mBundle;
+    
+    // key = string resource name, value = set of locales in which that name is defined
+    map<String16, map<String8, SourcePos> > mLocalizations;
+    queue<CompileResourceWorkItem> mWorkQueue;
 };
-
-class ResourceFilter
-{
-public:
-    ResourceFilter() : mData(), mContainsPseudo(false) {}
-    status_t parse(const char* arg);
-    bool match(int axis, uint32_t value);
-    bool match(const ResTable_config& config);
-    inline bool containsPseudo() { return mContainsPseudo; }
-
-private:
-    KeyedVector<int,SortedVector<uint32_t> > mData;
-    bool mContainsPseudo;
-};
-
 
 #endif

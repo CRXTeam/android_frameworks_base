@@ -24,10 +24,13 @@ import android.text.Selection;
 import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
-import android.util.SparseIntArray;
 
 /**
  * For numeric text entry
+ * <p></p>
+ * As for all implementations of {@link KeyListener}, this class is only concerned
+ * with hardware keyboards.  Software input methods have no obligation to trigger
+ * the methods in this class.
  */
 public abstract class NumberKeyListener extends BaseKeyListener
     implements InputFilter
@@ -38,7 +41,7 @@ public abstract class NumberKeyListener extends BaseKeyListener
     protected abstract char[] getAcceptedChars();
 
     protected int lookup(KeyEvent event, Spannable content) {
-        return event.getMatch(getAcceptedChars(), getMetaState(content));
+        return event.getMatch(getAcceptedChars(), getMetaState(content, event));
     }
 
     public CharSequence filter(CharSequence source, int start, int end,
@@ -100,6 +103,11 @@ public abstract class NumberKeyListener extends BaseKeyListener
 
             selStart = Math.min(a, b);
             selEnd = Math.max(a, b);
+        }
+
+        if (selStart < 0 || selEnd < 0) {
+            selStart = selEnd = 0;
+            Selection.setSelection(content, 0);
         }
 
         int i = event != null ? lookup(event, content) : 0;

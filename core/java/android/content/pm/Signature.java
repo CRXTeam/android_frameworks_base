@@ -16,44 +16,94 @@
 
 package android.content.pm;
 
-import android.content.ComponentName;
 import android.os.Parcel;
 import android.os.Parcelable;
 
+import com.android.internal.util.ArrayUtils;
+
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.lang.ref.SoftReference;
+import java.security.PublicKey;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateEncodingException;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.util.Arrays;
 
 /**
- * Opaque, immutable representation of a signature associated with an
+ * Opaque, immutable representation of a signing certificate associated with an
  * application package.
+ * <p>
+ * This class name is slightly misleading, since it's not actually a signature.
  */
 public class Signature implements Parcelable {
     private final byte[] mSignature;
     private int mHashCode;
     private boolean mHaveHashCode;
-    private String mString;
+    private SoftReference<String> mStringRef;
+    private Certificate[] mCertificateChain;
 
     /**
      * Create Signature from an existing raw byte array.
      */
     public Signature(byte[] signature) {
         mSignature = signature.clone();
+        mCertificateChain = null;
+    }
+
+    /**
+     * Create signature from a certificate chain. Used for backward
+     * compatibility.
+     *
+     * @throws CertificateEncodingException
+     * @hide
+     */
+    public Signature(Certificate[] certificateChain) throws CertificateEncodingException {
+        mSignature = certificateChain[0].getEncoded();
+        if (certificateChain.length > 1) {
+            mCertificateChain = Arrays.copyOfRange(certificateChain, 1, certificateChain.length);
+        }
+    }
+
+    private static final int parseHexDigit(int nibble) {
+        if ('0' <= nibble && nibble <= '9') {
+            return nibble - '0';
+        } else if ('a' <= nibble && nibble <= 'f') {
+            return nibble - 'a' + 10;
+        } else if ('A' <= nibble && nibble <= 'F') {
+            return nibble - 'A' + 10;
+        } else {
+            throw new IllegalArgumentException("Invalid character " + nibble + " in hex string");
+        }
     }
 
     /**
      * Create Signature from a text representation previously returned by
-     * {@link #toChars} or {@link #toCharsString()}.
+     * {@link #toChars} or {@link #toCharsString()}. Signatures are expected to
+     * be a hex-encoded ASCII string.
+     *
+     * @param text hex-encoded string representing the signature
+     * @throws IllegalArgumentException when signature is odd-length
      */
     public Signature(String text) {
-        final int N = text.length()/2;
-        byte[] sig = new byte[N];
-        for (int i=0; i<N; i++) {
-            char c = text.charAt(i*2);
-            byte b = (byte)(
-                    (c >= 'a' ? (c - 'a' + 10) : (c - '0'))<<4);
-            c = text.charAt(i*2 + 1);
-            b |= (byte)(c >= 'a' ? (c - 'a' + 10) : (c - '0'));
-            sig[i] = b;
+        final byte[] input = text.getBytes();
+        final int N = input.length;
+
+        if (N % 2 != 0) {
+            throw new IllegalArgumentException("text size " + N + " is not even");
         }
+
+        final byte[] sig = new byte[N / 2];
+        int sigIndex = 0;
+
+        for (int i = 0; i < N;) {
+            final int hi = parseHexDigit(input[i++]);
+            final int lo = parseHexDigit(input[i++]);
+            sig[sigIndex++] = (byte) ((hi << 4) | lo);
+        }
+
         mSignature = sig;
     }
 
@@ -92,14 +142,16 @@ public class Signature implements Parcelable {
     }
 
     /**
-     * Return the result of {@link #toChars()} as a String.  This result is
-     * cached so future calls will return the same String.
+     * Return the result of {@link #toChars()} as a String.
      */
     public String toCharsString() {
-        if (mString != null) return mString;
-        String str = new String(toChars());
-        mString = str;
-        return mString;
+        String str = mStringRef == null ? null : mStringRef.get();
+        if (str != null) {
+            return str;
+        }
+        str = new String(toChars());
+        mStringRef = new SoftReference<String>(str);
+        return str;
     }
 
     /**
@@ -111,12 +163,49 @@ public class Signature implements Parcelable {
         return bytes;
     }
 
+    /**
+     * Returns the public key for this signature.
+     *
+     * @throws CertificateException when Signature isn't a valid X.509
+     *             certificate; shouldn't happen.
+     * @hide
+     */
+    public PublicKey getPublicKey() throws CertificateException {
+        final CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
+        final ByteArrayInputStream bais = new ByteArrayInputStream(mSignature);
+        final Certificate cert = certFactory.generateCertificate(bais);
+        return cert.getPublicKey();
+    }
+
+    /**
+     * Used for compatibility code that needs to check the certificate chain
+     * during upgrades.
+     *
+     * @throws CertificateEncodingException
+     * @hide
+     */
+    public Signature[] getChainSignatures() throws CertificateEncodingException {
+        if (mCertificateChain == null) {
+            return new Signature[] { this };
+        }
+
+        Signature[] chain = new Signature[1 + mCertificateChain.length];
+        chain[0] = this;
+
+        int i = 1;
+        for (Certificate c : mCertificateChain) {
+            chain[i++] = new Signature(c.getEncoded());
+        }
+
+        return chain;
+    }
+
     @Override
     public boolean equals(Object obj) {
         try {
             if (obj != null) {
                 Signature other = (Signature)obj;
-                return Arrays.equals(mSignature, other.mSignature);
+                return this == other || Arrays.equals(mSignature, other.mSignature);
             }
         } catch (ClassCastException e) {
         }
@@ -154,5 +243,64 @@ public class Signature implements Parcelable {
 
     private Signature(Parcel source) {
         mSignature = source.createByteArray();
+    }
+
+    /**
+     * Test if given {@link Signature} sets are exactly equal.
+     *
+     * @hide
+     */
+    public static boolean areExactMatch(Signature[] a, Signature[] b) {
+        return (a.length == b.length) && ArrayUtils.containsAll(a, b)
+                && ArrayUtils.containsAll(b, a);
+    }
+
+    /**
+     * Test if given {@link Signature} sets are effectively equal. In rare
+     * cases, certificates can have slightly malformed encoding which causes
+     * exact-byte checks to fail.
+     * <p>
+     * To identify effective equality, we bounce the certificates through an
+     * decode/encode pass before doing the exact-byte check. To reduce attack
+     * surface area, we only allow a byte size delta of a few bytes.
+     *
+     * @throws CertificateException if the before/after length differs
+     *             substantially, usually a signal of something fishy going on.
+     * @hide
+     */
+    public static boolean areEffectiveMatch(Signature[] a, Signature[] b)
+            throws CertificateException {
+        final CertificateFactory cf = CertificateFactory.getInstance("X.509");
+
+        final Signature[] aPrime = new Signature[a.length];
+        for (int i = 0; i < a.length; i++) {
+            aPrime[i] = bounce(cf, a[i]);
+        }
+        final Signature[] bPrime = new Signature[b.length];
+        for (int i = 0; i < b.length; i++) {
+            bPrime[i] = bounce(cf, b[i]);
+        }
+
+        return areExactMatch(aPrime, bPrime);
+    }
+
+    /**
+     * Bounce the given {@link Signature} through a decode/encode cycle.
+     *
+     * @throws CertificateException if the before/after length differs
+     *             substantially, usually a signal of something fishy going on.
+     * @hide
+     */
+    public static Signature bounce(CertificateFactory cf, Signature s) throws CertificateException {
+        final InputStream is = new ByteArrayInputStream(s.mSignature);
+        final X509Certificate cert = (X509Certificate) cf.generateCertificate(is);
+        final Signature sPrime = new Signature(cert.getEncoded());
+
+        if (Math.abs(sPrime.mSignature.length - s.mSignature.length) > 2) {
+            throw new CertificateException("Bounced cert length looks fishy; before "
+                    + s.mSignature.length + ", after " + sPrime.mSignature.length);
+        }
+
+        return sPrime;
     }
 }

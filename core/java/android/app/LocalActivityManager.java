@@ -20,28 +20,28 @@ import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.os.Binder;
 import android.os.Bundle;
-import android.util.Config;
 import android.util.Log;
-import android.view.View;
-import android.view.ViewGroup;
-import android.view.ViewParent;
 import android.view.Window;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 
 /**
- * Helper class for managing multiple running embedded activities in the same
+ * <p>Helper class for managing multiple running embedded activities in the same
  * process. This class is not normally used directly, but rather created for
  * you as part of the {@link android.app.ActivityGroup} implementation.
  *
  * @see ActivityGroup
+ *
+ * @deprecated Use the new {@link Fragment} and {@link FragmentManager} APIs
+ * instead; these are also
+ * available on older platforms through the Android compatibility package.
  */
+@Deprecated
 public class LocalActivityManager {
     private static final String TAG = "LocalActivityManager";
-    private static final boolean localLOGV = false || Config.LOGV;
+    private static final boolean localLOGV = false;
 
     // Internal token for an Activity being managed by LocalActivityManager.
     private static class LocalActivityRecord extends Binder {
@@ -114,13 +114,26 @@ public class LocalActivityManager {
         }
         
         if (r.curState == INITIALIZING) {
+            // Get the lastNonConfigurationInstance for the activity
+            HashMap<String, Object> lastNonConfigurationInstances =
+                    mParent.getLastNonConfigurationChildInstances();
+            Object instanceObj = null;
+            if (lastNonConfigurationInstances != null) {
+                instanceObj = lastNonConfigurationInstances.get(r.id);
+            }
+            Activity.NonConfigurationInstances instance = null;
+            if (instanceObj != null) {
+                instance = new Activity.NonConfigurationInstances();
+                instance.activity = instanceObj;
+            }
+            
             // We need to have always created the activity.
             if (localLOGV) Log.v(TAG, r.id + ": starting " + r.intent);
             if (r.activityInfo == null) {
                 r.activityInfo = mActivityThread.resolveActivityInfo(r.intent);
             }
             r.activity = mActivityThread.startActivityNow(
-                    mParent, r.id, r.intent, r.activityInfo, r, r.instanceState);
+                    mParent, r.id, r.intent, r.activityInfo, r, r.instanceState, instance);
             if (r.activity == null) {
                 return;
             }
@@ -168,7 +181,7 @@ public class LocalActivityManager {
                 }
                 if (desiredState == CREATED) {
                     if (localLOGV) Log.v(TAG, r.id + ": stopping");
-                    mActivityThread.performStopActivity(r);
+                    mActivityThread.performStopActivity(r, false);
                     r.curState = CREATED;
                 }
                 return;
@@ -183,7 +196,7 @@ public class LocalActivityManager {
                     if (localLOGV) Log.v(TAG, r.id + ": pausing");
                     performPause(r, mFinishing);
                     if (localLOGV) Log.v(TAG, r.id + ": stopping");
-                    mActivityThread.performStopActivity(r);
+                    mActivityThread.performStopActivity(r, false);
                     r.curState = CREATED;
                 }
                 return;
@@ -288,7 +301,6 @@ public class LocalActivityManager {
             // It's a brand new world.
             mActivities.put(id, r);
             mActivityArray.add(r);
-            
         } else if (r.activityInfo != null) {
             // If the new activity is the same as the current one, then
             // we may be able to reuse it.
@@ -342,7 +354,7 @@ public class LocalActivityManager {
     }
 
     private Window performDestroy(LocalActivityRecord r, boolean finish) {
-        Window win = null;
+        Window win;
         win = r.window;
         if (r.curState == RESUMED && !finish) {
             performPause(r, finish);
@@ -376,7 +388,8 @@ public class LocalActivityManager {
         if (r != null) {
             win = performDestroy(r, finish);
             if (finish) {
-                mActivities.remove(r);
+                mActivities.remove(id);
+                mActivityArray.remove(r);
             }
         }
         return win;
@@ -437,10 +450,8 @@ public class LocalActivityManager {
      */
     public void dispatchCreate(Bundle state) {
         if (state != null) {
-            final Iterator<String> i = state.keySet().iterator();
-            while (i.hasNext()) {
+            for (String id : state.keySet()) {
                 try {
-                    final String id = i.next();
                     final Bundle astate = state.getBundle(id);
                     LocalActivityRecord r = mActivities.get(id);
                     if (r != null) {
@@ -453,9 +464,7 @@ public class LocalActivityManager {
                     }
                 } catch (Exception e) {
                     // Recover from -all- app errors.
-                    Log.e(TAG,
-                          "Exception thrown when restoring LocalActivityManager state",
-                          e);
+                    Log.e(TAG, "Exception thrown when restoring LocalActivityManager state", e);
                 }
             }
         }
@@ -489,7 +498,7 @@ public class LocalActivityManager {
                 // We need to save the state now, if we don't currently
                 // already have it or the activity is currently resumed.
                 final Bundle childState = new Bundle();
-                r.activity.onSaveInstanceState(childState);
+                r.activity.performSaveInstanceState(childState);
                 r.instanceState = childState;
             }
             if (r.instanceState != null) {
@@ -567,6 +576,32 @@ public class LocalActivityManager {
             LocalActivityRecord r = mActivityArray.get(i);
             moveToState(r, CREATED);
         }
+    }
+    
+    /**
+     * Call onRetainNonConfigurationInstance on each child activity and store the
+     * results in a HashMap by id.  Only construct the HashMap if there is a non-null
+     * object to store.  Note that this does not support nested ActivityGroups.
+     * 
+     * {@hide}
+     */
+    public HashMap<String,Object> dispatchRetainNonConfigurationInstance() {
+        HashMap<String,Object> instanceMap = null;
+        
+        final int N = mActivityArray.size();
+        for (int i=0; i<N; i++) {
+            LocalActivityRecord r = mActivityArray.get(i);
+            if ((r != null) && (r.activity != null)) {
+                Object instance = r.activity.onRetainNonConfigurationInstance();
+                if (instance != null) {
+                    if (instanceMap == null) {
+                        instanceMap = new HashMap<String,Object>();
+                    }
+                    instanceMap.put(r.id, instance);
+                }
+            }
+        }
+        return instanceMap;
     }
 
     /**

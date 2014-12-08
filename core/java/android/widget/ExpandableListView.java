@@ -18,8 +18,6 @@ package android.widget;
 
 import com.android.internal.R;
 
-import java.util.ArrayList;
-
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
@@ -32,7 +30,13 @@ import android.view.ContextMenu;
 import android.view.SoundEffectConstants;
 import android.view.View;
 import android.view.ContextMenu.ContextMenuInfo;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.ExpandableListConnector.PositionMetadata;
+
+import java.util.ArrayList;
+
+import static android.os.Build.VERSION_CODES.JELLY_BEAN_MR1;
 
 /**
  * A view that shows items in a vertically scrolling two-level list. This
@@ -74,6 +78,10 @@ import android.widget.ExpandableListConnector.PositionMetadata;
  * @attr ref android.R.styleable#ExpandableListView_childIndicatorLeft
  * @attr ref android.R.styleable#ExpandableListView_childIndicatorRight
  * @attr ref android.R.styleable#ExpandableListView_childDivider
+ * @attr ref android.R.styleable#ExpandableListView_indicatorStart
+ * @attr ref android.R.styleable#ExpandableListView_indicatorEnd
+ * @attr ref android.R.styleable#ExpandableListView_childIndicatorStart
+ * @attr ref android.R.styleable#ExpandableListView_childIndicatorEnd
  */
 public class ExpandableListView extends ListView {
 
@@ -132,6 +140,12 @@ public class ExpandableListView extends ListView {
     /** Right bound for drawing the indicator. */
     private int mIndicatorRight;
 
+    /** Start bound for drawing the indicator. */
+    private int mIndicatorStart;
+
+    /** End bound for drawing the indicator. */
+    private int mIndicatorEnd;
+
     /**
      * Left bound for drawing the indicator of a child. Value of
      * {@link #CHILD_INDICATOR_INHERIT} means use mIndicatorLeft.
@@ -145,11 +159,28 @@ public class ExpandableListView extends ListView {
     private int mChildIndicatorRight;
 
     /**
+     * Start bound for drawing the indicator of a child. Value of
+     * {@link #CHILD_INDICATOR_INHERIT} means use mIndicatorStart.
+     */
+    private int mChildIndicatorStart;
+
+    /**
+     * End bound for drawing the indicator of a child. Value of
+     * {@link #CHILD_INDICATOR_INHERIT} means use mIndicatorEnd.
+     */
+    private int mChildIndicatorEnd;
+
+    /**
      * Denotes when a child indicator should inherit this bound from the generic
      * indicator bounds
      */
     public static final int CHILD_INDICATOR_INHERIT = -1;
-    
+
+    /**
+     * Denotes an undefined value for an indicator
+     */
+    private static final int INDICATOR_UNDEFINED = -2;
+
     /** The indicator drawn next to a group. */
     private Drawable mGroupIndicator;
 
@@ -184,7 +215,10 @@ public class ExpandableListView extends ListView {
     
     /** Drawable to be used as a divider when it is adjacent to any children */
     private Drawable mChildDivider;
-    
+
+    // Bounds of the indicator to be drawn
+    private final Rect mIndicatorRect = new Rect();
+
     public ExpandableListView(Context context) {
         this(context, null);
     }
@@ -193,31 +227,126 @@ public class ExpandableListView extends ListView {
         this(context, attrs, com.android.internal.R.attr.expandableListViewStyle);
     }
 
-    public ExpandableListView(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public ExpandableListView(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
 
-        TypedArray a =
-            context.obtainStyledAttributes(attrs, com.android.internal.R.styleable.ExpandableListView, defStyle,
-                    0);
+    public ExpandableListView(
+            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
 
-        mGroupIndicator = a
-                .getDrawable(com.android.internal.R.styleable.ExpandableListView_groupIndicator);
-        mChildIndicator = a
-                .getDrawable(com.android.internal.R.styleable.ExpandableListView_childIndicator);
-        mIndicatorLeft = a
-                .getDimensionPixelSize(com.android.internal.R.styleable.ExpandableListView_indicatorLeft, 0);
-        mIndicatorRight = a
-                .getDimensionPixelSize(com.android.internal.R.styleable.ExpandableListView_indicatorRight, 0);
+        final TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.ExpandableListView, defStyleAttr, defStyleRes);
+
+        mGroupIndicator = a.getDrawable(
+                com.android.internal.R.styleable.ExpandableListView_groupIndicator);
+        mChildIndicator = a.getDrawable(
+                com.android.internal.R.styleable.ExpandableListView_childIndicator);
+        mIndicatorLeft = a.getDimensionPixelSize(
+                com.android.internal.R.styleable.ExpandableListView_indicatorLeft, 0);
+        mIndicatorRight = a.getDimensionPixelSize(
+                com.android.internal.R.styleable.ExpandableListView_indicatorRight, 0);
+        if (mIndicatorRight == 0 && mGroupIndicator != null) {
+            mIndicatorRight = mIndicatorLeft + mGroupIndicator.getIntrinsicWidth();
+        }
         mChildIndicatorLeft = a.getDimensionPixelSize(
-                com.android.internal.R.styleable.ExpandableListView_childIndicatorLeft, CHILD_INDICATOR_INHERIT);
+                com.android.internal.R.styleable.ExpandableListView_childIndicatorLeft,
+                CHILD_INDICATOR_INHERIT);
         mChildIndicatorRight = a.getDimensionPixelSize(
-                com.android.internal.R.styleable.ExpandableListView_childIndicatorRight, CHILD_INDICATOR_INHERIT);
-        mChildDivider = a.getDrawable(com.android.internal.R.styleable.ExpandableListView_childDivider);
-        
+                com.android.internal.R.styleable.ExpandableListView_childIndicatorRight,
+                CHILD_INDICATOR_INHERIT);
+        mChildDivider = a.getDrawable(
+                com.android.internal.R.styleable.ExpandableListView_childDivider);
+
+        if (!isRtlCompatibilityMode()) {
+            mIndicatorStart = a.getDimensionPixelSize(
+                    com.android.internal.R.styleable.ExpandableListView_indicatorStart,
+                    INDICATOR_UNDEFINED);
+            mIndicatorEnd = a.getDimensionPixelSize(
+                    com.android.internal.R.styleable.ExpandableListView_indicatorEnd,
+                    INDICATOR_UNDEFINED);
+
+            mChildIndicatorStart = a.getDimensionPixelSize(
+                    com.android.internal.R.styleable.ExpandableListView_childIndicatorStart,
+                    CHILD_INDICATOR_INHERIT);
+            mChildIndicatorEnd = a.getDimensionPixelSize(
+                    com.android.internal.R.styleable.ExpandableListView_childIndicatorEnd,
+                    CHILD_INDICATOR_INHERIT);
+        }
+
         a.recycle();
     }
-    
-    
+
+    /**
+     * Return true if we are in RTL compatibility mode (either before Jelly Bean MR1 or
+     * RTL not supported)
+     */
+    private boolean isRtlCompatibilityMode() {
+        final int targetSdkVersion = mContext.getApplicationInfo().targetSdkVersion;
+        return targetSdkVersion < JELLY_BEAN_MR1 || !hasRtlSupport();
+    }
+
+    /**
+     * Return true if the application tag in the AndroidManifest has set "supportRtl" to true
+     */
+    private boolean hasRtlSupport() {
+        return mContext.getApplicationInfo().hasRtlSupport();
+    }
+
+    public void onRtlPropertiesChanged(int layoutDirection) {
+        resolveIndicator();
+        resolveChildIndicator();
+    }
+
+    /**
+     * Resolve start/end indicator. start/end indicator always takes precedence over left/right
+     * indicator when defined.
+     */
+    private void resolveIndicator() {
+        final boolean isLayoutRtl = isLayoutRtl();
+        if (isLayoutRtl) {
+            if (mIndicatorStart >= 0) {
+                mIndicatorRight = mIndicatorStart;
+            }
+            if (mIndicatorEnd >= 0) {
+                mIndicatorLeft = mIndicatorEnd;
+            }
+        } else {
+            if (mIndicatorStart >= 0) {
+                mIndicatorLeft = mIndicatorStart;
+            }
+            if (mIndicatorEnd >= 0) {
+                mIndicatorRight = mIndicatorEnd;
+            }
+        }
+        if (mIndicatorRight == 0 && mGroupIndicator != null) {
+            mIndicatorRight = mIndicatorLeft + mGroupIndicator.getIntrinsicWidth();
+        }
+    }
+
+    /**
+     * Resolve start/end child indicator. start/end child indicator always takes precedence over
+     * left/right child indicator when defined.
+     */
+    private void resolveChildIndicator() {
+        final boolean isLayoutRtl = isLayoutRtl();
+        if (isLayoutRtl) {
+            if (mChildIndicatorStart >= CHILD_INDICATOR_INHERIT) {
+                mChildIndicatorRight = mChildIndicatorStart;
+            }
+            if (mChildIndicatorEnd >= CHILD_INDICATOR_INHERIT) {
+                mChildIndicatorLeft = mChildIndicatorEnd;
+            }
+        } else {
+            if (mChildIndicatorStart >= CHILD_INDICATOR_INHERIT) {
+                mChildIndicatorLeft = mChildIndicatorStart;
+            }
+            if (mChildIndicatorEnd >= CHILD_INDICATOR_INHERIT) {
+                mChildIndicatorRight = mChildIndicatorEnd;
+            }
+        }
+    }
+
     @Override
     protected void dispatchDraw(Canvas canvas) {
         // Draw children, etc.
@@ -252,10 +381,9 @@ public class ExpandableListView extends ListView {
         
         // Start at a value that is neither child nor group
         int lastItemType = ~(ExpandableListPosition.CHILD | ExpandableListPosition.GROUP);
-        
-        // Bounds of the indicator to be drawn
-        Rect indicatorRect = new Rect();
-        
+
+        final Rect indicatorRect = mIndicatorRect;
+
         // The "child" mentioned in the following two lines is this
         // View's child, not referring to an expandable list's
         // notion of a child (as opposed to a group)
@@ -281,6 +409,9 @@ public class ExpandableListView extends ListView {
             // Get more expandable list-related info for this item
             pos = mConnector.getUnflattenedPos(childFlPos);
 
+            final boolean isLayoutRtl = isLayoutRtl();
+            final int width = getWidth();
+
             // If this item type and the previous item type are different, then we need to change
             // the left & right bounds
             if (pos.position.type != lastItemType) {
@@ -293,32 +424,42 @@ public class ExpandableListView extends ListView {
                     indicatorRect.left = mIndicatorLeft;
                     indicatorRect.right = mIndicatorRight;
                 }
-                
+
+                if (isLayoutRtl) {
+                    final int temp = indicatorRect.left;
+                    indicatorRect.left = width - indicatorRect.right;
+                    indicatorRect.right = width - temp;
+
+                    indicatorRect.left -= mPaddingRight;
+                    indicatorRect.right -= mPaddingRight;
+                } else {
+                    indicatorRect.left += mPaddingLeft;
+                    indicatorRect.right += mPaddingLeft;
+                }
+
                 lastItemType = pos.position.type; 
             }
 
-            if (indicatorRect.left == indicatorRect.right) {
-                // The left and right bounds are the same, so nothing will be drawn
-                continue;
+            if (indicatorRect.left != indicatorRect.right) {
+                // Use item's full height + the divider height
+                if (mStackFromBottom) {
+                    // See ListView#dispatchDraw
+                    indicatorRect.top = t;// - mDividerHeight;
+                    indicatorRect.bottom = b;
+                } else {
+                    indicatorRect.top = t;
+                    indicatorRect.bottom = b;// + mDividerHeight;
+                }
+                
+                // Get the indicator (with its state set to the item's state)
+                indicator = getIndicator(pos);
+                if (indicator != null) {
+                    // Draw the indicator
+                    indicator.setBounds(indicatorRect);
+                    indicator.draw(canvas);
+                }
             }
-
-            // Use item's full height + the divider height
-            if (mStackFromBottom) {
-                // See ListView#dispatchDraw
-                indicatorRect.top = t - mDividerHeight;
-                indicatorRect.bottom = b;
-            } else {
-                indicatorRect.top = t;
-                indicatorRect.bottom = b + mDividerHeight;
-            }
-            
-            // Get the indicator (with its state set to the item's state)
-            indicator = getIndicator(pos);
-            if (indicator == null) continue;
-            
-            // Draw the indicator
-            indicator.setBounds(indicatorRect);
-            indicator.draw(canvas);
+            pos.recycle();
         }
 
         if (clipToPadding) {
@@ -385,16 +526,19 @@ public class ExpandableListView extends ListView {
         // Only proceed as possible child if the divider isn't above all items (if it is above
         // all items, then the item below it has to be a group)
         if (flatListPosition >= 0) {
-            PositionMetadata pos = mConnector.getUnflattenedPos(flatListPosition);
+            final int adjustedPosition = getFlatPositionForConnector(flatListPosition);
+            PositionMetadata pos = mConnector.getUnflattenedPos(adjustedPosition);
             // If this item is a child, or it is a non-empty group that is expanded
-            if ((pos.position.type == ExpandableListPosition.CHILD)
-                    || (pos.isExpanded() &&
-                            pos.groupMetadata.lastChildFlPos != pos.groupMetadata.flPos)) {
+            if ((pos.position.type == ExpandableListPosition.CHILD) || (pos.isExpanded() &&
+                    pos.groupMetadata.lastChildFlPos != pos.groupMetadata.flPos)) {
                 // These are the cases where we draw the child divider
-                mChildDivider.setBounds(bounds);
-                mChildDivider.draw(canvas);
+                final Drawable divider = mChildDivider;
+                divider.setBounds(bounds);
+                divider.draw(canvas);
+                pos.recycle();
                 return;
             }
+            pos.recycle();
         }
         
         // Otherwise draw the default divider
@@ -467,19 +611,48 @@ public class ExpandableListView extends ListView {
         return mAdapter;
     }
     
+    /**
+     * @param position An absolute (including header and footer) flat list position.
+     * @return true if the position corresponds to a header or a footer item.
+     */
+    private boolean isHeaderOrFooterPosition(int position) {
+        final int footerViewsStart = mItemCount - getFooterViewsCount();
+        return (position < getHeaderViewsCount() || position >= footerViewsStart);
+    }
+
+    /**
+     * Converts an absolute item flat position into a group/child flat position, shifting according
+     * to the number of header items.
+     * 
+     * @param flatListPosition The absolute flat position
+     * @return A group/child flat position as expected by the connector.
+     */
+    private int getFlatPositionForConnector(int flatListPosition) {
+        return flatListPosition - getHeaderViewsCount();
+    }
+
+    /**
+     * Converts a group/child flat position into an absolute flat position, that takes into account
+     * the possible headers.
+     * 
+     * @param flatListPosition The child/group flat position
+     * @return An absolute flat position.
+     */
+    private int getAbsoluteFlatPosition(int flatListPosition) {
+        return flatListPosition + getHeaderViewsCount();
+    }
+
     @Override
     public boolean performItemClick(View v, int position, long id) {
         // Ignore clicks in header/footers
-        final int headerViewsCount = getHeaderViewsCount();
-        final int footerViewsStart = mItemCount - getFooterViewsCount();
-
-        if (position < headerViewsCount || position >= footerViewsStart) {
+        if (isHeaderOrFooterPosition(position)) {
             // Clicked on a header/footer, so ignore pass it on to super
             return super.performItemClick(v, position, id);
         }
         
         // Internally handle the item click
-        return handleItemClick(v, position - headerViewsCount, id);
+        final int adjustedPosition = getFlatPositionForConnector(position);
+        return handleItemClick(v, adjustedPosition, id);
     }
     
     /**
@@ -495,39 +668,47 @@ public class ExpandableListView extends ListView {
         
         id = getChildOrGroupId(posMetadata.position);
         
+        boolean returnValue;
         if (posMetadata.position.type == ExpandableListPosition.GROUP) {
             /* It's a group, so handle collapsing/expanding */
-            
+
+            /* It's a group click, so pass on event */
+            if (mOnGroupClickListener != null) {
+                if (mOnGroupClickListener.onGroupClick(this, v,
+                        posMetadata.position.groupPos, id)) {
+                    posMetadata.recycle();
+                    return true;
+                }
+            }
+
             if (posMetadata.isExpanded()) {
                 /* Collapse it */
                 mConnector.collapseGroup(posMetadata);
 
                 playSoundEffect(SoundEffectConstants.CLICK);
-                
+
                 if (mOnGroupCollapseListener != null) {
                     mOnGroupCollapseListener.onGroupCollapse(posMetadata.position.groupPos);
                 }
-                
             } else {
-                /* It's a group click, so pass on event */
-                if (mOnGroupClickListener != null) {
-                    if (mOnGroupClickListener.onGroupClick(this, v,
-                            posMetadata.position.groupPos, id)) {
-                        return true;
-                    }
-                }
-
                 /* Expand it */
                 mConnector.expandGroup(posMetadata);
 
                 playSoundEffect(SoundEffectConstants.CLICK);
-                
+
                 if (mOnGroupExpandListener != null) {
                     mOnGroupExpandListener.onGroupExpand(posMetadata.position.groupPos);
                 }
+                
+                final int groupPos = posMetadata.position.groupPos;
+                final int groupFlatPos = posMetadata.position.flatListPos;
+
+                final int shiftedGroupPosition = groupFlatPos + getHeaderViewsCount(); 
+                smoothScrollToPosition(shiftedGroupPosition + mAdapter.getChildrenCount(groupPos),
+                        shiftedGroupPosition);
             }
-            
-            return true;
+
+            returnValue = true;
         } else {
             /* It's a child, so pass on event */
             if (mOnChildClickListener != null) {
@@ -535,9 +716,13 @@ public class ExpandableListView extends ListView {
                 return mOnChildClickListener.onChildClick(this, v, posMetadata.position.groupPos,
                         posMetadata.position.childPos, id);
             }
-            
-            return false;
+
+            returnValue = false;
         }
+
+        posMetadata.recycle();
+
+        return returnValue;
     }
 
     /**
@@ -548,12 +733,37 @@ public class ExpandableListView extends ListView {
      *         was already expanded, this will return false)
      */
     public boolean expandGroup(int groupPos) {
-        boolean retValue = mConnector.expandGroup(groupPos);
+       return expandGroup(groupPos, false);
+    }
+
+    /**
+     * Expand a group in the grouped list view
+     *
+     * @param groupPos the group to be expanded
+     * @param animate true if the expanding group should be animated in
+     * @return True if the group was expanded, false otherwise (if the group
+     *         was already expanded, this will return false)
+     */
+    public boolean expandGroup(int groupPos, boolean animate) {
+        ExpandableListPosition elGroupPos = ExpandableListPosition.obtain(
+                ExpandableListPosition.GROUP, groupPos, -1, -1);
+        PositionMetadata pm = mConnector.getFlattenedPos(elGroupPos);
+        elGroupPos.recycle();
+        boolean retValue = mConnector.expandGroup(pm);
 
         if (mOnGroupExpandListener != null) {
             mOnGroupExpandListener.onGroupExpand(groupPos);
         }
-        
+
+        if (animate) {
+            final int groupFlatPos = pm.position.flatListPos;
+
+            final int shiftedGroupPosition = groupFlatPos + getHeaderViewsCount();
+            smoothScrollToPosition(shiftedGroupPosition + mAdapter.getChildrenCount(groupPos),
+                    shiftedGroupPosition);
+        }
+        pm.recycle();
+
         return retValue;
     }
     
@@ -663,8 +873,8 @@ public class ExpandableListView extends ListView {
     }
     
     /**
-     * Converts a flat list position (the raw position of an item (child or
-     * group) in the list) to an group and/or child position (represented in a
+     * Converts a flat list position (the raw position of an item (child or group)
+     * in the list) to a group and/or child position (represented in a
      * packed position). This is useful in situations where the caller needs to
      * use the underlying {@link ListView}'s methods. Use
      * {@link ExpandableListView#getPackedPositionType} ,
@@ -673,10 +883,19 @@ public class ExpandableListView extends ListView {
      * 
      * @param flatListPosition The flat list position to be converted.
      * @return The group and/or child position for the given flat list position
-     *         in packed position representation.
+     *         in packed position representation. #PACKED_POSITION_VALUE_NULL if
+     *         the position corresponds to a header or a footer item.
      */
     public long getExpandableListPosition(int flatListPosition) {
-        return mConnector.getUnflattenedPos(flatListPosition).position.getPackedPosition();
+        if (isHeaderOrFooterPosition(flatListPosition)) {
+            return PACKED_POSITION_VALUE_NULL;
+        }
+
+        final int adjustedPosition = getFlatPositionForConnector(flatListPosition);
+        PositionMetadata pm = mConnector.getUnflattenedPos(adjustedPosition);
+        long packedPos = pm.position.getPackedPosition();
+        pm.recycle();
+        return packedPos;
     }
     
     /**
@@ -691,8 +910,13 @@ public class ExpandableListView extends ListView {
      * @return The flat list position for the given child or group.
      */
     public int getFlatListPosition(long packedPosition) {
-        return mConnector.getFlattenedPos(ExpandableListPosition.obtainPosition(packedPosition)).
-            position.flatListPos;
+        ExpandableListPosition elPackedPos = ExpandableListPosition
+                .obtainPosition(packedPosition);
+        PositionMetadata pm = mConnector.getFlattenedPos(elPackedPos);
+        elPackedPos.recycle();
+        final int flatListPosition = pm.position.flatListPos;
+        pm.recycle();
+        return getAbsoluteFlatPosition(flatListPosition);
     }
 
     /**
@@ -700,12 +924,13 @@ public class ExpandableListView extends ListView {
      * its type). Can return {@link #PACKED_POSITION_VALUE_NULL} if no selection.
      * 
      * @return A packed position containing the currently selected group or
-     *         child's position and type. #PACKED_POSITION_VALUE_NULL if no selection.
+     *         child's position and type. #PACKED_POSITION_VALUE_NULL if no selection
+     *         or if selection is on a header or a footer item.
      */
     public long getSelectedPosition() {
         final int selectedPos = getSelectedItemPosition();
-        if (selectedPos == -1) return PACKED_POSITION_VALUE_NULL;
-        
+
+        // The case where there is no selection (selectedPos == -1) is also handled here.
         return getExpandableListPosition(selectedPos);
     }
     
@@ -737,8 +962,12 @@ public class ExpandableListView extends ListView {
      */
     public void setSelectedGroup(int groupPosition) {
         ExpandableListPosition elGroupPos = ExpandableListPosition
-                .obtainGroupPosition(groupPosition); 
-        super.setSelection(mConnector.getFlattenedPos(elGroupPos).position.flatListPos);
+                .obtainGroupPosition(groupPosition);
+        PositionMetadata pm = mConnector.getFlattenedPos(elGroupPos);
+        elGroupPos.recycle();
+        final int absoluteFlatPosition = getAbsoluteFlatPosition(pm.position.flatListPos);
+        super.setSelection(absoluteFlatPosition);
+        pm.recycle();
     }
     
     /**
@@ -773,7 +1002,11 @@ public class ExpandableListView extends ListView {
             }
         }
         
-        super.setSelection(flatChildPos.position.flatListPos);
+        int absoluteFlatPosition = getAbsoluteFlatPosition(flatChildPos.position.flatListPos);
+        super.setSelection(absoluteFlatPosition);
+        
+        elChildPos.recycle();
+        flatChildPos.recycle();
         
         return true;
     }
@@ -883,11 +1116,21 @@ public class ExpandableListView extends ListView {
 
     @Override
     ContextMenuInfo createContextMenuInfo(View view, int flatListPosition, long id) {
-        ExpandableListPosition pos = mConnector.getUnflattenedPos(flatListPosition).position;
+        if (isHeaderOrFooterPosition(flatListPosition)) {
+            // Return normal info for header/footer view context menus
+            return new AdapterContextMenuInfo(view, flatListPosition, id);
+        }
+
+        final int adjustedPosition = getFlatPositionForConnector(flatListPosition);
+        PositionMetadata pm = mConnector.getUnflattenedPos(adjustedPosition);
+        ExpandableListPosition pos = pm.position;
         
         id = getChildOrGroupId(pos);
+        long packedPosition = pos.getPackedPosition();
+
+        pm.recycle();
         
-        return new ExpandableListContextMenuInfo(view, pos.getPackedPosition(), id);
+        return new ExpandableListContextMenuInfo(view, packedPosition, id);
     }
 
     /**
@@ -931,8 +1174,26 @@ public class ExpandableListView extends ListView {
     public void setChildIndicatorBounds(int left, int right) {
         mChildIndicatorLeft = left;
         mChildIndicatorRight = right;
+        resolveChildIndicator();
     }
-    
+
+    /**
+     * Sets the relative drawing bounds for the child indicator. For either, you can
+     * specify {@link #CHILD_INDICATOR_INHERIT} to use inherit from the general
+     * indicator's bounds.
+     *
+     * @see #setIndicatorBounds(int, int)
+     * @param start The start position (relative to the start bounds of this View)
+     *            to start drawing the indicator.
+     * @param end The end position (relative to the end bounds of this
+     *            View) to end the drawing of the indicator.
+     */
+    public void setChildIndicatorBoundsRelative(int start, int end) {
+        mChildIndicatorStart = start;
+        mChildIndicatorEnd = end;
+        resolveChildIndicator();
+    }
+
     /**
      * Sets the indicator to be drawn next to a group.
      * 
@@ -943,8 +1204,11 @@ public class ExpandableListView extends ListView {
      */
     public void setGroupIndicator(Drawable groupIndicator) {
         mGroupIndicator = groupIndicator;
+        if (mIndicatorRight == 0 && mGroupIndicator != null) {
+            mIndicatorRight = mIndicatorLeft + mGroupIndicator.getIntrinsicWidth();
+        }
     }
-    
+
     /**
      * Sets the drawing bounds for the indicators (at minimum, the group indicator
      * is affected by this; the child indicator is affected by this if the
@@ -959,8 +1223,26 @@ public class ExpandableListView extends ListView {
     public void setIndicatorBounds(int left, int right) {
         mIndicatorLeft = left;
         mIndicatorRight = right;
+        resolveIndicator();
     }
-    
+
+    /**
+     * Sets the relative drawing bounds for the indicators (at minimum, the group indicator
+     * is affected by this; the child indicator is affected by this if the
+     * child indicator bounds are set to inherit).
+     *
+     * @see #setChildIndicatorBounds(int, int)
+     * @param start The start position (relative to the start bounds of this View)
+     *            to start drawing the indicator.
+     * @param end The end position (relative to the end bounds of this
+     *            View) to end the drawing of the indicator.
+     */
+    public void setIndicatorBoundsRelative(int start, int end) {
+        mIndicatorStart = start;
+        mIndicatorEnd = end;
+        resolveIndicator();
+    }
+
     /**
      * Extra menu information specific to an {@link ExpandableListView} provided
      * to the
@@ -1046,6 +1328,11 @@ public class ExpandableListView extends ListView {
 
     @Override
     public void onRestoreInstanceState(Parcelable state) {
+        if (!(state instanceof SavedState)) {
+            super.onRestoreInstanceState(state);
+            return;
+        }
+
         SavedState ss = (SavedState) state;
         super.onRestoreInstanceState(ss.getSuperState());
         
@@ -1054,4 +1341,15 @@ public class ExpandableListView extends ListView {
         }
     }
 
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(ExpandableListView.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(ExpandableListView.class.getName());
+    }
 }

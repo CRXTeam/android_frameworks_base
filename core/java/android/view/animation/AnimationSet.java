@@ -18,7 +18,9 @@ package android.view.animation;
 
 import android.content.Context;
 import android.content.res.TypedArray;
+import android.os.Build;
 import android.util.AttributeSet;
+import android.graphics.RectF;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +32,22 @@ import java.util.List;
  * If AnimationSet sets any properties that its children also set
  * (for example, duration or fillBefore), the values of AnimationSet
  * override the child values.
+ *
+ * <p>The way that AnimationSet inherits behavior from Animation is important to
+ * understand. Some of the Animation attributes applied to AnimationSet affect the
+ * AnimationSet itself, some are pushed down to the children, and some are ignored,
+ * as follows:
+ * <ul>
+ *     <li>duration, repeatMode, fillBefore, fillAfter: These properties, when set
+ *     on an AnimationSet object, will be pushed down to all child animations.</li>
+ *     <li>repeatCount, fillEnabled: These properties are ignored for AnimationSet.</li>
+ *     <li>startOffset, shareInterpolator: These properties apply to the AnimationSet itself.</li>
+ * </ul>
+ * Starting with {@link android.os.Build.VERSION_CODES#ICE_CREAM_SANDWICH},
+ * the behavior of these properties is the same in XML resources and at runtime (prior to that
+ * release, the values set in XML were ignored for AnimationSet). That is, calling
+ * <code>setDuration(500)</code> on an AnimationSet has the same effect as declaring
+ * <code>android:duration="500"</code> in an XML resource for an AnimationSet object.</p>
  */
 public class AnimationSet extends Animation {
     private static final int PROPERTY_FILL_AFTER_MASK         = 0x1;
@@ -39,8 +57,11 @@ public class AnimationSet extends Animation {
     private static final int PROPERTY_SHARE_INTERPOLATOR_MASK = 0x10;
     private static final int PROPERTY_DURATION_MASK           = 0x20;
     private static final int PROPERTY_MORPH_MATRIX_MASK       = 0x40;
+    private static final int PROPERTY_CHANGE_BOUNDS_MASK      = 0x80;
 
     private int mFlags = 0;
+    private boolean mDirty;
+    private boolean mHasAlpha;
 
     private ArrayList<Animation> mAnimations = new ArrayList<Animation>();
 
@@ -51,7 +72,7 @@ public class AnimationSet extends Animation {
     private long[] mStoredOffsets;
 
     /**
-     * Constructor used whan an AnimationSet is loaded from a resource. 
+     * Constructor used when an AnimationSet is loaded from a resource. 
      * 
      * @param context Application context to use
      * @param attrs Attribute set from which to read values
@@ -65,7 +86,26 @@ public class AnimationSet extends Animation {
         setFlag(PROPERTY_SHARE_INTERPOLATOR_MASK,
                 a.getBoolean(com.android.internal.R.styleable.AnimationSet_shareInterpolator, true));
         init();
-        
+
+        if (context.getApplicationInfo().targetSdkVersion >=
+                Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
+            if (a.hasValue(com.android.internal.R.styleable.AnimationSet_duration)) {
+                mFlags |= PROPERTY_DURATION_MASK;
+            }
+            if (a.hasValue(com.android.internal.R.styleable.AnimationSet_fillBefore)) {
+                mFlags |= PROPERTY_FILL_BEFORE_MASK;
+            }
+            if (a.hasValue(com.android.internal.R.styleable.AnimationSet_fillAfter)) {
+                mFlags |= PROPERTY_FILL_AFTER_MASK;
+            }
+            if (a.hasValue(com.android.internal.R.styleable.AnimationSet_repeatMode)) {
+                mFlags |= PROPERTY_REPEAT_MODE_MASK;
+            }
+            if (a.hasValue(com.android.internal.R.styleable.AnimationSet_startOffset)) {
+                mFlags |= PROPERTY_START_OFFSET_MASK;
+            }
+        }
+
         a.recycle();
     }
     
@@ -74,12 +114,28 @@ public class AnimationSet extends Animation {
      * Constructor to use when building an AnimationSet from code
      * 
      * @param shareInterpolator Pass true if all of the animations in this set
-     *        should use the interpolator assocciated with this AnimationSet.
+     *        should use the interpolator associated with this AnimationSet.
      *        Pass false if each animation should use its own interpolator.
      */
     public AnimationSet(boolean shareInterpolator) {
         setFlag(PROPERTY_SHARE_INTERPOLATOR_MASK, shareInterpolator);
         init();
+    }
+
+    @Override
+    protected AnimationSet clone() throws CloneNotSupportedException {
+        final AnimationSet animation = (AnimationSet) super.clone();
+        animation.mTempTransformation = new Transformation();
+        animation.mAnimations = new ArrayList<Animation>();
+
+        final int count = mAnimations.size();
+        final ArrayList<Animation> animations = mAnimations;
+
+        for (int i = 0; i < count; i++) {
+            animation.mAnimations.add(animations.get(i).clone());
+        }
+
+        return animation;
     }
 
     private void setFlag(int mask, boolean value) {
@@ -92,7 +148,6 @@ public class AnimationSet extends Animation {
 
     private void init() {
         mStartTime = 0;
-        mDuration = 0;
     }
 
     @Override
@@ -120,6 +175,28 @@ public class AnimationSet extends Animation {
     }
 
     /**
+     * @hide
+     */
+    @Override
+    public boolean hasAlpha() {
+        if (mDirty) {
+            mDirty = mHasAlpha = false;
+
+            final int count = mAnimations.size();
+            final ArrayList<Animation> animations = mAnimations;
+
+            for (int i = 0; i < count; i++) {
+                if (animations.get(i).hasAlpha()) {
+                    mHasAlpha = true;
+                    break;
+                }
+            }
+        }
+
+        return mHasAlpha;
+    }
+
+    /**
      * <p>Sets the duration of every child animation.</p>
      *
      * @param durationMillis the duration of the animation, in milliseconds, for
@@ -129,6 +206,7 @@ public class AnimationSet extends Animation {
     public void setDuration(long durationMillis) {
         mFlags |= PROPERTY_DURATION_MASK;
         super.setDuration(durationMillis);
+        mLastEnd = mStartOffset + mDuration;
     }
 
     /**
@@ -145,13 +223,26 @@ public class AnimationSet extends Animation {
             mFlags |= PROPERTY_MORPH_MATRIX_MASK;
         }
 
-        if (mAnimations.size() == 1) {
-            mDuration = a.getStartOffset() + a.getDuration();
+        boolean changeBounds = (mFlags & PROPERTY_CHANGE_BOUNDS_MASK) == 0;
+
+
+        if (changeBounds && a.willChangeBounds()) {
+            mFlags |= PROPERTY_CHANGE_BOUNDS_MASK;
+        }
+
+        if ((mFlags & PROPERTY_DURATION_MASK) == PROPERTY_DURATION_MASK) {
             mLastEnd = mStartOffset + mDuration;
         } else {
-            mLastEnd = Math.max(mLastEnd, a.getStartOffset() + a.getDuration());
-            mDuration = mLastEnd - mStartOffset;
+            if (mAnimations.size() == 1) {
+                mDuration = a.getStartOffset() + a.getDuration();
+                mLastEnd = mStartOffset + mDuration;
+            } else {
+                mLastEnd = Math.max(mLastEnd, a.getStartOffset() + a.getDuration());
+                mDuration = mLastEnd - mStartOffset;
+            }
         }
+
+        mDirty = true;
     }
     
     /**
@@ -224,6 +315,51 @@ public class AnimationSet extends Animation {
     }
 
     /**
+     * The duration hint of an animation set is the maximum of the duration
+     * hints of all of its component animations.
+     * 
+     * @see android.view.animation.Animation#computeDurationHint
+     */
+    public long computeDurationHint() {
+        long duration = 0;
+        final int count = mAnimations.size();
+        final ArrayList<Animation> animations = mAnimations;
+        for (int i = count - 1; i >= 0; --i) {
+            final long d = animations.get(i).computeDurationHint();
+            if (d > duration) duration = d;
+        }
+        return duration;
+    }
+
+    /**
+     * @hide
+     */
+    public void initializeInvalidateRegion(int left, int top, int right, int bottom) {
+        final RectF region = mPreviousRegion;
+        region.set(left, top, right, bottom);
+        region.inset(-1.0f, -1.0f);
+
+        if (mFillBefore) {
+            final int count = mAnimations.size();
+            final ArrayList<Animation> animations = mAnimations;
+            final Transformation temp = mTempTransformation;
+
+            final Transformation previousTransformation = mPreviousTransformation;
+
+            for (int i = count - 1; i >= 0; --i) {
+                final Animation a = animations.get(i);
+                if (!a.isFillEnabled() || a.getFillBefore() || a.getStartOffset() == 0) {
+                    temp.clear();
+                    final Interpolator interpolator = a.mInterpolator;
+                    a.applyTransformation(interpolator != null ? interpolator.getInterpolation(0.0f)
+                            : 0.0f, temp);
+                    previousTransformation.compose(temp);
+                }
+            }
+        }
+    }
+
+    /**
      * The transformation of an animation set is the concatenation of all of its
      * component animations.
      * 
@@ -245,7 +381,7 @@ public class AnimationSet extends Animation {
             final Animation a = animations.get(i);
 
             temp.clear();
-            more = a.getTransformation(currentTime, temp) || more;
+            more = a.getTransformation(currentTime, temp, getScaleFactor()) || more;
             t.compose(temp);
 
             started = started || a.hasStarted();
@@ -296,7 +432,7 @@ public class AnimationSet extends Animation {
                 == PROPERTY_SHARE_INTERPOLATOR_MASK;
         boolean startOffsetSet = (mFlags & PROPERTY_START_OFFSET_MASK)
                 == PROPERTY_START_OFFSET_MASK;
-       
+
         if (shareInterpolator) {
             ensureInterpolator();
         }
@@ -310,7 +446,17 @@ public class AnimationSet extends Animation {
         final int repeatMode = mRepeatMode;
         final Interpolator interpolator = mInterpolator;
         final long startOffset = mStartOffset;
-        
+
+
+        long[] storedOffsets = mStoredOffsets;
+        if (startOffsetSet) {
+            if (storedOffsets == null || storedOffsets.length != count) {
+                storedOffsets = mStoredOffsets = new long[count];
+            }
+        } else if (storedOffsets != null) {
+            storedOffsets = mStoredOffsets = null;
+        }
+
         for (int i = 0; i < count; i++) {
             Animation a = children.get(i);
             if (durationSet) {
@@ -329,42 +475,35 @@ public class AnimationSet extends Animation {
                 a.setInterpolator(interpolator);
             }
             if (startOffsetSet) {
-                a.setStartOffset(startOffset);
+                long offset = a.getStartOffset();
+                a.setStartOffset(offset + startOffset);
+                storedOffsets[i] = offset;
             }
             a.initialize(width, height, parentWidth, parentHeight);
         }
     }
 
-    /**
-     * @hide
-     * @param startOffset the startOffset to add to the children's startOffset
-     */
-    void saveChildrenStartOffset(long startOffset) {
-        final ArrayList<Animation> children = mAnimations;
-        final int count = children.size();
-        long[] storedOffsets = mStoredOffsets = new long[count];
-
-        for (int i = 0; i < count; i++) {
-            Animation animation = children.get(i);
-            long offset = animation.getStartOffset();
-            animation.setStartOffset(offset + startOffset);
-            storedOffsets[i] = offset;
-        }
+    @Override
+    public void reset() {
+        super.reset();
+        restoreChildrenStartOffset();
     }
 
     /**
      * @hide
      */
     void restoreChildrenStartOffset() {
+        final long[] offsets = mStoredOffsets;
+        if (offsets == null) return;
+
         final ArrayList<Animation> children = mAnimations;
         final int count = children.size();
-        final long[] offsets = mStoredOffsets;
 
         for (int i = 0; i < count; i++) {
             children.get(i).setStartOffset(offsets[i]);
         }
     }
-    
+
     /**
      * @return All the child animations in this AnimationSet. Note that
      * this may include other AnimationSets, which are not expanded.
@@ -376,5 +515,10 @@ public class AnimationSet extends Animation {
     @Override
     public boolean willChangeTransformationMatrix() {
         return (mFlags & PROPERTY_MORPH_MATRIX_MASK) == PROPERTY_MORPH_MATRIX_MASK;
+    }
+
+    @Override
+    public boolean willChangeBounds() {
+        return (mFlags & PROPERTY_CHANGE_BOUNDS_MASK) == PROPERTY_CHANGE_BOUNDS_MASK;
     }
 }

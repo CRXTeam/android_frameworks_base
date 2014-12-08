@@ -16,9 +16,6 @@
 
 package android.util;
 
-import android.util.Config;
-import android.util.Log;
-
 /**
  * Container for a dynamically typed data value.  Primarily used with
  * {@link android.content.res.Resources} for holding resource values.
@@ -141,6 +138,20 @@ public class TypedValue {
 
     /* ------------------------------------------------------------ */
 
+    /**
+     * If {@link #density} is equal to this value, then the density should be
+     * treated as the system's default density value: {@link DisplayMetrics#DENSITY_DEFAULT}.
+     */
+    public static final int DENSITY_DEFAULT = 0;
+
+    /**
+     * If {@link #density} is equal to this value, then there is no density
+     * associated with the resource and it should not be scaled.
+     */
+    public static final int DENSITY_NONE = 0xffff;
+
+    /* ------------------------------------------------------------ */
+
     /** The type held by this value, as defined by the constants here.
      *  This tells you how to interpret the other fields in the object. */
     public int type;
@@ -161,7 +172,12 @@ public class TypedValue {
     /** If Value came from a resource, these are the configurations for which
      *  its contents can change. */
     public int changingConfigurations = -1;
-    
+
+    /**
+     * If the Value came from a resource, this holds the corresponding pixel density.
+     * */
+    public int density;
+
     /* ------------------------------------------------------------ */
 
     /** Return the data for this value as a float.  Only use for values
@@ -274,18 +290,14 @@ public class TypedValue {
         return -1;
     }
 
+    /**
+     * @hide Was accidentally exposed in API level 1 for debugging purposes.
+     * Kept for compatibility just in case although the debugging code has been removed.
+     */
+    @Deprecated
     public static float complexToDimensionNoisy(int data, DisplayMetrics metrics)
     {
-        float res = complexToDimension(data, metrics);
-        System.out.println(
-            "Dimension (0x" + ((data>>TypedValue.COMPLEX_MANTISSA_SHIFT)
-                               & TypedValue.COMPLEX_MANTISSA_MASK)
-            + "*" + (RADIX_MULTS[(data>>TypedValue.COMPLEX_RADIX_SHIFT)
-                                & TypedValue.COMPLEX_RADIX_MASK] / MANTISSA_MULT)
-            + ")" + DIMENSION_UNIT_STRS[(data>>COMPLEX_UNIT_SHIFT)
-                                & COMPLEX_UNIT_MASK]
-            + " = " + res);
-        return res;
+        return complexToDimension(data, metrics);
     }
 
     /**
@@ -454,6 +466,7 @@ public class TypedValue {
         data = other.data;
         assetCookie = other.assetCookie;
         resourceId = other.resourceId;
+        density = other.density;
     }
 
     public String toString()

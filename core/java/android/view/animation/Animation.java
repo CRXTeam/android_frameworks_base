@@ -18,15 +18,19 @@ package android.view.animation;
 
 import android.content.Context;
 import android.content.res.TypedArray;
+import android.graphics.RectF;
+import android.os.Handler;
+import android.os.SystemProperties;
 import android.util.AttributeSet;
 import android.util.TypedValue;
+import dalvik.system.CloseGuard;
 
 /**
  * Abstraction for an Animation that can be applied to Views, Surfaces, or
  * other objects. See the {@link android.view.animation animation package
  * description file}.
  */
-public abstract class Animation {
+public abstract class Animation implements Cloneable {
     /**
      * Repeat the animation indefinitely.
      */
@@ -85,7 +89,10 @@ public abstract class Animation {
      * content for the duration of the animation.
      */
     public static final int ZORDER_BOTTOM = -1;
-    
+
+    private static final boolean USE_CLOSEGUARD
+            = SystemProperties.getBoolean("log.closeguard.Animation", false);
+
     /**
      * Set by {@link #getTransformation(long, Transformation)} when the animation ends.
      */
@@ -110,7 +117,8 @@ public abstract class Animation {
 
     /**
      * Indicates whether the animation transformation should be applied before the
-     * animation starts.
+     * animation starts. The value of this variable is only relevant if mFillEnabled is true;
+     * otherwise it is assumed to be true.
      */
     boolean mFillBefore = true;
 
@@ -119,6 +127,11 @@ public abstract class Animation {
      * animation ends.
      */
     boolean mFillAfter = false;
+
+    /**
+     * Indicates whether fillBefore should be taken into account.
+     */
+    boolean mFillEnabled = false;    
 
     /**
      * The time in milliseconds at which the animation must start;
@@ -168,9 +181,37 @@ public abstract class Animation {
      * Desired Z order mode during animation.
      */
     private int mZAdjustment;
-    
-    // Indicates what was the last value returned by getTransformation()
+
+    /**
+     * Desired background color behind animation.
+     */
+    private int mBackgroundColor;
+
+    /**
+     * scalefactor to apply to pivot points, etc. during animation. Subclasses retrieve the
+     * value via getScaleFactor().
+     */
+    private float mScaleFactor = 1f;
+
+    /**
+     * Don't animate the wallpaper.
+     */
+    private boolean mDetachWallpaper = false;
+
     private boolean mMore = true;
+    private boolean mOneMoreTime = true;
+
+    RectF mPreviousRegion = new RectF();
+    RectF mRegion = new RectF();
+    Transformation mTransformation = new Transformation();
+    Transformation mPreviousTransformation = new Transformation();
+
+    private final CloseGuard guard = CloseGuard.get();
+
+    private Handler mListenerHandler;
+    private Runnable mOnStart;
+    private Runnable mOnRepeat;
+    private Runnable mOnEnd;
 
     /**
      * Creates a new animation with a duration of 0ms, the default interpolator, with
@@ -193,22 +234,38 @@ public abstract class Animation {
         setDuration((long) a.getInt(com.android.internal.R.styleable.Animation_duration, 0));
         setStartOffset((long) a.getInt(com.android.internal.R.styleable.Animation_startOffset, 0));
         
+        setFillEnabled(a.getBoolean(com.android.internal.R.styleable.Animation_fillEnabled, mFillEnabled));
         setFillBefore(a.getBoolean(com.android.internal.R.styleable.Animation_fillBefore, mFillBefore));
         setFillAfter(a.getBoolean(com.android.internal.R.styleable.Animation_fillAfter, mFillAfter));
-
-        final int resID = a.getResourceId(com.android.internal.R.styleable.Animation_interpolator, 0);
-        if (resID > 0) {
-            setInterpolator(context, resID);
-        }
 
         setRepeatCount(a.getInt(com.android.internal.R.styleable.Animation_repeatCount, mRepeatCount));
         setRepeatMode(a.getInt(com.android.internal.R.styleable.Animation_repeatMode, RESTART));
 
         setZAdjustment(a.getInt(com.android.internal.R.styleable.Animation_zAdjustment, ZORDER_NORMAL));
         
-        ensureInterpolator();
+        setBackgroundColor(a.getInt(com.android.internal.R.styleable.Animation_background, 0));
+
+        setDetachWallpaper(a.getBoolean(com.android.internal.R.styleable.Animation_detachWallpaper, false));
+
+        final int resID = a.getResourceId(com.android.internal.R.styleable.Animation_interpolator, 0);
 
         a.recycle();
+
+        if (resID > 0) {
+            setInterpolator(context, resID);
+        }
+
+        ensureInterpolator();
+    }
+
+    @Override
+    protected Animation clone() throws CloneNotSupportedException {
+        final Animation animation = (Animation) super.clone();
+        animation.mPreviousRegion = new RectF();
+        animation.mRegion = new RectF();
+        animation.mTransformation = new Transformation();
+        animation.mPreviousTransformation = new Transformation();
+        return animation;
     }
 
     /**
@@ -217,10 +274,47 @@ public abstract class Animation {
      * @see #initialize(int, int, int, int)
      */
     public void reset() {
+        mPreviousRegion.setEmpty();
+        mPreviousTransformation.clear();
         mInitialized = false;
         mCycleFlip = false;
         mRepeated = 0;
         mMore = true;
+        mOneMoreTime = true;
+        mListenerHandler = null;
+    }
+
+    /**
+     * Cancel the animation. Cancelling an animation invokes the animation
+     * listener, if set, to notify the end of the animation.
+     * 
+     * If you cancel an animation manually, you must call {@link #reset()}
+     * before starting the animation again.
+     * 
+     * @see #reset() 
+     * @see #start() 
+     * @see #startNow() 
+     */
+    public void cancel() {
+        if (mStarted && !mEnded) {
+            fireAnimationEnd();
+            mEnded = true;
+            guard.close();
+        }
+        // Make sure we move the animation to the end
+        mStartTime = Long.MIN_VALUE;
+        mMore = mOneMoreTime = false;
+    }
+
+    /**
+     * @hide
+     */
+    public void detach() {
+        if (mStarted && !mEnded) {
+            mEnded = true;
+            guard.close();
+            fireAnimationEnd();
+        }
     }
 
     /**
@@ -236,9 +330,9 @@ public abstract class Animation {
     /**
      * Initialize this animation with the dimensions of the object being
      * animated as well as the objects parents. (This is to support animation
-     * sizes being specifed relative to these dimensions.)
+     * sizes being specified relative to these dimensions.)
      *
-     * <p>Objects that interpret a Animations should call this method when
+     * <p>Objects that interpret Animations should call this method when
      * the sizes of the object being animated and its parent are known, and
      * before calling {@link #getTransformation}.
      *
@@ -249,10 +343,40 @@ public abstract class Animation {
      * @param parentHeight Height of the animated object's parent
      */
     public void initialize(int width, int height, int parentWidth, int parentHeight) {
+        reset();
         mInitialized = true;
-        mCycleFlip = false;
-        mRepeated = 0;
-        mMore = true;
+    }
+
+    /**
+     * Sets the handler used to invoke listeners.
+     * 
+     * @hide
+     */
+    public void setListenerHandler(Handler handler) {
+        if (mListenerHandler == null) {
+            mOnStart = new Runnable() {
+                public void run() {
+                    if (mListener != null) {
+                        mListener.onAnimationStart(Animation.this);
+                    }
+                }
+            };
+            mOnRepeat = new Runnable() {
+                public void run() {
+                    if (mListener != null) {
+                        mListener.onAnimationRepeat(Animation.this);
+                    }
+                }
+            };
+            mOnEnd = new Runnable() {
+                public void run() {
+                    if (mListener != null) {
+                        mListener.onAnimationEnd(Animation.this);
+                    }
+                }
+            };
+        }
+        mListenerHandler = handler;
     }
 
     /**
@@ -292,12 +416,18 @@ public abstract class Animation {
     }
 
     /**
-     * How long this animation should last.
+     * How long this animation should last. The duration cannot be negative.
      * 
      * @param durationMillis Duration in milliseconds
+     *
+     * @throws java.lang.IllegalArgumentException if the duration is < 0
+     *
      * @attr ref android.R.styleable#Animation_duration
      */
     public void setDuration(long durationMillis) {
+        if (durationMillis < 0) {
+            throw new IllegalArgumentException("Animation duration cannot be negative");
+        }
         mDuration = durationMillis;
     }
 
@@ -311,6 +441,7 @@ public abstract class Animation {
      * to run.
      */
     public void restrictDuration(long durationMillis) {
+        // If we start after the duration, then we just won't run.
         if (mStartOffset > durationMillis) {
             mStartOffset = durationMillis;
             mDuration = 0;
@@ -320,11 +451,26 @@ public abstract class Animation {
         
         long dur = mDuration + mStartOffset;
         if (dur > durationMillis) {
-            mDuration = dur = durationMillis-mStartOffset;
+            mDuration = durationMillis-mStartOffset;
+            dur = durationMillis;
         }
+        // If the duration is 0 or less, then we won't run.
+        if (mDuration <= 0) {
+            mDuration = 0;
+            mRepeatCount = 0;
+            return;
+        }
+        // Reduce the number of repeats to keep below the maximum duration.
+        // The comparison between mRepeatCount and duration is to catch
+        // overflows after multiplying them.
         if (mRepeatCount < 0 || mRepeatCount > durationMillis
                 || (dur*mRepeatCount) > durationMillis) {
-            mRepeatCount = (int)(durationMillis/dur);
+            // Figure out how many times to do the animation.  Subtract 1 since
+            // repeat count is the number of times to repeat so 0 runs once.
+            mRepeatCount = (int)(durationMillis/dur) - 1;
+            if (mRepeatCount < 0) {
+                mRepeatCount = 0;
+            }
         }
     }
     
@@ -335,6 +481,7 @@ public abstract class Animation {
      */
     public void scaleCurrentDuration(float scale) {
         mDuration = (long) (mDuration * scale);
+        mStartOffset = (long) (mStartOffset * scale);
     }
 
     /**
@@ -387,7 +534,7 @@ public abstract class Animation {
      * Sets how many times the animation should be repeated. If the repeat
      * count is 0, the animation is never repeated. If the repeat count is
      * greater than 0 or {@link #INFINITE}, the repeat mode will be taken
-     * into account. The repeat count if 0 by default.
+     * into account. The repeat count is 0 by default.
      *
      * @param repeatCount the number of times the animation should be repeated
      * @attr ref android.R.styleable#Animation_repeatCount
@@ -400,8 +547,34 @@ public abstract class Animation {
     }
 
     /**
+     * If fillEnabled is true, this animation will apply the value of fillBefore.
+     *
+     * @return true if the animation will take fillBefore into account
+     * @attr ref android.R.styleable#Animation_fillEnabled
+     */
+    public boolean isFillEnabled() {
+        return mFillEnabled;
+    }
+
+    /**
+     * If fillEnabled is true, the animation will apply the value of fillBefore.
+     * Otherwise, fillBefore is ignored and the animation
+     * transformation is always applied until the animation ends.
+     *
+     * @param fillEnabled true if the animation should take the value of fillBefore into account
+     * @attr ref android.R.styleable#Animation_fillEnabled
+     *
+     * @see #setFillBefore(boolean)
+     * @see #setFillAfter(boolean)
+     */
+    public void setFillEnabled(boolean fillEnabled) {
+        mFillEnabled = fillEnabled;
+    }
+
+    /**
      * If fillBefore is true, this animation will apply its transformation
-     * before the start time of the animation. Defaults to false if not set.
+     * before the start time of the animation. Defaults to true if
+     * {@link #setFillEnabled(boolean)} is not set to true.
      * Note that this applies when using an {@link
      * android.view.animation.AnimationSet AnimationSet} to chain
      * animations. The transformation is not applied before the AnimationSet
@@ -409,6 +582,8 @@ public abstract class Animation {
      *
      * @param fillBefore true if the animation should apply its transformation before it starts
      * @attr ref android.R.styleable#Animation_fillBefore
+     *
+     * @see #setFillEnabled(boolean)
      */
     public void setFillBefore(boolean fillBefore) {
         mFillBefore = fillBefore;
@@ -417,13 +592,14 @@ public abstract class Animation {
     /**
      * If fillAfter is true, the transformation that this animation performed
      * will persist when it is finished. Defaults to false if not set.
-     * Note that this applies when using an {@link
+     * Note that this applies to individual animations and when using an {@link
      * android.view.animation.AnimationSet AnimationSet} to chain
-     * animations. The transformation is not applied before the AnimationSet
-     * itself starts.
+     * animations.
      *
      * @param fillAfter true if the animation should apply its transformation after it ends
      * @attr ref android.R.styleable#Animation_fillAfter
+     *
+     * @see #setFillEnabled(boolean) 
      */
     public void setFillAfter(boolean fillAfter) {
         mFillAfter = fillAfter;
@@ -440,6 +616,42 @@ public abstract class Animation {
         mZAdjustment = zAdjustment;
     }
     
+    /**
+     * Set background behind animation.
+     *
+     * @param bg The background color.  If 0, no background.  Currently must
+     * be black, with any desired alpha level.
+     */
+    public void setBackgroundColor(int bg) {
+        mBackgroundColor = bg;
+    }
+
+    /**
+     * The scale factor is set by the call to <code>getTransformation</code>. Overrides of 
+     * {@link #getTransformation(long, Transformation, float)} will get this value
+     * directly. Overrides of {@link #applyTransformation(float, Transformation)} can
+     * call this method to get the value.
+     * 
+     * @return float The scale factor that should be applied to pre-scaled values in
+     * an Animation such as the pivot points in {@link ScaleAnimation} and {@link RotateAnimation}.
+     */
+    protected float getScaleFactor() {
+        return mScaleFactor;
+    }
+
+    /**
+     * If detachWallpaper is true, and this is a window animation of a window
+     * that has a wallpaper background, then the window will be detached from
+     * the wallpaper while it runs.  That is, the animation will only be applied
+     * to the window, and the wallpaper behind it will remain static.
+     *
+     * @param detachWallpaper true if the wallpaper should be detached from the animation
+     * @attr ref android.R.styleable#Animation_detachWallpaper
+     */
+    public void setDetachWallpaper(boolean detachWallpaper) {
+        mDetachWallpaper = detachWallpaper;
+    }
+
     /**
      * Gets the acceleration curve type for this animation.
      *
@@ -504,7 +716,9 @@ public abstract class Animation {
 
     /**
      * If fillBefore is true, this animation will apply its transformation
-     * before the start time of the animation.
+     * before the start time of the animation. If fillBefore is false and
+     * {@link #isFillEnabled() fillEnabled} is true, the transformation will not be applied until
+     * the start time of the animation.
      *
      * @return true if the animation applies its transformation before it starts
      * @attr ref android.R.styleable#Animation_fillBefore
@@ -534,6 +748,21 @@ public abstract class Animation {
      */
     public int getZAdjustment() {
         return mZAdjustment;
+    }
+
+    /**
+     * Returns the background color behind the animation.
+     */
+    public int getBackgroundColor() {
+        return mBackgroundColor;
+    }
+
+    /**
+     * Return value of {@link #setDetachWallpaper(boolean)}.
+     * @attr ref android.R.styleable#Animation_detachWallpaper
+     */
+    public boolean getDetachWallpaper() {
+        return mDetachWallpaper;
     }
 
     /**
@@ -582,12 +811,22 @@ public abstract class Animation {
     }
 
     /**
+     * Compute a hint at how long the entire animation may last, in milliseconds.
+     * Animations can be written to cause themselves to run for a different
+     * duration than what is computed here, but generally this should be
+     * accurate.
+     */
+    public long computeDurationHint() {
+        return (getStartOffset() + getDuration()) * (getRepeatCount() + 1);
+    }
+    
+    /**
      * Gets the transformation to apply at a specified point in time. Implementations of this
      * method should always replace the specified Transformation or document they are doing
      * otherwise.
      *
      * @param currentTime Where we are in the animation. This is wall clock time.
-     * @param outTransformation A tranformation object that is provided by the
+     * @param outTransformation A transformation object that is provided by the
      *        caller and will be filled in by the animation.
      * @return True if the animation is still running
      */
@@ -597,21 +836,31 @@ public abstract class Animation {
         }
 
         final long startOffset = getStartOffset();
-        float normalizedTime = ((float) (currentTime - (mStartTime + startOffset))) /
-                    (float) mDuration;
+        final long duration = mDuration;
+        float normalizedTime;
+        if (duration != 0) {
+            normalizedTime = ((float) (currentTime - (mStartTime + startOffset))) /
+                    (float) duration;
+        } else {
+            // time is a step-change with a zero duration
+            normalizedTime = currentTime < mStartTime ? 0.0f : 1.0f;
+        }
 
-        boolean expired = normalizedTime >= 1.0f;
-        // Pin time to 0.0 to 1.0 range
-        normalizedTime = Math.max(Math.min(normalizedTime, 1.0f), 0.0f);
+        final boolean expired = normalizedTime >= 1.0f;
         mMore = !expired;
+
+        if (!mFillEnabled) normalizedTime = Math.max(Math.min(normalizedTime, 1.0f), 0.0f);
 
         if ((normalizedTime >= 0.0f || mFillBefore) && (normalizedTime <= 1.0f || mFillAfter)) {
             if (!mStarted) {
-                if (mListener != null) {
-                    mListener.onAnimationStart(this);
-                }
+                fireAnimationStart();
                 mStarted = true;
+                if (USE_CLOSEGUARD) {
+                    guard.open("cancel or detach or getTransformation");
+                }
             }
+
+            if (mFillEnabled) normalizedTime = Math.max(Math.min(normalizedTime, 1.0f), 0.0f);
 
             if (mCycleFlip) {
                 normalizedTime = 1.0f - normalizedTime;
@@ -624,10 +873,9 @@ public abstract class Animation {
         if (expired) {
             if (mRepeatCount == mRepeated) {
                 if (!mEnded) {
-                    if (mListener != null) {
-                        mListener.onAnimationEnd(this);
-                    }
                     mEnded = true;
+                    guard.close();
+                    fireAnimationEnd();
                 }
             } else {
                 if (mRepeatCount > 0) {
@@ -641,13 +889,55 @@ public abstract class Animation {
                 mStartTime = -1;
                 mMore = true;
 
-                if (mListener != null) {
-                    mListener.onAnimationRepeat(this);
-                }
+                fireAnimationRepeat();
             }
         }
 
+        if (!mMore && mOneMoreTime) {
+            mOneMoreTime = false;
+            return true;
+        }
+
         return mMore;
+    }
+
+    private void fireAnimationStart() {
+        if (mListener != null) {
+            if (mListenerHandler == null) mListener.onAnimationStart(this);
+            else mListenerHandler.postAtFrontOfQueue(mOnStart);
+        }
+    }
+
+    private void fireAnimationRepeat() {
+        if (mListener != null) {
+            if (mListenerHandler == null) mListener.onAnimationRepeat(this);
+            else mListenerHandler.postAtFrontOfQueue(mOnRepeat);
+        }
+    }
+
+    private void fireAnimationEnd() {
+        if (mListener != null) {
+            if (mListenerHandler == null) mListener.onAnimationEnd(this);
+            else mListenerHandler.postAtFrontOfQueue(mOnEnd);
+        }
+    }
+
+    /**
+     * Gets the transformation to apply at a specified point in time. Implementations of this
+     * method should always replace the specified Transformation or document they are doing
+     * otherwise.
+     *
+     * @param currentTime Where we are in the animation. This is wall clock time.
+     * @param outTransformation A transformation object that is provided by the
+     *        caller and will be filled in by the animation.
+     * @param scale Scaling factor to apply to any inputs to the transform operation, such
+     *        pivot points being rotated or scaled around.
+     * @return True if the animation is still running
+     */
+    public boolean getTransformation(long currentTime, Transformation outTransformation,
+            float scale) {
+        mScaleFactor = scale;
+        return getTransformation(currentTime, outTransformation);
     }
 
     /**
@@ -676,7 +966,7 @@ public abstract class Animation {
      * 
      * @param interpolatedTime The value of the normalized time (0.0 to 1.0)
      *        after it has been run through the interpolation function.
-     * @param t The Transofrmation object to fill in with the current
+     * @param t The Transformation object to fill in with the current
      *        transforms.
      */
     protected void applyTransformation(float interpolatedTime, Transformation t) {
@@ -705,7 +995,78 @@ public abstract class Animation {
                 return value;
         }
     }
-    
+
+    /**
+     * @param left
+     * @param top
+     * @param right
+     * @param bottom
+     * @param invalidate
+     * @param transformation
+     * 
+     * @hide
+     */
+    public void getInvalidateRegion(int left, int top, int right, int bottom,
+            RectF invalidate, Transformation transformation) {
+
+        final RectF tempRegion = mRegion;
+        final RectF previousRegion = mPreviousRegion;
+
+        invalidate.set(left, top, right, bottom);
+        transformation.getMatrix().mapRect(invalidate);
+        // Enlarge the invalidate region to account for rounding errors
+        invalidate.inset(-1.0f, -1.0f);
+        tempRegion.set(invalidate);
+        invalidate.union(previousRegion);
+
+        previousRegion.set(tempRegion);
+
+        final Transformation tempTransformation = mTransformation;
+        final Transformation previousTransformation = mPreviousTransformation;
+
+        tempTransformation.set(transformation);
+        transformation.set(previousTransformation);
+        previousTransformation.set(tempTransformation);
+    }
+
+    /**
+     * @param left
+     * @param top
+     * @param right
+     * @param bottom
+     *
+     * @hide
+     */
+    public void initializeInvalidateRegion(int left, int top, int right, int bottom) {
+        final RectF region = mPreviousRegion;
+        region.set(left, top, right, bottom);
+        // Enlarge the invalidate region to account for rounding errors
+        region.inset(-1.0f, -1.0f);
+        if (mFillBefore) {
+            final Transformation previousTransformation = mPreviousTransformation;
+            applyTransformation(mInterpolator.getInterpolation(0.0f), previousTransformation);
+        }
+    }
+
+    protected void finalize() throws Throwable {
+        try {
+            if (guard != null) {
+                guard.warnIfOpen();
+            }
+        } finally {
+            super.finalize();
+        }
+    }
+
+    /**
+     * Return true if this animation changes the view's alpha property.
+     * 
+     * @hide
+     */
+    public boolean hasAlpha() {
+        return false;
+    }
+
     /**
      * Utility class to parse a string description of a size.
      */
@@ -778,16 +1139,15 @@ public abstract class Animation {
         void onAnimationStart(Animation animation);
 
         /**
-         * <p>Notifies the end of the animation. This callback is invoked
-         * only for animation with repeat mode set to NO_REPEAT.</p>
+         * <p>Notifies the end of the animation. This callback is not invoked
+         * for animations with repeat count set to INFINITE.</p>
          *
          * @param animation The animation which reached its end.
          */
         void onAnimationEnd(Animation animation);
 
         /**
-         * <p>Notifies the repetition of the animation. This callback is invoked
-         * only for animation with repeat mode set to RESTART or REVERSE.</p>
+         * <p>Notifies the repetition of the animation.</p>
          *
          * @param animation The animation which was repeated.
          */

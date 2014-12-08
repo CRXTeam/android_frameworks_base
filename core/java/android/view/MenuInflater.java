@@ -18,17 +18,21 @@ package android.view;
 
 import com.android.internal.view.menu.MenuItemImpl;
 
-import java.io.IOException;
-
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.ContextWrapper;
 import android.content.res.TypedArray;
 import android.content.res.XmlResourceParser;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.util.Xml;
+
+import java.io.IOException;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 
 /**
  * This class is used to instantiate menu XML files into Menu objects.
@@ -40,6 +44,8 @@ import android.util.Xml;
  * <em>something</em> file.)
  */
 public class MenuInflater {
+    private static final String LOG_TAG = "MenuInflater";
+
     /** Menu tag name in XML. */
     private static final String XML_MENU = "menu";
     
@@ -51,8 +57,17 @@ public class MenuInflater {
 
     private static final int NO_ID = 0;
     
+    private static final Class<?>[] ACTION_VIEW_CONSTRUCTOR_SIGNATURE = new Class[] {Context.class};
+
+    private static final Class<?>[] ACTION_PROVIDER_CONSTRUCTOR_SIGNATURE = ACTION_VIEW_CONSTRUCTOR_SIGNATURE;
+
+    private final Object[] mActionViewConstructorArguments;
+
+    private final Object[] mActionProviderConstructorArguments;
+
     private Context mContext;
-    
+    private Object mRealOwner;
+
     /**
      * Constructs a menu inflater.
      * 
@@ -60,6 +75,21 @@ public class MenuInflater {
      */
     public MenuInflater(Context context) {
         mContext = context;
+        mActionViewConstructorArguments = new Object[] {context};
+        mActionProviderConstructorArguments = mActionViewConstructorArguments;
+    }
+
+    /**
+     * Constructs a menu inflater.
+     *
+     * @see Activity#getMenuInflater()
+     * @hide
+     */
+    public MenuInflater(Context context, Object realOwner) {
+        mContext = context;
+        mRealOwner = realOwner;
+        mActionViewConstructorArguments = new Object[] {context};
+        mActionProviderConstructorArguments = mActionViewConstructorArguments;
     }
 
     /**
@@ -131,6 +161,7 @@ public class MenuInflater {
                     } else if (tagName.equals(XML_MENU)) {
                         // A menu start tag denotes a submenu for an item
                         SubMenu subMenu = menuState.addSubMenuItem();
+                        registerMenu(subMenu, attrs);
 
                         // Parse the submenu into returned SubMenu
                         parseMenu(parser, attrs, subMenu);
@@ -151,7 +182,12 @@ public class MenuInflater {
                         // Add the item if it hasn't been added (if the item was
                         // a submenu, it would have been added already)
                         if (!menuState.hasAddedItem()) {
-                            menuState.addItem();
+                            if (menuState.itemActionProvider != null &&
+                                    menuState.itemActionProvider.hasSubMenu()) {
+                                registerMenu(menuState.addSubMenuItem(), attrs);
+                            } else {
+                                registerMenu(menuState.addItem(), attrs);
+                            }
                         }
                     } else if (tagName.equals(XML_MENU)) {
                         reachedEndOfMenu = true;
@@ -164,6 +200,81 @@ public class MenuInflater {
             
             eventType = parser.next();
         }
+    }
+
+    /**
+     * The method is a hook for layoutlib to do its magic.
+     * Nothing is needed outside of LayoutLib. However, it should not be deleted because it
+     * appears to do nothing.
+     */
+    private void registerMenu(@SuppressWarnings("unused") MenuItem item,
+            @SuppressWarnings("unused") AttributeSet set) {
+    }
+
+    /**
+     * The method is a hook for layoutlib to do its magic.
+     * Nothing is needed outside of LayoutLib. However, it should not be deleted because it
+     * appears to do nothing.
+     */
+    private void registerMenu(@SuppressWarnings("unused") SubMenu subMenu,
+            @SuppressWarnings("unused") AttributeSet set) {
+    }
+
+    // Needed by layoutlib.
+    /*package*/ Context getContext() {
+        return mContext;
+    }
+
+    private static class InflatedOnMenuItemClickListener
+            implements MenuItem.OnMenuItemClickListener {
+        private static final Class<?>[] PARAM_TYPES = new Class[] { MenuItem.class };
+        
+        private Object mRealOwner;
+        private Method mMethod;
+        
+        public InflatedOnMenuItemClickListener(Object realOwner, String methodName) {
+            mRealOwner = realOwner;
+            Class<?> c = realOwner.getClass();
+            try {
+                mMethod = c.getMethod(methodName, PARAM_TYPES);
+            } catch (Exception e) {
+                InflateException ex = new InflateException(
+                        "Couldn't resolve menu item onClick handler " + methodName +
+                        " in class " + c.getName());
+                ex.initCause(e);
+                throw ex;
+            }
+        }
+        
+        public boolean onMenuItemClick(MenuItem item) {
+            try {
+                if (mMethod.getReturnType() == Boolean.TYPE) {
+                    return (Boolean) mMethod.invoke(mRealOwner, item);
+                } else {
+                    mMethod.invoke(mRealOwner, item);
+                    return true;
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    private Object getRealOwner() {
+        if (mRealOwner == null) {
+            mRealOwner = findRealOwner(mContext);
+        }
+        return mRealOwner;
+    }
+
+    private Object findRealOwner(Object owner) {
+        if (owner instanceof Activity) {
+            return owner;
+        }
+        if (owner instanceof ContextWrapper) {
+            return findRealOwner(((ContextWrapper) owner).getBaseContext());
+        }
+        return owner;
     }
     
     /**
@@ -189,8 +300,8 @@ public class MenuInflater {
         private boolean itemAdded;
         private int itemId;
         private int itemCategoryOrder;
-        private String itemTitle;
-        private String itemTitleCondensed;
+        private CharSequence itemTitle;
+        private CharSequence itemTitleCondensed;
         private int itemIconResId;
         private char itemAlphabeticShortcut;
         private char itemNumericShortcut;
@@ -205,6 +316,23 @@ public class MenuInflater {
         private boolean itemVisible;
         private boolean itemEnabled;
         
+        /**
+         * Sync to attrs.xml enum, values in MenuItem:
+         * - 0: never
+         * - 1: ifRoom
+         * - 2: always
+         * - -1: Safe sentinel for "no value".
+         */
+        private int itemShowAsAction;
+
+        private int itemActionViewLayout;
+        private String itemActionViewClassName;
+        private String itemActionProviderClassName;
+
+        private String itemListenerMethodName;
+        
+        private ActionProvider itemActionProvider;
+
         private static final int defaultGroupId = NO_ID;
         private static final int defaultItemId = NO_ID;
         private static final int defaultItemCategory = 0;
@@ -258,8 +386,8 @@ public class MenuInflater {
             final int category = a.getInt(com.android.internal.R.styleable.MenuItem_menuCategory, groupCategory);
             final int order = a.getInt(com.android.internal.R.styleable.MenuItem_orderInCategory, groupOrder);
             itemCategoryOrder = (category & Menu.CATEGORY_MASK) | (order & Menu.USER_MASK);
-            itemTitle = a.getString(com.android.internal.R.styleable.MenuItem_title);
-            itemTitleCondensed = a.getString(com.android.internal.R.styleable.MenuItem_titleCondensed);
+            itemTitle = a.getText(com.android.internal.R.styleable.MenuItem_title);
+            itemTitleCondensed = a.getText(com.android.internal.R.styleable.MenuItem_titleCondensed);
             itemIconResId = a.getResourceId(com.android.internal.R.styleable.MenuItem_icon, 0);
             itemAlphabeticShortcut =
                     getShortcut(a.getString(com.android.internal.R.styleable.MenuItem_alphabeticShortcut));
@@ -276,9 +404,27 @@ public class MenuInflater {
             itemChecked = a.getBoolean(com.android.internal.R.styleable.MenuItem_checked, defaultItemChecked);
             itemVisible = a.getBoolean(com.android.internal.R.styleable.MenuItem_visible, groupVisible);
             itemEnabled = a.getBoolean(com.android.internal.R.styleable.MenuItem_enabled, groupEnabled);
-            
+            itemShowAsAction = a.getInt(com.android.internal.R.styleable.MenuItem_showAsAction, -1);
+            itemListenerMethodName = a.getString(com.android.internal.R.styleable.MenuItem_onClick);
+            itemActionViewLayout = a.getResourceId(com.android.internal.R.styleable.MenuItem_actionLayout, 0);
+            itemActionViewClassName = a.getString(com.android.internal.R.styleable.MenuItem_actionViewClass);
+            itemActionProviderClassName = a.getString(com.android.internal.R.styleable.MenuItem_actionProviderClass);
+
+            final boolean hasActionProvider = itemActionProviderClassName != null;
+            if (hasActionProvider && itemActionViewLayout == 0 && itemActionViewClassName == null) {
+                itemActionProvider = newInstance(itemActionProviderClassName,
+                            ACTION_PROVIDER_CONSTRUCTOR_SIGNATURE,
+                            mActionProviderConstructorArguments);
+            } else {
+                if (hasActionProvider) {
+                    Log.w(LOG_TAG, "Ignoring attribute 'actionProviderClass'."
+                            + " Action view already specified.");
+                }
+                itemActionProvider = null;
+            }
+
             a.recycle();
-            
+
             itemAdded = false;
         }
 
@@ -299,15 +445,53 @@ public class MenuInflater {
                 .setIcon(itemIconResId)
                 .setAlphabeticShortcut(itemAlphabeticShortcut)
                 .setNumericShortcut(itemNumericShortcut);
+            
+            if (itemShowAsAction >= 0) {
+                item.setShowAsAction(itemShowAsAction);
+            }
+            
+            if (itemListenerMethodName != null) {
+                if (mContext.isRestricted()) {
+                    throw new IllegalStateException("The android:onClick attribute cannot "
+                            + "be used within a restricted context");
+                }
+                item.setOnMenuItemClickListener(
+                        new InflatedOnMenuItemClickListener(getRealOwner(), itemListenerMethodName));
+            }
 
-            if (itemCheckable >= 2) {
-                ((MenuItemImpl) item).setExclusiveCheckable(true);
+            if (item instanceof MenuItemImpl) {
+                MenuItemImpl impl = (MenuItemImpl) item;
+                if (itemCheckable >= 2) {
+                    impl.setExclusiveCheckable(true);
+                }
+            }
+
+            boolean actionViewSpecified = false;
+            if (itemActionViewClassName != null) {
+                View actionView = (View) newInstance(itemActionViewClassName,
+                        ACTION_VIEW_CONSTRUCTOR_SIGNATURE, mActionViewConstructorArguments);
+                item.setActionView(actionView);
+                actionViewSpecified = true;
+            }
+            if (itemActionViewLayout > 0) {
+                if (!actionViewSpecified) {
+                    item.setActionView(itemActionViewLayout);
+                    actionViewSpecified = true;
+                } else {
+                    Log.w(LOG_TAG, "Ignoring attribute 'itemActionViewLayout'."
+                            + " Action view already specified.");
+                }
+            }
+            if (itemActionProvider != null) {
+                item.setActionProvider(itemActionProvider);
             }
         }
-        
-        public void addItem() {
+
+        public MenuItem addItem() {
             itemAdded = true;
-            setItem(menu.add(groupId, itemId, itemCategoryOrder, itemTitle));
+            MenuItem item = menu.add(groupId, itemId, itemCategoryOrder, itemTitle);
+            setItem(item);
+            return item;
         }
         
         public SubMenu addSubMenuItem() {
@@ -320,6 +504,18 @@ public class MenuInflater {
         public boolean hasAddedItem() {
             return itemAdded;
         }
+
+        @SuppressWarnings("unchecked")
+        private <T> T newInstance(String className, Class<?>[] constructorSignature,
+                Object[] arguments) {
+            try {
+                Class<?> clazz = mContext.getClassLoader().loadClass(className);
+                Constructor<?> constructor = clazz.getConstructor(constructorSignature);
+                return (T) constructor.newInstance(arguments);
+            } catch (Exception e) {
+                Log.w(LOG_TAG, "Cannot instantiate class: " + className, e);
+            }
+            return null;
+        }
     }
-    
 }

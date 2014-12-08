@@ -16,11 +16,17 @@
 
 package android.widget;
 
-import android.text.*;
-import android.text.method.*;
 import android.content.Context;
-import android.content.res.Resources;
+import android.os.Bundle;
+import android.text.Editable;
+import android.text.Selection;
+import android.text.Spannable;
+import android.text.TextUtils;
+import android.text.method.ArrowKeyMovementMethod;
+import android.text.method.MovementMethod;
 import android.util.AttributeSet;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 
 /*
@@ -32,6 +38,9 @@ import android.util.AttributeSet;
 /**
  * EditText is a thin veneer over TextView that configures itself
  * to be editable.
+ *
+ * <p>See the <a href="{@docRoot}guide/topics/ui/controls/text.html">Text Fields</a>
+ * guide.</p>
  * <p>
  * <b>XML attributes</b>
  * <p>
@@ -48,8 +57,12 @@ public class EditText extends TextView {
         this(context, attrs, com.android.internal.R.attr.editTextStyle);
     }
 
-    public EditText(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public EditText(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public EditText(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
     }
 
     @Override
@@ -98,5 +111,44 @@ public class EditText extends TextView {
      */
     public void extendSelection(int index) {
         Selection.extendSelection(getText(), index);
+    }
+
+    @Override
+    public void setEllipsize(TextUtils.TruncateAt ellipsis) {
+        if (ellipsis == TextUtils.TruncateAt.MARQUEE) {
+            throw new IllegalArgumentException("EditText cannot use the ellipsize mode "
+                    + "TextUtils.TruncateAt.MARQUEE");
+        }
+        super.setEllipsize(ellipsis);
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(EditText.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(EditText.class.getName());
+    }
+
+    @Override
+    public boolean performAccessibilityAction(int action, Bundle arguments) {
+        switch (action) {
+            case AccessibilityNodeInfo.ACTION_SET_TEXT: {
+                CharSequence text = (arguments != null) ? arguments.getCharSequence(
+                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE) : null;
+                setText(text);
+                if (text != null && text.length() > 0) {
+                    setSelection(text.length());
+                }
+                return true;
+            }
+            default: {
+                return super.performAccessibilityAction(action, arguments);
+            }
+        }
     }
 }

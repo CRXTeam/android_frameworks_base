@@ -16,6 +16,8 @@
 
 package android.text;
 
+import android.graphics.Color;
+import com.android.internal.util.ArrayUtils;
 import org.ccil.cowan.tagsoup.HTMLSchema;
 import org.ccil.cowan.tagsoup.Parser;
 import org.xml.sax.Attributes;
@@ -25,9 +27,12 @@ import org.xml.sax.Locator;
 import org.xml.sax.SAXException;
 import org.xml.sax.XMLReader;
 
+import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
+import android.text.style.AbsoluteSizeSpan;
+import android.text.style.AlignmentSpan;
 import android.text.style.CharacterStyle;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.ImageSpan;
@@ -38,14 +43,13 @@ import android.text.style.StrikethroughSpan;
 import android.text.style.StyleSpan;
 import android.text.style.SubscriptSpan;
 import android.text.style.SuperscriptSpan;
+import android.text.style.TextAppearanceSpan;
 import android.text.style.TypefaceSpan;
 import android.text.style.URLSpan;
 import android.text.style.UnderlineSpan;
-import com.android.internal.util.XmlUtils;
 
 import java.io.IOException;
 import java.io.StringReader;
-import java.nio.CharBuffer;
 
 /**
  * This class processes HTML strings into displayable styled text.
@@ -137,30 +141,94 @@ public class Html {
      */
     public static String toHtml(Spanned text) {
         StringBuilder out = new StringBuilder();
+        withinHtml(out, text);
+        return out.toString();
+    }
+
+    /**
+     * Returns an HTML escaped representation of the given plain text.
+     */
+    public static String escapeHtml(CharSequence text) {
+        StringBuilder out = new StringBuilder();
+        withinStyle(out, text, 0, text.length());
+        return out.toString();
+    }
+
+    private static void withinHtml(StringBuilder out, Spanned text) {
         int len = text.length();
 
         int next;
         for (int i = 0; i < text.length(); i = next) {
-            next = text.nextSpanTransition(i, len, QuoteSpan.class);
+            next = text.nextSpanTransition(i, len, ParagraphStyle.class);
+            ParagraphStyle[] style = text.getSpans(i, next, ParagraphStyle.class);
+            String elements = " ";
+            boolean needDiv = false;
+
+            for(int j = 0; j < style.length; j++) {
+                if (style[j] instanceof AlignmentSpan) {
+                    Layout.Alignment align =
+                        ((AlignmentSpan) style[j]).getAlignment();
+                    needDiv = true;
+                    if (align == Layout.Alignment.ALIGN_CENTER) {
+                        elements = "align=\"center\" " + elements;
+                    } else if (align == Layout.Alignment.ALIGN_OPPOSITE) {
+                        elements = "align=\"right\" " + elements;
+                    } else {
+                        elements = "align=\"left\" " + elements;
+                    }
+                }
+            }
+            if (needDiv) {
+                out.append("<div ").append(elements).append(">");
+            }
+
+            withinDiv(out, text, i, next);
+
+            if (needDiv) {
+                out.append("</div>");
+            }
+        }
+    }
+
+    private static void withinDiv(StringBuilder out, Spanned text,
+            int start, int end) {
+        int next;
+        for (int i = start; i < end; i = next) {
+            next = text.nextSpanTransition(i, end, QuoteSpan.class);
             QuoteSpan[] quotes = text.getSpans(i, next, QuoteSpan.class);
 
-            for (QuoteSpan quote: quotes) {
+            for (QuoteSpan quote : quotes) {
                 out.append("<blockquote>");
             }
 
             withinBlockquote(out, text, i, next);
 
-            for (QuoteSpan quote: quotes) {
+            for (QuoteSpan quote : quotes) {
                 out.append("</blockquote>\n");
             }
         }
+    }
 
-        return out.toString();
+    private static String getOpenParaTagWithDirection(Spanned text, int start, int end) {
+        final int len = end - start;
+        final byte[] levels = ArrayUtils.newUnpaddedByteArray(len);
+        final char[] buffer = TextUtils.obtain(len);
+        TextUtils.getChars(text, start, end, buffer, 0);
+
+        int paraDir = AndroidBidi.bidi(Layout.DIR_REQUEST_DEFAULT_LTR, buffer, levels, len,
+                false /* no info */);
+        switch(paraDir) {
+            case Layout.DIR_RIGHT_TO_LEFT:
+                return "<p dir=\"rtl\">";
+            case Layout.DIR_LEFT_TO_RIGHT:
+            default:
+                return "<p dir=\"ltr\">";
+        }
     }
 
     private static void withinBlockquote(StringBuilder out, Spanned text,
                                          int start, int end) {
-        out.append("<p>");
+        out.append(getOpenParaTagWithDirection(text, start, end));
 
         int next;
         for (int i = start; i < end; i = next) {
@@ -234,11 +302,32 @@ public class Html {
                     // Don't output the dummy character underlying the image.
                     i = next;
                 }
+                if (style[j] instanceof AbsoluteSizeSpan) {
+                    out.append("<font size =\"");
+                    out.append(((AbsoluteSizeSpan) style[j]).getSize() / 6);
+                    out.append("\">");
+                }
+                if (style[j] instanceof ForegroundColorSpan) {
+                    out.append("<font color =\"#");
+                    String color = Integer.toHexString(((ForegroundColorSpan)
+                            style[j]).getForegroundColor() + 0x01000000);
+                    while (color.length() < 6) {
+                        color = "0" + color;
+                    }
+                    out.append(color);
+                    out.append("\">");
+                }
             }
 
             withinStyle(out, text, i, next);
 
             for (int j = style.length - 1; j >= 0; j--) {
+                if (style[j] instanceof ForegroundColorSpan) {
+                    out.append("</font>");
+                }
+                if (style[j] instanceof AbsoluteSizeSpan) {
+                    out.append("</font>");
+                }
                 if (style[j] instanceof URLSpan) {
                     out.append("</a>");
                 }
@@ -274,7 +363,7 @@ public class Html {
             }
         }
 
-        String p = last ? "" : "</p>\n<p>";
+        String p = last ? "" : "</p>\n" + getOpenParaTagWithDirection(text, start, end);
 
         if (nl == 1) {
             out.append("<br>\n");
@@ -284,12 +373,11 @@ public class Html {
             for (int i = 2; i < nl; i++) {
                 out.append("<br>");
             }
-
             out.append(p);
         }
     }
 
-    private static void withinStyle(StringBuilder out, Spanned text,
+    private static void withinStyle(StringBuilder out, CharSequence text,
                                     int start, int end) {
         for (int i = start; i < end; i++) {
             char c = text.charAt(i);
@@ -300,8 +388,17 @@ public class Html {
                 out.append("&gt;");
             } else if (c == '&') {
                 out.append("&amp;");
+            } else if (c >= 0xD800 && c <= 0xDFFF) {
+                if (c < 0xDC00 && i + 1 < end) {
+                    char d = text.charAt(i + 1);
+                    if (d >= 0xDC00 && d <= 0xDFFF) {
+                        i++;
+                        int codepoint = 0x010000 | (int) c - 0xD800 << 10 | (int) d - 0xDC00;
+                        out.append("&#").append(codepoint).append(";");
+                    }
+                }
             } else if (c > 0x7E || c < ' ') {
-                out.append("&#" + ((int) c) + ";");
+                out.append("&#").append((int) c).append(";");
             } else if (c == ' ') {
                 while (i + 1 < end && text.charAt(i + 1) == ' ') {
                     out.append("&nbsp;");
@@ -383,11 +480,11 @@ class HtmlToSpannedConverter implements ContentHandler {
             handleP(mSpannableStringBuilder);
         } else if (tag.equalsIgnoreCase("div")) {
             handleP(mSpannableStringBuilder);
-        } else if (tag.equalsIgnoreCase("em")) {
+        } else if (tag.equalsIgnoreCase("strong")) {
             start(mSpannableStringBuilder, new Bold());
         } else if (tag.equalsIgnoreCase("b")) {
             start(mSpannableStringBuilder, new Bold());
-        } else if (tag.equalsIgnoreCase("strong")) {
+        } else if (tag.equalsIgnoreCase("em")) {
             start(mSpannableStringBuilder, new Italic());
         } else if (tag.equalsIgnoreCase("cite")) {
             start(mSpannableStringBuilder, new Italic());
@@ -433,11 +530,11 @@ class HtmlToSpannedConverter implements ContentHandler {
             handleP(mSpannableStringBuilder);
         } else if (tag.equalsIgnoreCase("div")) {
             handleP(mSpannableStringBuilder);
-        } else if (tag.equalsIgnoreCase("em")) {
+        } else if (tag.equalsIgnoreCase("strong")) {
             end(mSpannableStringBuilder, Bold.class, new StyleSpan(Typeface.BOLD));
         } else if (tag.equalsIgnoreCase("b")) {
             end(mSpannableStringBuilder, Bold.class, new StyleSpan(Typeface.BOLD));
-        } else if (tag.equalsIgnoreCase("strong")) {
+        } else if (tag.equalsIgnoreCase("em")) {
             end(mSpannableStringBuilder, Italic.class, new StyleSpan(Typeface.ITALIC));
         } else if (tag.equalsIgnoreCase("cite")) {
             end(mSpannableStringBuilder, Italic.class, new StyleSpan(Typeface.ITALIC));
@@ -526,8 +623,6 @@ class HtmlToSpannedConverter implements ContentHandler {
         if (where != len) {
             text.setSpan(repl, where, len, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
-
-        return;
     }
 
     private static void startImg(SpannableStringBuilder text,
@@ -571,53 +666,24 @@ class HtmlToSpannedConverter implements ContentHandler {
         if (where != len) {
             Font f = (Font) obj;
 
-            if (f.mColor != null) {
-                int c = -1;
-
-                if (f.mColor.equalsIgnoreCase("aqua")) {
-                    c = 0x00FFFF;
-                } else if (f.mColor.equalsIgnoreCase("black")) {
-                    c = 0x000000;
-                } else if (f.mColor.equalsIgnoreCase("blue")) {
-                    c = 0x0000FF;
-                } else if (f.mColor.equalsIgnoreCase("fuchsia")) {
-                    c = 0xFF00FF;
-                } else if (f.mColor.equalsIgnoreCase("green")) {
-                    c = 0x008000;
-                } else if (f.mColor.equalsIgnoreCase("grey")) {
-                    c = 0x808080;
-                } else if (f.mColor.equalsIgnoreCase("lime")) {
-                    c = 0x00FF00;
-                } else if (f.mColor.equalsIgnoreCase("maroon")) {
-                    c = 0x800000;
-                } else if (f.mColor.equalsIgnoreCase("navy")) {
-                    c = 0x000080;
-                } else if (f.mColor.equalsIgnoreCase("olive")) {
-                    c = 0x808000;
-                } else if (f.mColor.equalsIgnoreCase("purple")) {
-                    c = 0x800080;
-                } else if (f.mColor.equalsIgnoreCase("red")) {
-                    c = 0xFF0000;
-                } else if (f.mColor.equalsIgnoreCase("silver")) {
-                    c = 0xC0C0C0;
-                } else if (f.mColor.equalsIgnoreCase("teal")) {
-                    c = 0x008080;
-                } else if (f.mColor.equalsIgnoreCase("white")) {
-                    c = 0xFFFFFF;
-                } else if (f.mColor.equalsIgnoreCase("yellow")) {
-                    c = 0xFFFF00;
-                } else {
-                    try {
-                        c = XmlUtils.convertValueToInt(f.mColor, -1);
-                    } catch (NumberFormatException nfe) {
-                        // Can't understand the color, so just drop it.
+            if (!TextUtils.isEmpty(f.mColor)) {
+                if (f.mColor.startsWith("@")) {
+                    Resources res = Resources.getSystem();
+                    String name = f.mColor.substring(1);
+                    int colorRes = res.getIdentifier(name, "color", "android");
+                    if (colorRes != 0) {
+                        ColorStateList colors = res.getColorStateList(colorRes);
+                        text.setSpan(new TextAppearanceSpan(null, 0, 0, colors, null),
+                                where, len,
+                                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
                     }
-                }
-
-                if (c != -1) {
-                    text.setSpan(new ForegroundColorSpan(c | 0xFF000000),
-                                 where, len,
-                                 Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+                } else {
+                    int c = Color.getHtmlColor(f.mColor);
+                    if (c != -1) {
+                        text.setSpan(new ForegroundColorSpan(c | 0xFF000000),
+                                where, len,
+                                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    }
                 }
             }
 
@@ -700,7 +766,41 @@ class HtmlToSpannedConverter implements ContentHandler {
     }
 
     public void characters(char ch[], int start, int length) throws SAXException {
-        mSpannableStringBuilder.append(CharBuffer.wrap(ch, start, length));
+        StringBuilder sb = new StringBuilder();
+
+        /*
+         * Ignore whitespace that immediately follows other whitespace;
+         * newlines count as spaces.
+         */
+
+        for (int i = 0; i < length; i++) {
+            char c = ch[i + start];
+
+            if (c == ' ' || c == '\n') {
+                char pred;
+                int len = sb.length();
+
+                if (len == 0) {
+                    len = mSpannableStringBuilder.length();
+
+                    if (len == 0) {
+                        pred = '\n';
+                    } else {
+                        pred = mSpannableStringBuilder.charAt(len - 1);
+                    }
+                } else {
+                    pred = sb.charAt(len - 1);
+                }
+
+                if (pred != ' ' && pred != '\n') {
+                    sb.append(' ');
+                }
+            } else {
+                sb.append(c);
+            }
+        }
+
+        mSpannableStringBuilder.append(sb);
     }
 
     public void ignorableWhitespace(char ch[], int start, int length) throws SAXException {

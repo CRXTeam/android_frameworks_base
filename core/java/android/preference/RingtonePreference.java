@@ -24,15 +24,15 @@ import android.net.Uri;
 import android.provider.Settings.System;
 import android.text.TextUtils;
 import android.util.AttributeSet;
-import android.util.Log;
 
 /**
- * The {@link RingtonePreference} allows the user to choose one from all of the
- * available ringtones. The chosen ringtone's URI will be persisted as a string.
+ * A {@link Preference} that allows the user to choose a ringtone from those on the device. 
+ * The chosen ringtone's URI will be persisted as a string.
  * <p>
  * If the user chooses the "Default" item, the saved string will be one of
- * {@link System#DEFAULT_RINGTONE_URI} or
- * {@link System#DEFAULT_NOTIFICATION_URI}. If the user chooses the "Silent"
+ * {@link System#DEFAULT_RINGTONE_URI},
+ * {@link System#DEFAULT_NOTIFICATION_URI}, or
+ * {@link System#DEFAULT_ALARM_ALERT_URI}. If the user chooses the "Silent"
  * item, the saved string will be an empty string.
  * 
  * @attr ref android.R.styleable#RingtonePreference_ringtoneType
@@ -49,12 +49,13 @@ public class RingtonePreference extends Preference implements
     private boolean mShowSilent;
     
     private int mRequestCode;
+    private int mSubscriptionID = 0; /* Sub-1 by default */
 
-    public RingtonePreference(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
-        
-        TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.RingtonePreference, defStyle, 0);
+    public RingtonePreference(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.RingtonePreference, defStyleAttr, defStyleRes);
         mRingtoneType = a.getInt(com.android.internal.R.styleable.RingtonePreference_ringtoneType,
                 RingtoneManager.TYPE_RINGTONE);
         mShowDefault = a.getBoolean(com.android.internal.R.styleable.RingtonePreference_showDefault,
@@ -62,6 +63,10 @@ public class RingtonePreference extends Preference implements
         mShowSilent = a.getBoolean(com.android.internal.R.styleable.RingtonePreference_showSilent,
                 true);
         a.recycle();
+    }
+
+    public RingtonePreference(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
     }
 
     public RingtonePreference(Context context, AttributeSet attrs) {
@@ -90,6 +95,28 @@ public class RingtonePreference extends Preference implements
      */
     public void setRingtoneType(int type) {
         mRingtoneType = type;
+    }
+
+    /**
+     * Returns the subscription ID.
+     *
+     * @return The current subscription ID.
+     * @see #setSubId(int)
+     * @hide
+     */
+    public int getSubId() {
+        return mSubscriptionID;
+    }
+
+    /**
+     * Sets the subscription ID.
+     *
+     * @param subId subscription ID.
+     * @see #getSubId(int)
+     * @hide
+     */
+    public void setSubId(int subId) {
+        mSubscriptionID = subId;
     }
 
     /**
@@ -136,7 +163,12 @@ public class RingtonePreference extends Preference implements
         // Launch the ringtone picker
         Intent intent = new Intent(RingtoneManager.ACTION_RINGTONE_PICKER);
         onPrepareRingtonePickerIntent(intent);
-        getPreferenceManager().getActivity().startActivityForResult(intent, mRequestCode);
+        PreferenceFragment owningFragment = getPreferenceManager().getFragment();
+        if (owningFragment != null) {
+            owningFragment.startActivityForResult(intent, mRequestCode);
+        } else {
+            getPreferenceManager().getActivity().startActivityForResult(intent, mRequestCode);
+        }
     }
 
     /**
@@ -153,12 +185,18 @@ public class RingtonePreference extends Preference implements
         
         ringtonePickerIntent.putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, mShowDefault);
         if (mShowDefault) {
-            ringtonePickerIntent.putExtra(RingtoneManager.EXTRA_RINGTONE_DEFAULT_URI,
+            if (getRingtoneType() == RingtoneManager.TYPE_RINGTONE) {
+                ringtonePickerIntent.putExtra(RingtoneManager.EXTRA_RINGTONE_DEFAULT_URI,
+                    RingtoneManager.getDefaultRingtoneUriBySubId(getSubId()));
+            } else {
+                ringtonePickerIntent.putExtra(RingtoneManager.EXTRA_RINGTONE_DEFAULT_URI,
                     RingtoneManager.getDefaultUri(getRingtoneType()));
+            }
         }
 
         ringtonePickerIntent.putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, mShowSilent);
         ringtonePickerIntent.putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, mRingtoneType);
+        ringtonePickerIntent.putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, getTitle());
     }
     
     /**

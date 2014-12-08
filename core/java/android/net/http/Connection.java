@@ -21,7 +21,6 @@ import android.os.SystemClock;
 
 import java.io.IOException;
 import java.net.UnknownHostException;
-import java.util.ListIterator;
 import java.util.LinkedList;
 
 import javax.net.ssl.SSLHandshakeException;
@@ -94,7 +93,6 @@ abstract class Connection {
      */
     private static final String HTTP_CONNECTION = "http.connection";
 
-    RequestQueue.ConnectionManager mConnectionManager;
     RequestFeeder mRequestFeeder;
 
     /**
@@ -104,11 +102,9 @@ abstract class Connection {
     private byte[] mBuf;
 
     protected Connection(Context context, HttpHost host,
-                         RequestQueue.ConnectionManager connectionManager,
                          RequestFeeder requestFeeder) {
         mContext = context;
         mHost = host;
-        mConnectionManager = connectionManager;
         mRequestFeeder = requestFeeder;
 
         mCanPersist = false;
@@ -124,18 +120,15 @@ abstract class Connection {
      * necessary
      */
     static Connection getConnection(
-            Context context, HttpHost host,
-            RequestQueue.ConnectionManager connectionManager,
+            Context context, HttpHost host, HttpHost proxy,
             RequestFeeder requestFeeder) {
 
         if (host.getSchemeName().equals("http")) {
-            return new HttpConnection(context, host, connectionManager,
-                                      requestFeeder);
+            return new HttpConnection(context, host, requestFeeder);
         }
 
         // Otherwise, default to https
-        return new HttpsConnection(context, host, connectionManager,
-                                   requestFeeder);
+        return new HttpsConnection(context, host, proxy, requestFeeder);
     }
 
     /**
@@ -228,6 +221,12 @@ abstract class Connection {
                         }
                     }
 
+                    /* we have a connection, let the event handler
+                     * know of any associated certificate,
+                     * potentially none.
+                     */
+                    req.mEventHandler.certificate(mCertificate);
+
                     try {
                         /* FIXME: don't increment failure count if old
                            connection?  There should not be a penalty for
@@ -251,9 +250,7 @@ abstract class Connection {
                             pipe.addLast(req);
                         }
                         exception = null;
-                        state = (clearPipe(pipe) ||
-                                 !mConnectionManager.isNetworkConnected()) ?
-                                DONE : SEND;
+                        state = clearPipe(pipe) ? DONE : SEND;
                         minPipe = maxPipe = 1;
                         break;
                     }
@@ -314,9 +311,7 @@ abstract class Connection {
                         mHttpContext.removeAttribute(HTTP_CONNECTION);
                         clearPipe(pipe);
                         minPipe = maxPipe = 1;
-                        /* If network active continue to service this queue */
-                        state = mConnectionManager.isNetworkConnected() ?
-                                SEND : DONE;
+                        state = SEND;
                     }
                     break;
                 }
@@ -342,7 +337,7 @@ abstract class Connection {
                 mRequestFeeder.requeueRequest(tReq);
                 empty = false;
             }
-            if (empty) empty = mRequestFeeder.haveRequest(mHost);
+            if (empty) empty = !mRequestFeeder.haveRequest(mHost);
         }
         return empty;
     }
@@ -375,6 +370,11 @@ abstract class Connection {
             if (HttpLog.LOGV) HttpLog.v("Failed to open connection");
             error = EventHandler.ERROR_LOOKUP;
             exception = e;
+        } catch (IllegalArgumentException e) {
+            if (HttpLog.LOGV) HttpLog.v("Illegal argument exception");
+            error = EventHandler.ERROR_CONNECT;
+            req.mFailCount = RETRY_REQUEST_LIMIT;
+            exception = e;
         } catch (SSLConnectionClosedByUserException e) {
             // hack: if we have an SSL connection failure,
             // we don't want to reconnect
@@ -403,8 +403,7 @@ abstract class Connection {
         if (error == EventHandler.OK) {
             return true;
         } else {
-            if (mConnectionManager.isNetworkConnected() == false ||
-                req.mFailCount < RETRY_REQUEST_LIMIT) {
+            if (req.mFailCount < RETRY_REQUEST_LIMIT) {
                 // requeue
                 mRequestFeeder.requeueRequest(req);
                 req.mFailCount++;
@@ -427,19 +426,17 @@ abstract class Connection {
      */
     private boolean httpFailure(Request req, int errorId, Exception e) {
         boolean ret = true;
-        boolean networkConnected = mConnectionManager.isNetworkConnected();
 
         // e.printStackTrace();
         if (HttpLog.LOGV) HttpLog.v(
                 "httpFailure() ******* " + e + " count " + req.mFailCount +
-                " networkConnected " + networkConnected + " " + mHost + " " + req.getUri());
+                " " + mHost + " " + req.getUri());
 
-        if (networkConnected && ++req.mFailCount >= RETRY_REQUEST_LIMIT) {
+        if (++req.mFailCount >= RETRY_REQUEST_LIMIT) {
             ret = false;
             String error;
             if (errorId < 0) {
-                error = mContext.getText(
-                        EventHandler.errorStringResources[-errorId]).toString();
+                error = ErrorStrings.getString(errorId, mContext);
             } else {
                 Throwable cause = e.getCause();
                 error = cause != null ? cause.toString() : e.getMessage();

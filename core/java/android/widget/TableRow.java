@@ -22,8 +22,10 @@ import android.util.AttributeSet;
 import android.util.SparseIntArray;
 import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.ViewDebug;
+import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 
 /**
@@ -35,7 +37,7 @@ import android.view.ViewDebug;
  * <p>The children of a TableRow do not need to specify the
  * <code>layout_width</code> and <code>layout_height</code> attributes in the
  * XML file. TableRow always enforces those values to be respectively
- * {@link android.widget.TableLayout.LayoutParams#FILL_PARENT} and
+ * {@link android.widget.TableLayout.LayoutParams#MATCH_PARENT} and
  * {@link android.widget.TableLayout.LayoutParams#WRAP_CONTENT}.</p>
  *
  * <p>
@@ -118,7 +120,7 @@ public class TableRow extends LinearLayout {
     @Override
     protected void onLayout(boolean changed, int l, int t, int r, int b) {
         // enforce horizontal layout
-        layoutHorizontal();
+        layoutHorizontal(l, t, r, b);
     }
 
     /**
@@ -224,7 +226,9 @@ public class TableRow extends LinearLayout {
                 final int childWidth = child.getMeasuredWidth();
                 lp.mOffset[LayoutParams.LOCATION_NEXT] = columnWidth - childWidth;
 
-                switch (gravity & Gravity.HORIZONTAL_GRAVITY_MASK) {
+                final int layoutDirection = getLayoutDirection();
+                final int absoluteGravity = Gravity.getAbsoluteGravity(gravity, layoutDirection);
+                switch (absoluteGravity & Gravity.HORIZONTAL_GRAVITY_MASK) {
                     case Gravity.LEFT:
                         // don't offset on X axis
                         break;
@@ -299,7 +303,7 @@ public class TableRow extends LinearLayout {
                         case LayoutParams.WRAP_CONTENT:
                             spec = getChildMeasureSpec(widthMeasureSpec, 0, LayoutParams.WRAP_CONTENT);
                             break;
-                        case LayoutParams.FILL_PARENT:
+                        case LayoutParams.MATCH_PARENT:
                             spec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
                             break;
                         default:
@@ -351,7 +355,7 @@ public class TableRow extends LinearLayout {
 
     /**
      * Returns a set of layout parameters with a width of
-     * {@link android.view.ViewGroup.LayoutParams#FILL_PARENT},
+     * {@link android.view.ViewGroup.LayoutParams#MATCH_PARENT},
      * a height of {@link android.view.ViewGroup.LayoutParams#WRAP_CONTENT} and no spanning.
      */
     @Override
@@ -375,6 +379,18 @@ public class TableRow extends LinearLayout {
         return new LayoutParams(p);
     }
 
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(TableRow.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(TableRow.class.getName());
+    }
+
     /**
      * <p>Set of layout parameters used in table rows.</p>
      *
@@ -387,13 +403,13 @@ public class TableRow extends LinearLayout {
         /**
          * <p>The column index of the cell represented by the widget.</p>
          */
-        @ViewDebug.ExportedProperty
+        @ViewDebug.ExportedProperty(category = "layout")
         public int column;
 
         /**
          * <p>The number of columns the widgets spans over.</p>
          */
-        @ViewDebug.ExportedProperty
+        @ViewDebug.ExportedProperty(category = "layout")
         public int span;
 
         private static final int LOCATION = 0;
@@ -451,7 +467,7 @@ public class TableRow extends LinearLayout {
          * {@link android.view.ViewGroup.LayoutParams#WRAP_CONTENT}.</p>
          */
         public LayoutParams() {
-            super(FILL_PARENT, WRAP_CONTENT);
+            super(MATCH_PARENT, WRAP_CONTENT);
             column = -1;
             span = 1;
         }
@@ -459,7 +475,7 @@ public class TableRow extends LinearLayout {
         /**
          * <p>Puts the view in the specified column.</p>
          *
-         * <p>Sets the child width to {@link android.view.ViewGroup.LayoutParams#FILL_PARENT}
+         * <p>Sets the child width to {@link android.view.ViewGroup.LayoutParams#MATCH_PARENT}
          * and the child height to
          * {@link android.view.ViewGroup.LayoutParams#WRAP_CONTENT}.</p>
          *
@@ -490,7 +506,7 @@ public class TableRow extends LinearLayout {
             if (a.hasValue(widthAttr)) {
                 width = a.getLayoutDimension(widthAttr, "layout_width");
             } else {
-                width = FILL_PARENT;
+                width = MATCH_PARENT;
             }
 
             // We don't want to force users to specify a layout_height

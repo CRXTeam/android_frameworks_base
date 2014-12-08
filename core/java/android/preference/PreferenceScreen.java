@@ -22,19 +22,22 @@ import android.content.DialogInterface;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.text.TextUtils;
 import android.util.AttributeSet;
+import android.view.LayoutInflater;
 import android.view.View;
+import android.view.Window;
 import android.widget.Adapter;
 import android.widget.AdapterView;
 import android.widget.ListAdapter;
 import android.widget.ListView;
 
 /**
- * The {@link PreferenceScreen} class represents a top-level {@link Preference} that
- * is the root of a {@link Preference} hierarchy. A {@link PreferenceActivity}
+ * Represents a top-level {@link Preference} that
+ * is the root of a Preference hierarchy. A {@link PreferenceActivity}
  * points to an instance of this class to show the preferences. To instantiate
  * this class, use {@link PreferenceManager#createPreferenceScreen(Context)}.
- * <p>
+ * <ul>
  * This class can appear in two places:
  * <li> When a {@link PreferenceActivity} points to this, it is used as the root
  * and is not shown (only the contained preferences are shown).
@@ -45,24 +48,25 @@ import android.widget.ListView;
  * {@link Preference#getIntent()}). The children of this {@link PreferenceScreen}
  * are NOT shown in the screen that this {@link PreferenceScreen} is shown in.
  * Instead, a separate screen will be shown when this preference is clicked.
+ * </ul>
+ * <p>Here's an example XML layout of a PreferenceScreen:</p>
+ * <pre>
+&lt;PreferenceScreen
+        xmlns:android="http://schemas.android.com/apk/res/android"
+        android:key="first_preferencescreen"&gt;
+    &lt;CheckBoxPreference
+            android:key="wifi enabled"
+            android:title="WiFi" /&gt;
+    &lt;PreferenceScreen
+            android:key="second_preferencescreen"
+            android:title="WiFi settings"&gt;
+        &lt;CheckBoxPreference
+                android:key="prefer wifi"
+                android:title="Prefer WiFi" /&gt;
+        ... other preferences here ...
+    &lt;/PreferenceScreen&gt;
+&lt;/PreferenceScreen&gt; </pre>
  * <p>
- * <code>
- &lt;PreferenceScreen
-         xmlns:android="http://schemas.android.com/apk/res/android"
-         android:key="first_preferencescreen"&gt;
-     &lt;CheckBoxPreference
-             android:key="wifi enabled"
-             android:title="WiFi" /&gt;
-     &lt;PreferenceScreen
-             android:key="second_preferencescreen"
-             android:title="WiFi settings"&gt;
-         &lt;CheckBoxPreference
-                 android:key="prefer wifi"
-                 android:title="Prefer WiFi" /&gt;
-         ... other preferences here ...
-     &lt;/PreferenceScreen&gt;
- &lt;/PreferenceScreen&gt;
- * </code>
  * In this example, the "first_preferencescreen" will be used as the root of the
  * hierarchy and given to a {@link PreferenceActivity}. The first screen will
  * show preferences "WiFi" (which can be used to quickly enable/disable WiFi)
@@ -70,6 +74,13 @@ import android.widget.ListView;
  * clicked will show another screen of preferences such as "Prefer WiFi" (and
  * the other preferences that are children of the "second_preferencescreen" tag).
  * 
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For information about building a settings UI with Preferences,
+ * read the <a href="{@docRoot}guide/topics/ui/settings.html">Settings</a>
+ * guide.</p>
+ * </div>
+ *
  * @see PreferenceCategory
  */
 public final class PreferenceScreen extends PreferenceGroup implements AdapterView.OnItemClickListener,
@@ -78,6 +89,8 @@ public final class PreferenceScreen extends PreferenceGroup implements AdapterVi
     private ListAdapter mRootAdapter;
     
     private Dialog mDialog;
+
+    private ListView mListView;
     
     /**
      * Do NOT use this constructor, use {@link PreferenceManager#createPreferenceScreen(Context)}.
@@ -89,7 +102,8 @@ public final class PreferenceScreen extends PreferenceGroup implements AdapterVi
 
     /**
      * Returns an adapter that can be attached to a {@link PreferenceActivity}
-     * to show the preferences contained in this {@link PreferenceScreen}.
+     * or {@link PreferenceFragment} to show the preferences contained in this
+     * {@link PreferenceScreen}.
      * <p>
      * This {@link PreferenceScreen} will NOT appear in the returned adapter, instead
      * it appears in the hierarchy above this {@link PreferenceScreen}.
@@ -99,7 +113,6 @@ public final class PreferenceScreen extends PreferenceGroup implements AdapterVi
      * 
      * @return An adapter that provides the {@link Preference} contained in this
      *         {@link PreferenceScreen}.
-     * @see PreferenceGroupAdapter
      */
     public ListAdapter getRootAdapter() {
         if (mRootAdapter == null) {
@@ -135,7 +148,7 @@ public final class PreferenceScreen extends PreferenceGroup implements AdapterVi
     
     @Override
     protected void onClick() {
-        if (getIntent() != null || getPreferenceCount() == 0) {
+        if (getIntent() != null || getFragment() != null || getPreferenceCount() == 0) {
             return;
         }
         
@@ -144,16 +157,31 @@ public final class PreferenceScreen extends PreferenceGroup implements AdapterVi
     
     private void showDialog(Bundle state) {
         Context context = getContext();
-        ListView listView = new ListView(context);
-        bind(listView);
+        if (mListView != null) {
+            mListView.setAdapter(null);
+        }
 
-        Dialog dialog = mDialog = new Dialog(context, com.android.internal.R.style.Theme_NoTitleBar);
-        dialog.setContentView(listView);
+        LayoutInflater inflater = (LayoutInflater)
+                context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+        View childPrefScreen = inflater.inflate(
+                com.android.internal.R.layout.preference_list_fragment, null);
+        mListView = (ListView) childPrefScreen.findViewById(android.R.id.list);
+        bind(mListView);
+
+        // Set the title bar if title is available, else no title bar
+        final CharSequence title = getTitle();
+        Dialog dialog = mDialog = new Dialog(context, context.getThemeResId());
+        if (TextUtils.isEmpty(title)) {
+            dialog.getWindow().requestFeature(Window.FEATURE_NO_TITLE);
+        } else {
+            dialog.setTitle(title);
+        }
+        dialog.setContentView(childPrefScreen);
         dialog.setOnDismissListener(this);
         if (state != null) {
             dialog.onRestoreInstanceState(state);
         }
-        
+
         // Add the screen to the list of preferences screens opened as dialogs
         getPreferenceManager().addPreferencesScreen(dialog);
         
@@ -175,9 +203,13 @@ public final class PreferenceScreen extends PreferenceGroup implements AdapterVi
     }
 
     public void onItemClick(AdapterView parent, View view, int position, long id) {
+        // If the list has headers, subtract them from the index.
+        if (parent instanceof ListView) {
+            position -= ((ListView) parent).getHeaderViewsCount();
+        }
         Object item = getRootAdapter().getItem(position);
         if (!(item instanceof Preference)) return;
-        
+
         final Preference preference = (Preference) item; 
         preference.performClick(this);
     }

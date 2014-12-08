@@ -1,6 +1,7 @@
 #ifndef DEVICE_TOOLS_AIDL_H
 #define DEVICE_TOOLS_AIDL_H
 
+#include <string.h>
 #include <string>
 #include <vector>
 
@@ -20,7 +21,9 @@ struct Options
     vector<string> preprocessedFiles;
     string inputFileName;
     string outputFileName;
+    string outputBaseFolder;
     string depFileName;
+    bool autoDepFile;
 
     vector<string> filesToPreprocess;
 };

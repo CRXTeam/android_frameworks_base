@@ -19,27 +19,22 @@
  * System clock functions.
  */
 
+#include <sys/time.h>
+#include <limits.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <string.h>
+
 #include "JNIHelp.h"
 #include "jni.h"
 #include "android_runtime/AndroidRuntime.h"
 
-#include "utils/SystemClock.h"
-
 #include <sys/time.h>
 #include <time.h>
 
-namespace android {
+#include <utils/SystemClock.h>
 
-/*
- * native public static void setCurrentTimeMillis(long millis)
- *
- * Set the current time.  This only works when running as root.
- */
-static jboolean android_os_SystemClock_setCurrentTimeMillis(JNIEnv* env,
-    jobject clazz, jlong millis)
-{
-    return (setCurrentTimeMillis(millis) == 0);
-}
+namespace android {
 
 /*
  * native public static long uptimeMillis();
@@ -80,18 +75,63 @@ static jlong android_os_SystemClock_currentThreadTimeMillis(JNIEnv* env,
 }
 
 /*
+ * native public static long currentThreadTimeMicro();
+ */
+static jlong android_os_SystemClock_currentThreadTimeMicro(JNIEnv* env,
+        jobject clazz)
+{
+#if defined(HAVE_POSIX_CLOCKS)
+    struct timespec tm;
+
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tm);
+
+    return tm.tv_sec * 1000000LL + tm.tv_nsec / 1000;
+#else
+    struct timeval tv;
+
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000000LL + tv.tv_nsec / 1000;
+#endif
+}
+
+/*
+ * native public static long currentTimeMicro();
+ */
+static jlong android_os_SystemClock_currentTimeMicro(JNIEnv* env,
+        jobject clazz)
+{
+    struct timeval tv;
+
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000000LL + tv.tv_usec;
+}
+
+/*
+ * public static native long elapsedRealtimeNano();
+ */
+static jlong android_os_SystemClock_elapsedRealtimeNano(JNIEnv* env,
+        jobject clazz)
+{
+    return (jlong)elapsedRealtimeNano();
+}
+
+/*
  * JNI registration.
  */
 static JNINativeMethod gMethods[] = {
     /* name, signature, funcPtr */
-    { "setCurrentTimeMillis",      "(J)Z",
-            (void*) android_os_SystemClock_setCurrentTimeMillis },
     { "uptimeMillis",      "()J",
             (void*) android_os_SystemClock_uptimeMillis },
     { "elapsedRealtime",      "()J",
             (void*) android_os_SystemClock_elapsedRealtime },
     { "currentThreadTimeMillis",      "()J",
             (void*) android_os_SystemClock_currentThreadTimeMillis },
+    { "currentThreadTimeMicro",       "()J",
+            (void*) android_os_SystemClock_currentThreadTimeMicro },
+    { "currentTimeMicro",             "()J",
+            (void*) android_os_SystemClock_currentTimeMicro },
+    { "elapsedRealtimeNanos",      "()J",
+            (void*) android_os_SystemClock_elapsedRealtimeNano },
 };
 int register_android_os_SystemClock(JNIEnv* env)
 {

@@ -16,15 +16,15 @@
 
 package android.text.style;
 
-import android.graphics.Paint;
 import android.text.TextPaint;
 
 /**
  * The classes that affect character-level text formatting extend this
- * class.  Most also extend {@link MetricAffectingSpan}.
+ * class.  Most extend its subclass {@link MetricAffectingSpan}, but simple
+ * ones may just implement {@link UpdateAppearance}.
  */
 public abstract class CharacterStyle {
-	public abstract void updateDrawState(TextPaint tp);
+    public abstract void updateDrawState(TextPaint tp);
 
     /**
      * A given CharacterStyle can only applied to a single region of a given

@@ -49,10 +49,6 @@ public abstract class LoginFilter implements InputFilter {
      */
     public CharSequence filter(CharSequence source, int start, int end,
             Spanned dest, int dstart, int dend) {
-        char[] out = new char[end - start]; // reserve enough space for whole string
-        int outidx = 0;
-        boolean changed = false;
-        
         onStart();
         
         // Scan through beginning characters in dest, calling onInvalidCharacter() 
@@ -63,14 +59,26 @@ public abstract class LoginFilter implements InputFilter {
         }
 
         // Scan through changed characters rejecting disallowed chars
+        SpannableStringBuilder modification = null;
+        int modoff = 0;
+
         for (int i = start; i < end; i++) {
             char c = source.charAt(i);
             if (isAllowed(c)) {
-                // Character allowed. Add it to the sequence.
-                out[outidx++] = c;
+                // Character allowed.
+                modoff++;
             } else {
-                if (mAppendInvalid) out[outidx++] = c;
-                else changed = true; // we changed the original string
+                if (mAppendInvalid) {
+                    modoff++;
+                } else {
+                    if (modification == null) {
+                        modification = new SpannableStringBuilder(source, start, end);
+                        modoff = i - start;
+                    }
+
+                    modification.delete(modoff, modoff + 1);
+                }
+
                 onInvalidCharacter(c);
             }
         }
@@ -83,8 +91,10 @@ public abstract class LoginFilter implements InputFilter {
         }
         
         onStop();
-        
-        return changed ? new String(out, 0, outidx) : null;
+
+        // Either returns null if we made no changes,
+        // or what we wanted to change it to if there were changes.
+        return modification;
     }
     
     /**
@@ -148,11 +158,11 @@ public abstract class LoginFilter implements InputFilter {
 
     /**
      * This filter rejects characters in the user name that are not compatible with Google login.
-     * It is slightly less restrictive than the above filter in that it allows [a-zA-Z0-9._-]. 
+     * It is slightly less restrictive than the above filter in that it allows [a-zA-Z0-9._-+]. 
      * 
      */
     public static class UsernameFilterGeneric extends LoginFilter {
-        private static final String mAllowed = "@_-."; // Additional characters
+        private static final String mAllowed = "@_-+."; // Additional characters
         
         public UsernameFilterGeneric() {
             super(false);
