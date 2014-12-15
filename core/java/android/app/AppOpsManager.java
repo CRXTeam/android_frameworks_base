@@ -247,7 +247,11 @@ public class AppOpsManager {
     /** @hide */
     public static final int OP_DATA_CONNECT_CHANGE = 59;
     /** @hide */
-    public static final int _NUM_OP = 60;
+    public static final int OP_ALARM_WAKEUP = 60;
+    /** @hide */
+    public static final int OP_SU = 61;
+    /** @hide */
+    public static final int _NUM_OP = 62;
 
     /** Access to coarse location information. */
     public static final String OPSTR_COARSE_LOCATION =
@@ -376,6 +380,10 @@ public class AppOpsManager {
             "android:delete_call_log";
     private static final String OPSTR_DATA_CONNECT_CHANGE =
             "android:data_connect_change";
+    private static final String OPSTR_ALARM_WAKEUP =
+            "android:alarm_wakeup";
+    private static final String OPSTR_SU =
+            "android:su";
 
     /**
      * This maps each operation to the operation that serves as the
@@ -446,6 +454,8 @@ public class AppOpsManager {
             OP_DELETE_CONTACTS,
             OP_DELETE_CALL_LOG,
             OP_DATA_CONNECT_CHANGE,
+            OP_ALARM_WAKEUP,
+            OP_SU
     };
 
     /**
@@ -513,6 +523,8 @@ public class AppOpsManager {
             null,
             null,
             null,
+            null,
+            OPSTR_SU,
     };
 
     /**
@@ -580,6 +592,8 @@ public class AppOpsManager {
         OPSTR_DELETE_CONTACTS,
         OPSTR_DELETE_CALL_LOG,
         OPSTR_DATA_CONNECT_CHANGE,
+        OPSTR_ALARM_WAKEUP,
+        OPSTR_SU,
     };
 
     /**
@@ -647,6 +661,8 @@ public class AppOpsManager {
             "DELETE_CONTACTS",
             "DELETE_CALL_LOG",
             "DATA_CONNECT_CHANGE",
+            "ALARM_WAKEUP",
+            "SU",
     };
 
     /**
@@ -714,6 +730,8 @@ public class AppOpsManager {
             android.Manifest.permission.WRITE_CONTACTS,
             android.Manifest.permission.WRITE_CALL_LOG,
             android.Manifest.permission.MODIFY_PHONE_STATE,
+            null, // OP_ALARM_WAKEUP
+            null,
     };
 
     /**
@@ -782,6 +800,8 @@ public class AppOpsManager {
             null, //DELETE_CONTACTS
             null, //DELETE_CALL_LOG
             null, //DATA_CONNECT_CHANGE
+            null, //ALARM_WAKEUP
+            UserManager.DISALLOW_SU, //SU TODO: this should really be investigated.
     };
 
     /**
@@ -849,6 +869,8 @@ public class AppOpsManager {
             false, //DELETE_CONTACTS
             false, //DELETE_CALL_LOG
             false, //DATA_CONNECT_CHANGE
+            true, //ALARM_WAKEUP
+            false, //SU
     };
 
     /**
@@ -915,6 +937,8 @@ public class AppOpsManager {
             AppOpsManager.MODE_ALLOWED,
             AppOpsManager.MODE_ALLOWED,
             AppOpsManager.MODE_ALLOWED,
+            AppOpsManager.MODE_ALLOWED, // OP_ALARM_WAKEUP
+            AppOpsManager.MODE_ASK, // OP_SU
     };
 
     /**
@@ -982,6 +1006,8 @@ public class AppOpsManager {
             AppOpsManager.MODE_ASK,     // OP_DELETE_CONTACTS
             AppOpsManager.MODE_ASK,     // OP_DELETE_CALL_LOG
             AppOpsManager.MODE_ASK,     // OP_DATA_CONNECT_CHANGE
+            AppOpsManager.MODE_ALLOWED, // OP_ALARM_WAKEUP
+            AppOpsManager.MODE_ASK,     // OP_SU
     };
 
     /**
@@ -1048,6 +1074,8 @@ public class AppOpsManager {
         true,     // OP_DELETE_CONTACTS
         true,     // OP_DELETE_CALL_LOG
         true,     // OP_DATA_CONNECT_CHANGE
+        false,    // OP_ALARM_WAKEUP
+        true,     // OP_SU
     };
 
     /**
@@ -1118,6 +1146,8 @@ public class AppOpsManager {
             false,     // OP_DELETE_CONTACTS
             false,     // OP_DELETE_CALL_LOG
             false,     // OP_DATA_CONNECT_CHANGE
+            false,     // OP_ALARM_WAKEUP
+            false,     // OP_SU
     };
 
     private static HashMap<String, Integer> sOpStrToOp = new HashMap<String, Integer>();
