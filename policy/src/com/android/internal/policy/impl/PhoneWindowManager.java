@@ -1431,8 +1431,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         int shortSizeDp = shortSize * DisplayMetrics.DENSITY_DEFAULT / density;
         int longSizeDp = longSize * DisplayMetrics.DENSITY_DEFAULT / density;
 
-        // Allow the navigation bar to move on small devices (phones).
-        mNavigationBarCanMove = shortSizeDp < 600;
+        // Allow the navigation bar to move on non-square small devices (phones).
+        mNavigationBarCanMove = width != height && shortSizeDp < 600;
 
         mHasNavigationBar = res.getBoolean(com.android.internal.R.bool.config_showNavigationBar);
         // Allow a system property to override this. Used by the emulator.
@@ -2348,9 +2348,12 @@ public class PhoneWindowManager implements WindowManagerPolicy {
 
 
     @Override
-    public Animation createForceHideWallpaperExitAnimation(boolean goingToNotificationShade) {
+    public Animation createForceHideWallpaperExitAnimation(boolean goingToNotificationShade,
+            boolean keyguardShowingMedia) {
         if (goingToNotificationShade) {
             return null;
+        } else if (keyguardShowingMedia) {
+            return AnimationUtils.loadAnimation(mContext, R.anim.lock_screen_wallpaper_exit_noop);
         } else {
             return AnimationUtils.loadAnimation(mContext, R.anim.lock_screen_wallpaper_exit);
         }
@@ -5783,6 +5786,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     /** {@inheritDoc} */
     @Override
     public void showBootMessage(final CharSequence msg, final boolean always) {
+        final int titleRes = mContext.getResources().getString(
+                    com.android.internal.R.string.android_installing_apk).equals(msg) ?
+                      R.string.android_installing_title :
+                      R.string.android_upgrading_title;
+
         mHandler.post(new Runnable() {
             @Override public void run() {
                 if (mBootMsgDialog == null) {
@@ -5820,7 +5828,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                             return true;
                         }
                     };
-                    mBootMsgDialog.setTitle(R.string.android_upgrading_title);
+                    mBootMsgDialog.setTitle(titleRes);
                     mBootMsgDialog.setProgressStyle(ProgressDialog.STYLE_SPINNER);
                     mBootMsgDialog.setIndeterminate(true);
                     mBootMsgDialog.getWindow().setType(
