@@ -20,6 +20,10 @@ import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.content.ContentUris;
 import android.content.Context;
+import android.database.ContentObserver;
+import android.net.Uri;
+import android.os.Handler;
+import android.provider.Settings;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.content.res.Resources;
@@ -125,9 +129,49 @@ public class StatusBarHeaderView extends RelativeLayout implements View.OnClickL
 
     private float mCurrentT;
     private boolean mShowingDetail;
+    private boolean mShowBatteryText;
+    private boolean mShowBatteryTextExpanded;
+
+    private ContentObserver mObserverBattery = new ContentObserver(new Handler()) {
+        public void onChange(boolean selfChange, Uri uri) {
+            loadShowBatteryTextSetting();
+            updateVisibilities();
+            requestCaptureValues();
+        }
+    };
 
     public StatusBarHeaderView(Context context, AttributeSet attrs) {
         super(context, attrs);
+        loadShowBatteryTextSetting();
+    }
+
+    private void loadShowBatteryTextSetting() {
+        int batteryText = Settings.System.getInt(getContext().getContentResolver(),
+                Settings.System.STATUS_BAR_SHOW_BATTERY_PERCENT, 0);
+
+        int batteryStyle = Settings.System.getInt(getContext().getContentResolver(),
+                Settings.System.STATUS_BAR_BATTERY_STYLE, 0);
+
+        switch (batteryStyle) {
+            case 4:
+                //meterMode = BatteryMeterMode.BATTERY_METER_GONE;
+                mShowBatteryText = false;
+                mShowBatteryTextExpanded = true;
+                break;
+
+            case 6:
+                //meterMode = BatteryMeterMode.BATTERY_METER_TEXT;
+                mShowBatteryText = true;
+                mShowBatteryTextExpanded = true;
+                break;
+
+            default:
+                mShowBatteryText = (batteryText == 2);
+                // Only show when percent is not already shown inside icon
+                mShowBatteryTextExpanded = (batteryText != 1);
+                break;
+        }
+
     }
 
     @Override
@@ -345,7 +389,10 @@ public class StatusBarHeaderView extends RelativeLayout implements View.OnClickL
             updateSignalClusterDetachment();
         }
         mEmergencyCallsOnly.setVisibility(mExpanded && mShowEmergencyCallsOnly ? VISIBLE : GONE);
-        mBatteryLevel.setVisibility(mExpanded ? View.VISIBLE : View.GONE);
+        loadShowBatteryTextSetting();
+        mBatteryLevel.setVisibility(
+                mExpanded ? (mShowBatteryTextExpanded ? View.VISIBLE : View.GONE)
+                          : (mShowBatteryText         ? View.VISIBLE : View.GONE));
     }
 
     private void updateSignalClusterDetachment() {
@@ -842,4 +889,19 @@ public class StatusBarHeaderView extends RelativeLayout implements View.OnClickL
                     .start();
         }
     };
+
+    @Override
+    public void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        getContext().getContentResolver().registerContentObserver(Settings.System.getUriFor(
+                "status_bar_battery_style"), false, mObserverBattery);
+        getContext().getContentResolver().registerContentObserver(Settings.System.getUriFor(
+                "status_bar_show_battery_percent"), false, mObserverBattery);
+    }
+
+    @Override
+    public void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        getContext().getContentResolver().unregisterContentObserver(mObserverBattery);
+    }
 }
