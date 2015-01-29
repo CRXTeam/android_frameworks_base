@@ -83,6 +83,8 @@ interface IWifiManager
 
     boolean isDualBandSupported();
 
+    boolean isIbssSupported();
+
     boolean saveConfiguration();
 
     DhcpInfo getDhcpInfo();
@@ -140,8 +142,6 @@ interface IWifiManager
     String getWpsNfcConfigurationToken(int netId);
 
     void enableVerboseLogging(int verbose);
-
-    void enableRssiThreshold(int enabled);
 
     int getVerboseLoggingLevel();
 

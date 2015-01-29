@@ -110,6 +110,7 @@ public final class Call {
         private final int mVideoState;
         private final StatusHints mStatusHints;
         private final Bundle mExtras;
+        private final int mCallSubstate;
 
         /**
          * @return The handle (e.g., phone number) to which the {@code Call} is currently
@@ -212,6 +213,13 @@ public final class Call {
             return mExtras;
         }
 
+        /**
+         * @return The substate of the {@code Call}.
+         */
+        public int getCallSubstate() {
+            return mCallSubstate;
+        }
+
         @Override
         public boolean equals(Object o) {
             if (o instanceof Details) {
@@ -230,7 +238,8 @@ public final class Call {
                         Objects.equals(mGatewayInfo, d.mGatewayInfo) &&
                         Objects.equals(mVideoState, d.mVideoState) &&
                         Objects.equals(mStatusHints, d.mStatusHints) &&
-                        Objects.equals(mExtras, d.mExtras);
+                        Objects.equals(mExtras, d.mExtras) &&
+                        Objects.equals(mCallSubstate, d.mCallSubstate);
             }
             return false;
         }
@@ -250,7 +259,8 @@ public final class Call {
                     Objects.hashCode(mGatewayInfo) +
                     Objects.hashCode(mVideoState) +
                     Objects.hashCode(mStatusHints) +
-                    Objects.hashCode(mExtras);
+                    Objects.hashCode(mExtras) +
+                    Objects.hashCode(mCallSubstate);
         }
 
         /** {@hide} */
@@ -267,7 +277,8 @@ public final class Call {
                 GatewayInfo gatewayInfo,
                 int videoState,
                 StatusHints statusHints,
-                Bundle extras) {
+                Bundle extras,
+                int callSubstate) {
             mHandle = handle;
             mHandlePresentation = handlePresentation;
             mCallerDisplayName = callerDisplayName;
@@ -281,6 +292,7 @@ public final class Call {
             mVideoState = videoState;
             mStatusHints = statusHints;
             mExtras = extras;
+            mCallSubstate = callSubstate;
         }
     }
 
@@ -387,8 +399,6 @@ public final class Call {
     private String mRemainingPostDialSequence;
     private InCallService.VideoCall mVideoCall;
     private Details mDetails;
-    private int mNotificationType;
-    private int mNotificationCode;
 
     /** {@hide} */
     public boolean mIsActiveSub = false;
@@ -401,16 +411,6 @@ public final class Call {
      */
     public String getRemainingPostDialSequence() {
         return mRemainingPostDialSequence;
-    }
-
-    /** @hide */
-    public int getNotificationType() {
-        return mNotificationType;
-    }
-
-    /** @hide */
-    public int getNotificationCode() {
-        return mNotificationCode;
     }
 
     /**
@@ -686,14 +686,12 @@ public final class Call {
                 parcelableCall.getGatewayInfo(),
                 parcelableCall.getVideoState(),
                 parcelableCall.getStatusHints(),
-                parcelableCall.getExtras());
+                parcelableCall.getExtras(),
+                parcelableCall.getCallSubstate());
         boolean detailsChanged = !Objects.equals(mDetails, details);
         if (detailsChanged) {
             mDetails = details;
         }
-
-        mNotificationType = parcelableCall.getNotificationType();
-        mNotificationCode = parcelableCall.getNotificationCode();
 
         boolean cannedTextResponsesChanged = false;
         if (mCannedTextResponses == null && parcelableCall.getCannedSmsResponses() != null

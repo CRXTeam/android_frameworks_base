@@ -39,7 +39,6 @@ import com.android.internal.telephony.ITelephony;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.IccCardConstants;
 
-
 /**
  * Displays a PIN pad for unlocking.
  */
@@ -158,6 +157,10 @@ public class KeyguardSimPinView extends KeyguardPinBasedInputView {
         if (mEcaView instanceof EmergencyCarrierArea) {
             ((EmergencyCarrierArea) mEcaView).setCarrierTextVisible(true);
         }
+
+        mPasswordEntry.setQuickUnlockListener(null);
+
+        setButtonVisibility(getOkButton(), true /* visible */);
     }
 
     @Override
@@ -389,6 +392,11 @@ public class KeyguardSimPinView extends KeyguardPinBasedInputView {
                     mRemainingAttempts, true), true);
             return;
         }
+    }
+
+    @Override
+    protected void validateQuickUnlock(String entry) {
+        // disabled.
     }
 }
 

@@ -1931,6 +1931,13 @@ public final class Settings {
             "bluetooth_discoverability";
 
         /**
+         * If all file types can be accepted over Bluetooth OBEX.
+         * @hide
+         */
+        public static final String BLUETOOTH_ACCEPT_ALL_FILES =
+            "bluetooth_accept_all_files";
+
+        /**
          * Bluetooth discoverability timeout.  If this value is nonzero, then
          * Bluetooth becomes discoverable for a certain number of seconds,
          * after which is becomes simply connectable.  The value is in seconds.
@@ -2533,6 +2540,13 @@ public final class Settings {
         public static final String HAPTIC_FEEDBACK_ENABLED = "haptic_feedback_enabled";
 
         /**
+         * Whether the volume slider adjust sound is enabled. The value is
+         * boolean (1 or 0).
+         * @hide
+         */
+        public static final String VOLUME_ADJUST_SOUND_ENABLED = "volume_adjust_sound_enabled";
+
+        /**
          * @deprecated Each application that shows web suggestions should have its own
          * setting for this.
          */
@@ -2799,6 +2813,59 @@ public final class Settings {
         public static final String EGG_MODE = "egg_mode";
 
         /**
+         * Whether to automatically unlock keyguard when correct PIN or Password
+         * is entered (Default 0, OFF)
+         *
+         * NOTE: Applies and is available in settings for PIN, SIM PIN
+         *       and Password lockscreen cases.
+         *
+         * @hide
+         */
+        public static final String QUICK_UNLOCK_ENABLED = "quick_unlock_enabled";
+
+        /**
+         * Locale for secondary overlay on dialer for t9 search input
+         * @hide
+         */
+        public static final String T9_SEARCH_INPUT_LOCALE = "t9_search_input_locale";
+
+        /**
+         * Whether the user has enabled headsup (Default 1)
+         * HeadsUp is enabled by default within its Settings.Global.HEADS_UP_NOTIFICATIONS_ENABLED
+         * setting. Avoid changing low level implementations and use a System setting to
+         * override per-user heads up on/off preference.
+         *
+         * Enable headsup = 1 (on by default)
+         * Disable headsup = 0
+         *
+         * @see com.android.systemui.statusbar.BaseStatusBar#addNotification
+         * @hide
+         */
+        public static final String HEADS_UP_USER_ENABLED =
+                "heads_up_user_enabled";
+
+        /** @hide */ public static final int HEADS_UP_USER_OFF = 0;
+        /** @hide */ public static final int HEADS_UP_USER_ON = 1;
+
+        /**
+         * Whether we want to filter in non-noisy ticker equipped notifications (Default 0)
+         * Applies to those that doesn't generate noise but are rich
+         * notifications.
+         *
+         * NOTE: This is an experimental setting, since it brokes some
+         *       notifications as for group ones. Will store this is
+         *       DevelopmentSettings, default is disabled.
+         *
+         * @see com.android.systemui.statusbar.phone.PhoneStatusBar#mHeadsUpTicker
+         * @hide
+         */
+        public static final String HEADS_UP_TICKER_ENABLED =
+                "heads_up_ticker_enabled";
+
+        /** @hide */ public static final int HEADS_UP_TICKER_OFF = 0;
+        /** @hide */ public static final int HEADS_UP_TICKER_ON = 1;
+
+        /**
          * Settings to backup. This is here so that it's in the same place as the settings
          * keys and easy to update.
          *
@@ -2818,6 +2885,7 @@ public final class Settings {
             WIFI_STATIC_DNS2,
             BLUETOOTH_DISCOVERABILITY,
             BLUETOOTH_DISCOVERABILITY_TIMEOUT,
+            BLUETOOTH_ACCEPT_ALL_FILES,
             DIM_SCREEN,
             SCREEN_OFF_TIMEOUT,
             SCREEN_BRIGHTNESS,
@@ -2853,6 +2921,7 @@ public final class Settings {
             TTY_MODE,
             SOUND_EFFECTS_ENABLED,
             HAPTIC_FEEDBACK_ENABLED,
+            VOLUME_ADJUST_SOUND_ENABLED,
             POWER_SOUNDS_ENABLED,       // moved to global
             DOCK_SOUNDS_ENABLED,        // moved to global
             LOCKSCREEN_SOUNDS_ENABLED,
@@ -2874,6 +2943,7 @@ public final class Settings {
         public static final String[] CLONE_TO_MANAGED_PROFILE = {
             DATE_FORMAT,
             HAPTIC_FEEDBACK_ENABLED,
+            VOLUME_ADJUST_SOUND_ENABLED,
             SOUND_EFFECTS_ENABLED,
             TEXT_SHOW_PASSWORD,
             TIME_12_24
@@ -2886,6 +2956,14 @@ public final class Settings {
          * @hide
          */
         public static final String WHEN_TO_MAKE_WIFI_CALLS = "when_to_make_wifi_calls";
+
+        /**
+         * Settings to reset on user choice. They will fall back to their default value (0).
+         *
+         * @hide
+         */
+        public static final String[] SETTINGS_TO_RESET = {
+        };
 
         // Settings moved to Settings.Secure
 
@@ -4994,6 +5072,41 @@ public final class Settings {
         public static final String SLEEP_TIMEOUT = "sleep_timeout";
 
         /**
+         * Whether to include options in power menu for rebooting into recovery and bootloader
+         * @hide
+         */
+        public static final String ADVANCED_REBOOT = "advanced_reboot";
+
+        /**
+         * Default theme to use.  If empty, use holo.
+         * @hide
+         */
+        public static final String DEFAULT_THEME_PACKAGE = "default_theme_package";
+
+        /**
+         * A '|' delimited list of theme components to apply from the default theme on first boot.
+         * Components can be one or more of the "mods_XXXXXXX" found in
+         * {@link ThemesContract$ThemesColumns}.  Leaving this field blank assumes all components
+         * will be applied.
+         *
+         * ex: mods_icons|mods_overlays|mods_homescreen
+         *
+         * @hide
+         */
+        public static final String DEFAULT_THEME_COMPONENTS = "default_theme_components";
+
+        /**
+         * This will be set to the system's current theme API version when ThemeService starts.
+         * It is useful for when an upgrade from one version of CM to another occurs.
+         * For example, after a user upgrades from CM11 to CM12, the value of this field
+         * might be 19. ThemeService would then change the value to 21. This is useful
+         * when an API change breaks a theme. Themeservice can identify old themes and
+         * unapply them from the system.
+         * @hide
+         */
+        public static final String THEME_PREV_BOOT_API_LEVEL = "theme_prev_boot_api_level";
+
+        /**
          * This are the settings to be backed up.
          *
          * NOTE: Settings are backed up and restored in the order they appear
@@ -5043,7 +5156,8 @@ public final class Settings {
             MOUNT_UMS_PROMPT,
             MOUNT_UMS_NOTIFY_ENABLED,
             UI_NIGHT_MODE,
-            SLEEP_TIMEOUT
+            SLEEP_TIMEOUT,
+            ADVANCED_REBOOT
         };
 
         /**
@@ -5704,6 +5818,13 @@ public final class Settings {
        public static final String PACKAGE_VERIFIER_INCLUDE_ADB = "verifier_verify_adb_installs";
 
        /**
+        * Time since last fstrim (milliseconds) after which we force one to happen
+        * during device startup.  If unset, the default is 3 days.
+        * @hide
+        */
+       public static final String FSTRIM_MANDATORY_INTERVAL = "fstrim_mandatory_interval";
+
+       /**
         * The interval in milliseconds at which to check packet counts on the
         * mobile data interface when screen is on, to detect possible data
         * connection problems.
@@ -5965,13 +6086,6 @@ public final class Settings {
         */
        public static final String WIFI_SCAN_ALWAYS_AVAILABLE =
                 "wifi_scan_always_enabled";
-
-       /**
-        * Setting to allow enable or disable rssi threshold.
-        * @hide
-        */
-       public static final String WIFI_RSSI_THRESHOLD =
-                "wifi_rssi_threshold";
 
        /**
         * Used to save the Wifi_ON state prior to tethering.

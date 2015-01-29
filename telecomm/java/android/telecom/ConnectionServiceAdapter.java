@@ -17,6 +17,7 @@
 package android.telecom;
 
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.IBinder.DeathRecipient;
 import android.os.RemoteException;
 
@@ -103,6 +104,21 @@ final class ConnectionServiceAdapter implements DeathRecipient {
     }
 
     /**
+     * Sets a call's extras.
+     *
+     * @param extras The extras.
+     * @param callId The call.
+     */
+    void setExtras(String callId, Bundle extras) {
+        for (IConnectionServiceAdapter adapter : mAdapters) {
+            try {
+                adapter.setExtras(callId, extras);
+            } catch (RemoteException e) {
+            }
+        }
+    }
+
+    /**
      * Sets a call's state to ringing (e.g., an inbound ringing call).
      *
      * @param callId The unique ID of the call whose state is changing to ringing.
@@ -146,27 +162,6 @@ final class ConnectionServiceAdapter implements DeathRecipient {
         }
     }
 
-     /**
-     * Sets a call's state to disconnected.
-     *
-     * @param callId The unique ID of the call whose state is changing to disconnected.
-     * @param disconnectCause The reason for the disconnection, any of
-     *            {@link android.telephony.DisconnectCause}.
-     * @param disconnectMessage Optional call-service-provided message about the disconnect.
-     * @param type Supplementary service notification type
-     * @param code Supplementary service notification code
-     */
-    void setDisconnectedWithSsNotification(String callId, int disconnectCause,
-            String disconnectMessage, int type, int code) {
-        for (IConnectionServiceAdapter adapter : mAdapters) {
-            try {
-                adapter.setDisconnectedWithSsNotification(callId, disconnectCause,
-                        disconnectMessage, type, code);
-            } catch (RemoteException e) {
-            }
-        }
-    }
-
     /**
      * Sets a call's state to be on hold.
      *
@@ -200,6 +195,15 @@ final class ConnectionServiceAdapter implements DeathRecipient {
         for (IConnectionServiceAdapter adapter : mAdapters) {
             try {
                 adapter.setCallCapabilities(callId, capabilities);
+            } catch (RemoteException ignored) {
+            }
+        }
+    }
+
+    void setCallProperties(String callId, int properties) {
+        for (IConnectionServiceAdapter adapter : mAdapters) {
+            try {
+                adapter.setCallProperties(callId, properties);
             } catch (RemoteException ignored) {
             }
         }
@@ -371,6 +375,44 @@ final class ConnectionServiceAdapter implements DeathRecipient {
         for (IConnectionServiceAdapter adapter : mAdapters) {
             try {
                 adapter.setPhoneAccountHandle(callId, pHandle);
+            } catch (RemoteException ignored) {
+            }
+        }
+    }
+
+    /**
+     * Set the call substate for the connection.
+     * Valid values: {@link Connection#CALL_SUBSTATE_NONE},
+     * {@link Connection#CALL_SUBSTATE_AUDIO_CONNECTED_SUSPENDED},
+     * {@link Connection#CALL_SUBSTATE_VIDEO_CONNECTED_SUSPENDED},
+     * {@link Connection#CALL_SUBSTATE_AVP_RETRY},
+     * {@link Connection#CALL_SUBSTATE_MEDIA_PAUSED}.
+     *
+     * @param callId The unique ID of the call to set the substate for.
+     * @param callSubstate The new call substate.
+     * @hide
+     */
+    public final void setCallSubstate(String callId, int callSubstate) {
+        Log.v(this, "setCallSubstate: %d", callSubstate);
+        for (IConnectionServiceAdapter adapter : mAdapters) {
+            try {
+                adapter.setCallSubstate(callId, callSubstate);
+            } catch (RemoteException ignored) {
+            }
+        }
+    }
+
+    /**
+     * Informs telecom of an existing connection which was added by the {@link ConnectionService}.
+     *
+     * @param callId The unique ID of the call being added.
+     * @param connection The connection.
+     */
+    void addExistingConnection(String callId, ParcelableConnection connection) {
+        Log.v(this, "addExistingConnection: %s", callId);
+        for (IConnectionServiceAdapter adapter : mAdapters) {
+            try {
+                adapter.addExistingConnection(callId, connection);
             } catch (RemoteException ignored) {
             }
         }
