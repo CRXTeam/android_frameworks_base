@@ -21,5 +21,4 @@
     <string name="perf_profile_pwrsv">Power save</string>
     <string name="perf_profile_bal">Balanced</string>
     <string name="perf_profile_perf">Performance</string>
-
 </resources>
