@@ -585,7 +585,7 @@ public class QSPanel extends ViewGroup {
 
         @Override
         public void onAnimationEnd(Animator animation) {
-            setGridContentVisibility(false);
+            setGridContentVisibility(true);
         }
     };
 
