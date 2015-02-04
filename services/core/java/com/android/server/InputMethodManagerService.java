@@ -1729,7 +1729,18 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
             mCurMethodId = null;
             unbindCurrentMethodLocked(true, false);
         }
-        // Here is not the perfect place to reset the switching controller. Ideally
+
+		// code to disable the IME switcher with config_show_IMESwitcher set = false
+		try {
+				mShowOngoingImeSwitcherForPhones =
+				Settings.System.getIntForUser(mContext.getContentResolver(),
+				Settings.System.STATUS_BAR_IME_SWITCHER, UserHandle.USER_CURRENT) == 1;
+			} catch (SettingNotFoundException e) {
+				mShowOngoingImeSwitcherForPhones = mRes.getBoolean(
+			com.android.internal.R.bool.config_show_IMESwitcher);
+		}
+
+		// Here is not the perfect place to reset the switching controller. Ideally
         // mSwitchingController and mSettings should be able to share the same state.
         // TODO: Make sure that mSwitchingController and mSettings are sharing the
         // the same enabled IMEs list.
