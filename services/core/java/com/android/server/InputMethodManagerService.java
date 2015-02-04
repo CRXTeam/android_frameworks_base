@@ -84,6 +84,7 @@ import android.os.SystemClock;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.Settings;
+import android.provider.Settings.SettingNotFoundException;
 import android.text.TextUtils;
 import android.text.style.SuggestionSpan;
 import android.util.AtomicFile;
@@ -1734,7 +1735,7 @@ public class InputMethodManagerService extends IInputMethodManager.Stub
 		try {
 				mShowOngoingImeSwitcherForPhones =
 				Settings.System.getIntForUser(mContext.getContentResolver(),
-				Settings.System.STATUS_BAR_IME_SWITCHER, UserHandle.USER_CURRENT) == 1;
+				Settings.CPA.STATUS_BAR_IME_SWITCHER, UserHandle.USER_CURRENT) == 1;
 			} catch (SettingNotFoundException e) {
 				mShowOngoingImeSwitcherForPhones = mRes.getBoolean(
 			com.android.internal.R.bool.config_show_IMESwitcher);
