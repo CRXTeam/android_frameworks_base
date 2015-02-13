@@ -1273,12 +1273,12 @@ public class AppTransition implements Dump {
         void observe() {
             ContentResolver resolver = mContext.getContentResolver();
             resolver.registerContentObserver(
-                    Settings.PAC.getUriFor(Settings.CPA.ANIMATION_CONTROLS_DURATION), false, this);
+                    Settings.CPA.getUriFor(Settings.CPA.ANIMATION_CONTROLS_DURATION), false, this);
             resolver.registerContentObserver(
-                    Settings.PAC.getUriFor(Settings.CPA.ANIMATION_CONTROLS_NO_OVERRIDE), false, this);
+                    Settings.CPA.getUriFor(Settings.CPA.ANIMATION_CONTROLS_NO_OVERRIDE), false, this);
             for (int i = 0; i < 10; i++) {
                 resolver.registerContentObserver(
-                    Settings.PAC.getUriFor(Settings.CPA.ACTIVITY_ANIMATION_CONTROLS[i]), false, this);
+                    Settings.CPA.getUriFor(Settings.CPA.ACTIVITY_ANIMATION_CONTROLS[i]), false, this);
             }
         }
          @Override
@@ -1290,12 +1290,12 @@ public class AppTransition implements Dump {
     private void updateSettings() {
         ContentResolver resolver = mContext.getContentResolver();
         for (int i = 0; i < 10; i++) {
-            mActivityAnimations[i] = Settings.PAC.getInt(resolver, Settings.CPA.ACTIVITY_ANIMATION_CONTROLS[i], 0);
+            mActivityAnimations[i] = Settings.CPA.getInt(resolver, Settings.CPA.ACTIVITY_ANIMATION_CONTROLS[i], 0);
         }
 
-        mNoOverrides = Settings.PAC.getBoolean(resolver, Settings.CPA.ANIMATION_CONTROLS_NO_OVERRIDE, false);
+        mNoOverrides = Settings.CPA.getBoolean(resolver, Settings.CPA.ANIMATION_CONTROLS_NO_OVERRIDE, false);
 
-        int temp = Settings.PAC.getInt(resolver, Settings.CPA.ANIMATION_CONTROLS_DURATION, 0);
+        int temp = Settings.CPA.getInt(resolver, Settings.CPA.ANIMATION_CONTROLS_DURATION, 0);
         mAnimationDuration = temp * 15;
     }
 }

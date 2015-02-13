@@ -86,7 +86,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     private static final String TABLE_SYSTEM = "system";
     private static final String TABLE_SECURE = "secure";
     private static final String TABLE_GLOBAL = "global";
-	private static final String TABLE_PAC = "pac";
+	private static final String TABLE_CPA = "cpa";
 
     //Maximum number of phones
     private static final int MAX_PHONE_COUNT = 3;
@@ -95,7 +95,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         mValidTables.add(TABLE_SYSTEM);
         mValidTables.add(TABLE_SECURE);
         mValidTables.add(TABLE_GLOBAL);
-		mValidTables.add(TABLE_PAC);
+		mValidTables.add(TABLE_CPA);
         mValidTables.add("bluetooth_devices");
         mValidTables.add("bookmarks");
 
@@ -146,13 +146,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX globalIndex1 ON global (name);");
     }
 
-	private void createPacTable(SQLiteDatabase db) {
-		db.execSQL("CREATE TABLE IF NOT EXISTS pac (" +
+	private void createCpaTable(SQLiteDatabase db) {
+		db.execSQL("CREATE TABLE IF NOT EXISTS cpa (" +
 				"_id INTEGER PRIMARY KEY AUTOINCREMENT," +
 				"name TEXT UNIQUE ON CONFLICT REPLACE," +
 				"value TEXT" +
 				");");
-		db.execSQL("CREATE INDEX IF NOT EXISTS pacIndex1 ON pac (name);");
+		db.execSQL("CREATE INDEX IF NOT EXISTS cpaIndex1 ON cpa (name);");
 	}
 	
     @Override
@@ -166,7 +166,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
         createSecureTable(db);
 		
-		createPacTable(db);
+		createCpaTable(db);
 
         // Only create the global table for the singleton 'owner' user
         if (mUserHandle == UserHandle.USER_OWNER) {
@@ -1576,10 +1576,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     if (stmt != null) stmt.close();
                 }
             }
-			//add PAC table
+			//add CPA table
 			db.beginTransaction();
 			try {
-				createPacTable(db);
+				createCpaTable(db);
 				db.setTransactionSuccessful();
 			} finally {
 				db.endTransaction();
@@ -1855,10 +1855,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 if (stmt != null) stmt.close();
             }
 			
-			 //add PAC table
+			 //add CPA table
 			db.beginTransaction();
 			try {
-				createPacTable(db);
+				createCpaTable(db);
 				db.setTransactionSuccessful();
 			} finally {
 				db.endTransaction();
@@ -1954,8 +1954,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             db.execSQL("DROP INDEX IF EXISTS bookmarksIndex1");
             db.execSQL("DROP INDEX IF EXISTS bookmarksIndex2");
             db.execSQL("DROP TABLE IF EXISTS favorites");
-			db.execSQL("DROP TABLE IF EXISTS pac");
-			db.execSQL("DROP INDEX IF EXISTS pacIndex1");
+			db.execSQL("DROP TABLE IF EXISTS cpa");
+			db.execSQL("DROP INDEX IF EXISTS cpaIndex1");
             onCreate(db);
 
             // Added for diagnosing settings.db wipes after the fact
@@ -2342,7 +2342,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (mUserHandle == UserHandle.USER_OWNER) {
             loadGlobalSettings(db);
         }
-		loadPacSettings(db);
+		loadCpaSettings(db);
     }
 
     private void loadSystemSettings(SQLiteDatabase db) {
@@ -2417,10 +2417,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 R.bool.def_haptic_feedback);
     }
 	
-	private void loadPacSettings(SQLiteDatabase db) {
+	private void loadCpaSettings(SQLiteDatabase db) {
 		SQLiteStatement stmt = null;
 		try {
-			stmt = db.compileStatement("INSERT OR IGNORE INTO pac(name,value)"
+			stmt = db.compileStatement("INSERT OR IGNORE INTO cpa(name,value)"
 			+ " VALUES(?,?);");
 		} finally {
 			if (stmt != null) stmt.close();

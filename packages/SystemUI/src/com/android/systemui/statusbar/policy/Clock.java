@@ -78,7 +78,7 @@ public class Clock implements DemoMode {
 
         void observe() {
             ContentResolver resolver = mContext.getContentResolver();
-            resolver.registerContentObserver(Settings.PAC.getUriFor(
+            resolver.registerContentObserver(Settings.CPA.getUriFor(
                     Settings.CPA.STATUS_BAR_AM_PM), false, this);
             updateSettings();
         }
@@ -268,7 +268,7 @@ public class Clock implements DemoMode {
 
     void updateSettings() {
         ContentResolver resolver = mContext.getContentResolver();
-        mAmPmStyle = (Settings.PAC.getInt(resolver,
+        mAmPmStyle = (Settings.CPA.getInt(resolver,
                 Settings.CPA.STATUS_BAR_AM_PM, 2));
         mClockFormatString = "";
 

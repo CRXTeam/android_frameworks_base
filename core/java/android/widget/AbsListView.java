@@ -890,7 +890,7 @@ public abstract class AbsListView extends AdapterView<ListAdapter> implements Te
 
         mDensityScale = getContext().getResources().getDisplayMetrics().density;
 
-        int listAnimationCache = Settings.PAC.getInt(
+        int listAnimationCache = Settings.CPA.getInt(
                 mContext.getContentResolver(),
                 Settings.CPA.LISTVIEW_ANIMATION_CACHE,
                 0);
@@ -906,7 +906,7 @@ public abstract class AbsListView extends AdapterView<ListAdapter> implements Te
                      | ViewGroup.PERSISTENT_SCROLLING_CACHE);
         }
 
-        createExcludedAppsSet(Settings.PAC.getString(mContext.getContentResolver(),
+        createExcludedAppsSet(Settings.CPA.getString(mContext.getContentResolver(),
                     Settings.CPA.LISTVIEW_ANIMATION_EXCLUDED_APPS));
     }
 
@@ -2459,13 +2459,13 @@ public abstract class AbsListView extends AdapterView<ListAdapter> implements Te
         if (mExcludedApps.contains(mContext.getApplicationInfo().packageName)) {
             mListAnimationMode = 0;
         } else {
-            mListAnimationMode = Settings.PAC.getInt(
+            mListAnimationMode = Settings.CPA.getInt(
                         mContext.getContentResolver(),
                         Settings.CPA.LISTVIEW_ANIMATION,
                         0);
         }
 
-        int listAnimationInterpolatorMode = Settings.PAC.getInt(
+        int listAnimationInterpolatorMode = Settings.CPA.getInt(
                 mContext.getContentResolver(),
                 Settings.CPA.LISTVIEW_INTERPOLATOR,
                 0);
@@ -2479,7 +2479,7 @@ public abstract class AbsListView extends AdapterView<ListAdapter> implements Te
         boolean down = false;
         Animation anim = null;
 
-        int temp = Settings.PAC.getInt(
+        int temp = Settings.CPA.getInt(
                 mContext.getContentResolver(),
                 Settings.CPA.LISTVIEW_DURATION,
                 0);

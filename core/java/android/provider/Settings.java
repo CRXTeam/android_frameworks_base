@@ -940,9 +940,9 @@ public final class Settings {
     public static final String CALL_METHOD_GET_GLOBAL = "GET_global";
 
 	/**
-	 * @hide - Private call() method on SettingsProvider to read from 'pac' table.
+	 * @hide - Private call() method on SettingsProvider to read from 'cpa' table.
 	 */
-	public static final String CALL_METHOD_GET_PAC = "GET_pac";
+	public static final String CALL_METHOD_GET_CPA = "GET_cpa";
 
     /**
      * @hide - User handle argument extra to the fast-path call()-based requests
@@ -958,8 +958,8 @@ public final class Settings {
     /** @hide - Private call() method to write to 'global' table */
     public static final String CALL_METHOD_PUT_GLOBAL= "PUT_global";
 
-	/** @hide - Private call() method to write to 'pac' table */
-	public static final String CALL_METHOD_PUT_PAC = "PUT_pac";
+	/** @hide - Private call() method to write to 'cpa' table */
+	public static final String CALL_METHOD_PUT_CPA = "PUT_cpa";
     
 	/**
      * Activity Extra: Limit available options in launched activity based on the given authority.
@@ -7631,22 +7631,19 @@ public final class Settings {
          */
         public static final String ANIMATION_TOAST = "animation_toast";
 
-    }
-
-    public static final class PAC extends NameValueTable {
         public static final String SYS_PROP_SETTING_VERSION = "sys.settings_system_version";
 
         /**
          * The content:// style URL for this table
          */
         public static final Uri CONTENT_URI =
-            Uri.parse("content://" + AUTHORITY + "/pac");
+            Uri.parse("content://" + AUTHORITY + "/cpa");
 
         private static final NameValueCache sNameValueCache = new NameValueCache(
                 SYS_PROP_SETTING_VERSION,
                 CONTENT_URI,
-                CALL_METHOD_GET_PAC,
-                CALL_METHOD_PUT_PAC);
+                CALL_METHOD_GET_CPA,
+                CALL_METHOD_PUT_CPA);
 
         /**
          * Look up a name in the database.

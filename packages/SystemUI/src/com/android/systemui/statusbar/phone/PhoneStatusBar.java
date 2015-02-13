@@ -398,7 +398,7 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
 
         void observe() {
             ContentResolver resolver = mContext.getContentResolver();
-            resolver.registerContentObserver(Settings.PAC.getUriFor(
+            resolver.registerContentObserver(Settings.CPA.getUriFor(
                     Settings.CPA.STATUS_BAR_CLOCK), false, this);
             update();
         }
@@ -411,7 +411,7 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
         public void update() {
             ContentResolver resolver = mContext.getContentResolver();
 
-            mClockLocation = Settings.PAC.getInt(
+            mClockLocation = Settings.CPA.getInt(
                     resolver, Settings.CPA.STATUS_BAR_CLOCK, Clock.STYLE_CLOCK_RIGHT);
             updateClockView();
 
@@ -890,7 +890,7 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
         mStatusBarContents = (LinearLayout)mStatusBarView.findViewById(R.id.status_bar_contents);
 
         mClockView = (TextView) mStatusBarView.findViewById(R.id.clock);
-        mClockLocation = Settings.PAC.getInt(mContext.getContentResolver(),
+        mClockLocation = Settings.CPA.getInt(mContext.getContentResolver(),
                 Settings.CPA.STATUS_BAR_CLOCK, Clock.STYLE_CLOCK_RIGHT);
         if (mClockController == null) mClockController = new Clock(mContext, mClockView);
         updateClockView();

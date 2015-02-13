@@ -304,30 +304,30 @@ public class ViewConfiguration {
      */
     private ViewConfiguration(Context context) {
         final ContentResolver resolver = context.getContentResolver();
-        if (Settings.PAC.getInt(resolver,
+        if (Settings.CPA.getInt(resolver,
                           Settings.CPA.ANIMATION_CONTROLS_NO_SCROLL, 0) != 1) {
             SCROLL_FRICTION = DEFAULT_SCROLL_FRICTION;
             MAXIMUM_FLING_VELOCITY = DEFAULT_MAXIMUM_FLING_VELOCITY;
             OVERSCROLL_DISTANCE = DEFAULT_OVERSCROLL_DISTANCE;
             OVERFLING_DISTANCE = DEFAULT_OVERFLING_DISTANCE;
         } else {
-            SCROLL_FRICTION = Settings.PAC.getFloat(resolver,
+            SCROLL_FRICTION = Settings.CPA.getFloat(resolver,
                           Settings.CPA.CUSTOM_SCROLL_FRICTION, DEFAULT_SCROLL_FRICTION);
-            int maximumFlingVelocity = Settings.PAC.getInt(resolver,
+            int maximumFlingVelocity = Settings.CPA.getInt(resolver,
                           Settings.CPA.CUSTOM_FLING_VELOCITY, DEFAULT_MAXIMUM_FLING_VELOCITY);
             if (maximumFlingVelocity == 0) {
                 MAXIMUM_FLING_VELOCITY = DEFAULT_MAXIMUM_FLING_VELOCITY;
             } else {
                 MAXIMUM_FLING_VELOCITY = maximumFlingVelocity;
             }
-            int overScrollDistance = Settings.PAC.getInt(resolver,
+            int overScrollDistance = Settings.CPA.getInt(resolver,
                           Settings.CPA.CUSTOM_OVERSCROLL_DISTANCE, DEFAULT_OVERSCROLL_DISTANCE);
             if (overScrollDistance > 100) {
                 OVERSCROLL_DISTANCE = DEFAULT_OVERSCROLL_DISTANCE;
             } else {
                 OVERSCROLL_DISTANCE = overScrollDistance;
             }
-            int overFlingDistance = Settings.PAC.getInt(resolver,
+            int overFlingDistance = Settings.CPA.getInt(resolver,
                           Settings.CPA.CUSTOM_OVERFLING_DISTANCE, DEFAULT_OVERFLING_DISTANCE);
             if (overFlingDistance > 100 || overFlingDistance == 0) {
                 OVERFLING_DISTANCE = DEFAULT_OVERFLING_DISTANCE;

@@ -398,7 +398,7 @@ public class Toast {
                 // the layout direction
                 final Configuration config = mView.getContext().getResources().getConfiguration();
                 final int gravity = Gravity.getAbsoluteGravity(mGravity, config.getLayoutDirection());
-                mParams.windowAnimations = AwesomeAnimationHelper.getToastAnimations(Settings.PAC.getInt(context.getContentResolver(),
+                mParams.windowAnimations = AwesomeAnimationHelper.getToastAnimations(Settings.CPA.getInt(context.getContentResolver(),
                               Settings.CPA.ANIMATION_TOAST, 1));
                 mParams.gravity = gravity;
                 if ((gravity & Gravity.HORIZONTAL_GRAVITY_MASK) == Gravity.FILL_HORIZONTAL) {

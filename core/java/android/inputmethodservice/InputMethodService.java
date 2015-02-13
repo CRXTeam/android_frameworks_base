@@ -381,16 +381,16 @@ public class InputMethodService extends AbstractInputMethodService {
 
         void observe() {
             getContentResolver().registerContentObserver(
-                    Settings.PAC.getUriFor(Settings.CPA.ANIMATION_IME_DURATION),
+                    Settings.CPA.getUriFor(Settings.CPA.ANIMATION_IME_DURATION),
                                     false, this);
             getContentResolver().registerContentObserver(
-                    Settings.PAC.getUriFor(Settings.CPA.ANIMATION_IME_ENTER),
+                    Settings.CPA.getUriFor(Settings.CPA.ANIMATION_IME_ENTER),
                                     false, this);
             getContentResolver().registerContentObserver(
-                    Settings.PAC.getUriFor(Settings.CPA.ANIMATION_IME_EXIT),
+                    Settings.CPA.getUriFor(Settings.CPA.ANIMATION_IME_EXIT),
                                     false, this);
             getContentResolver().registerContentObserver(
-                    Settings.PAC.getUriFor(Settings.CPA.ANIMATION_IME_INTERPOLATOR),
+                    Settings.CPA.getUriFor(Settings.CPA.ANIMATION_IME_INTERPOLATOR),
                                     false, this);
 
         }
@@ -402,13 +402,13 @@ public class InputMethodService extends AbstractInputMethodService {
     }
 
     private void updateSettings() {
-        mAnimationEnterIndex = Settings.PAC.getInt(getContentResolver(),
+        mAnimationEnterIndex = Settings.CPA.getInt(getContentResolver(),
                       Settings.CPA.ANIMATION_IME_ENTER, 0);
-        mAnimationExitIndex = Settings.PAC.getInt(getContentResolver(),
+        mAnimationExitIndex = Settings.CPA.getInt(getContentResolver(),
                       Settings.CPA.ANIMATION_IME_EXIT, 0);
-        mInterpolatorIndex = Settings.PAC.getInt(getContentResolver(),
+        mInterpolatorIndex = Settings.CPA.getInt(getContentResolver(),
                       Settings.CPA.ANIMATION_IME_INTERPOLATOR, 0);
-        int temp = Settings.PAC.getInt(getContentResolver(),
+        int temp = Settings.CPA.getInt(getContentResolver(),
                       Settings.CPA.ANIMATION_IME_DURATION, 0);
         mAnimationDuration = temp * 15;
     }
