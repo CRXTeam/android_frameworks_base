@@ -50,4 +50,10 @@
 	<string name="permlab_preventpower">override power key</string>
 	<!-- Description of an application permission, listed so the user can choose whether they want to allow the application to do this. -->
 	<string name="permdesc_preventpower">Allows an app to override the power key.</string>
+	
+	<!-- App ops requests -->
+	<string name="app_ops_su">get Superuser access</string>
+	
+	<!-- Content description of the superuser tile -->
+	<string name="accessibility_su_active">Superuser session active</string>
 </resources>
