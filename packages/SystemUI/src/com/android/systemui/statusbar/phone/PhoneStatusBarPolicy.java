@@ -198,15 +198,15 @@ public class PhoneStatusBarPolicy {
 
         mAlarmIconObserver.onChange(true);
         mContext.getContentResolver().registerContentObserver(
-                Settings.System.getUriFor(Settings.System.SHOW_ALARM_ICON),
+                Settings.CPA.getUriFor(Settings.CPA.SHOW_ALARM_ICON),
                 false, mAlarmIconObserver);
     }
 
 	private ContentObserver mAlarmIconObserver = new ContentObserver(null) {
 		@Override
 		public void onChange(boolean selfChange, Uri uri) {
-			mAlarmIconVisible = Settings.System.getInt(mContext.getContentResolver(),
-			Settings.System.SHOW_ALARM_ICON, 1) == 1;
+			mAlarmIconVisible = Settings.CPA.getInt(mContext.getContentResolver(),
+			Settings.CPA.SHOW_ALARM_ICON, 1) == 1;
 			updateAlarm();
 		}
 
