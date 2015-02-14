@@ -5355,7 +5355,7 @@ public final class Settings {
             MOUNT_UMS_NOTIFY_ENABLED,
             UI_NIGHT_MODE,
             SLEEP_TIMEOUT,
-            ADVANCED_REBOOT
+            ADVANCED_REBOOT,
             PRIVACY_GUARD_DEFAULT
         };
 
