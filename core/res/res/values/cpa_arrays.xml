@@ -66,8 +66,4 @@
         <item>-1</item>
     </string-array>
 
-	    <!-- Do not translate. App ops request strings -->
-    <string-array name="app_ops_labels" translatable="false">
-        <item>@string/app_ops_su</item>
-    </string-array>
 </resources>
