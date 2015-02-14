@@ -708,7 +708,6 @@ public class AppOpsService extends IAppOpsService.Stub {
                             + uid + " package " + packageName);
                 op.time = System.currentTimeMillis();
                 op.rejectTime = 0;
-                op.allowedCount++;
                 broadcastOpIfNeeded(code);
                 return AppOpsManager.MODE_ALLOWED;
             } else {
