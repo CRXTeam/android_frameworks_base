@@ -7481,6 +7481,11 @@ public final class Settings {
          */
         public static final String STATUS_BAR_CLOCK = "status_bar_clock";
 
+		/**
+		 * @hide
+		 */
+		public static final String SHOW_ALARM_ICON = "show_alarm_icon";
+		
         /**
          * Display style of AM/PM next to clock in status bar
          * 0: Normal display (Eclair stock)
