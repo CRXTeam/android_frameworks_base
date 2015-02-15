@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Copyright (C) 2014-2015 The CPA2 Project
+     Copyright (c) 2013, The Linux Foundation. All rights reserved.
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+     You may obtain a copy of the License at
+          http://www.apache.org/licenses/LICENSE-2.0
+     Unless required by applicable law or agreed to in writing, software
+     distributed under the License is distributed on an "AS IS" BASIS,
+     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     See the License for the specific language governing permissions and
+     limitations under the License.
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+
+    <!-- Performance profile modes -->
+    <string name="perf_profile_pwrsv">Oszczędność baterii</string>
+    <string name="perf_profile_bal">Zrównoważony</string>
+    <string name="perf_profile_perf">Wydajność</string>
+	
+	<!-- custom system animations -->
+    <string name="animation_fade">Wygasanie</string>
+    <string name="animation_slide_right">Przesuwanie w prawo</string>
+    <string name="animation_slide_left">Przesuwanie w lewo</string>
+    <string name="animation_slide_right_no_fade">Przesuwanie w prawo (bez wygasania)</string>
+    <string name="animation_slide_left_no_fade">Przesuwanie w lewo (bez wygasania)</string>
+    <string name="animation_slide_up">Przesuwanie w dół</string>
+    <string name="animation_slide_down">Przesuwanie w górę</string>
+    <string name="animation_default">Domyślne</string>
+    <string name="animation_translucent">Półprzezroczyście</string>
+    <string name="animation_grow_shrink">Wzrastanie w górę</string>
+    <string name="animation_grow_shrink_center">Wzrastanie w środek</string>
+    <string name="animation_grow_shrink_bottom">Wzrastanie w dół</string>
+    <string name="animation_grow_shrink_left">Wzrastanie w lewo</string>
+    <string name="animation_grow_shrink_right">Wzrastanie w prawo</string>
+    <string name="action_null">Czysto</string>
+    <string name="animation_random">Losowo</string>
+	
+	<!-- Default -->
+    <string name="default_string">Domyślne</string>
+
+    <!-- Heads up -->
+    <string name="permlab_changeHeadsUpState">Włącz lub wyłącz ważność powiadomień</string>
+    <string name="permdesc_changeHeadsUpState">Zezwala aplikacji na zmianę, czy inna aplikacja może pokazywać normalne powiadomienia, jako główne powiadomienia.</string>
+
+    <string name="permlab_preventpower">Zastąp przycisk zasilania</string>
+    <!-- Description of an application permission, listed so the user can choose whether they want to allow the application to do this. -->
+    <string name="permdesc_preventpower">Umożliwia aplikacji zastąpić przycisk zasilania.</string>
+	
+	<!-- Privacy Guard -->
+    <string name="permlab_changePrivacyGuardState">Włącz lub wyłącz Strażnika Prywatności</string>
+    <string name="permdesc_changePrivacyGuardState">Zezwala aplikacji na zmianę, czy inna aplikacja działa z Strażnikiem Prywatności. Gdy aplikacja jest uruchomiona, nie będzie miała dostępu do danych osobowych, takich jak kontakty, dziennik połączeń lub wiadomości.</string>
+    <string name="privacy_guard_notification">Strażnik Prywatności aktywny</string>
+    <string name="privacy_guard_notification_detail"><xliff:g id="app">%1$s</xliff:g> nie będzie w stanie uzyskać dostępu do danych osobistych</string>
+    <string name="privacy_guard_dialog_title">Strażnik Prywatności</string>
+    <string name="privacy_guard_dialog_summary"><xliff:g id="app">%1$s</xliff:g> would like do <xliff:g id="op">%2$s</xliff:g>.</string>
+
+</resources>
