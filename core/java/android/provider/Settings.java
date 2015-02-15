@@ -2827,12 +2827,6 @@ public final class Settings {
         public static final String KEY_ASSIST_LONG_PRESS_ACTION = "key_assist_long_press_action";
 
         /**
-         * Whether to show four tiles per row.
-         * @hide
-         */
-        public static final String QS_USE_FOUR_COLUMNS = "qs_use_four_columns";
-
-        /**
          * Display style of the status bar battery information
          * 0: Display the battery an icon in portrait mode
          * 2: Display the battery as a circle
@@ -7637,6 +7631,12 @@ public final class Settings {
          * @hide
          */
         public static final String CUSTOM_OVERFLING_DISTANCE = "custom_overfling_distance";
+
+        /**
+         * Whether to show four tiles per row.
+         * @hide
+         */
+        public static final String QS_USE_FOUR_COLUMNS = "qs_use_four_columns";
 
         /**
          *
